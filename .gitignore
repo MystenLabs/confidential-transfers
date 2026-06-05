@@ -1,0 +1,26 @@
+build/
+package_summaries/
+traces/*
+.trace
+.coverage*
+Pub.*.toml
+
+# OSX
+.DS_Store
+
+# Node.js
+node_modules
+.tsbuildinfo
+*.tsbuildinfo
+.turbo
+
+# App build directories
+dist/
+.next/
+.idea/
+target/
+next-env.d.ts
+.env
+.vite/
+
+.claude/

@@ -1,0 +1,14 @@
+[package]
+name = "payment_channel"
+edition = "2024"
+
+[dependencies]
+contra = { local = "../../../../move" }
+# Pulled in solely so the deploy script can publish bu_token, contra, and
+# payment_channel as one bundled package via `sui move build
+# --with-unpublished-dependencies`. payment_channel itself does not call
+# anything in `bu_token`.
+bu_token = { local = "../../../../utils/move/test_token" }
+
+[environments]
+devnet = "4fe43958"

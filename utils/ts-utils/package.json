@@ -1,0 +1,41 @@
+{
+	"name": "contra-utils",
+	"version": "0.1.0",
+	"description": "Deploy + setup helpers for the contra demos. Browser-safe entry at the root, Node-only entry at ./node.",
+	"type": "module",
+	"types": "./dist/index.d.mts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.mts",
+			"import": "./dist/index.mjs",
+			"default": "./dist/index.mjs"
+		},
+		"./node": {
+			"types": "./dist/node.d.mts",
+			"import": "./dist/node.mjs",
+			"default": "./dist/node.mjs"
+		}
+	},
+	"sideEffects": false,
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"clean": "rm -rf tsconfig.tsbuildinfo ./dist",
+		"build": "rm -rf dist && tsc --noEmit && tsdown",
+		"format": "prettier --write .",
+		"format:check": "prettier --check ."
+	},
+	"packageManager": "pnpm@10.10.0",
+	"dependencies": {
+		"@mysten/sui": "^2.17.0",
+		"ts-sdk": "file:../../ts-sdk"
+	},
+	"devDependencies": {
+		"@ianvs/prettier-plugin-sort-imports": "^4.7.1",
+		"@types/node": "^22.19.19",
+		"prettier": "^3.8.3",
+		"tsdown": "^0.21.10",
+		"typescript": "^5.9.3"
+	}
+}

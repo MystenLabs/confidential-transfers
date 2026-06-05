@@ -1,0 +1,37 @@
+{
+	"name": "@contra/bulletproofs-wasm",
+	"version": "0.1.0",
+	"description": "WASM bindings for fastcrypto::bulletproofs range proofs. Node-only entry at the root, browser build under ./web.",
+	"license": "Apache-2.0",
+	"main": "index.js",
+	"types": "./index.d.mts",
+	"exports": {
+		".": {
+			"browser": {
+				"types": "./web/contra_bulletproofs_wasm.d.ts",
+				"import": "./web/contra_bulletproofs_wasm.js"
+			},
+			"types": "./index.d.mts",
+			"import": "./index.mjs",
+			"require": "./index.js"
+		},
+		"./web/contra_bulletproofs_wasm_bg.wasm": {
+			"browser": "./web/contra_bulletproofs_wasm_bg.wasm",
+			"import": "./web/contra_bulletproofs_wasm_bg.wasm",
+			"require": "./web/contra_bulletproofs_wasm_bg.wasm"
+		}
+	},
+	"files": [
+		"index.js",
+		"index.mjs",
+		"index.d.mts",
+		"nodejs",
+		"web"
+	],
+	"scripts": {
+		"build:wasm": "pnpm build:nodejs && pnpm build:web",
+		"build:nodejs": "wasm-pack build --target nodejs --release --out-dir nodejs --no-pack && rm -f nodejs/.gitignore",
+		"build:web": "wasm-pack build --target web --release --out-dir web --no-pack && rm -f web/.gitignore"
+	},
+	"packageManager": "pnpm@10.10.0"
+}

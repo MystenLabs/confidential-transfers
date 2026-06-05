@@ -1,0 +1,30 @@
+name: Format and Test Move Code
+
+on:
+    pull_request:
+    push:
+        branches:
+            - main
+
+env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+    test-move-packages:
+        name: Build and Test Move Packages
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # Pin v6.0.2
+            - run: curl -sSfL https://raw.githubusercontent.com/Mystenlabs/suiup/main/install.sh | sh
+            - run: suiup install sui@devnet -y
+            - run: sui --version
+            - run: find . -name "Move.toml" -type f | sed 's|/Move.toml||' | xargs -I {} bash -c "sui move build -e devnet --path '{}'"
+            - run: find . -name "Move.toml" -type f | sed 's|/Move.toml||' | xargs -I {} bash -c "sui move test -e devnet --path '{}'"
+
+    prettier-move:
+        name: Check Move formatting
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # Pin v6.0.2
+            - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # Pin v6.2.0
+            - run: find . -name "*.move" -not -path "*/build/*" -not -path "*/node_modules/*" -print0 | xargs -0 npx @mysten/prettier-plugin-move -c

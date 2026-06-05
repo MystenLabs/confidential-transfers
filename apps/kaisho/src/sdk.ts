@@ -1,0 +1,851 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Single entry point for everything that talks to the Contra SDK
+ * (`ts-sdk`) and the Sui SDK (`@mysten/sui`).
+ *
+ * The file is organized into sections:
+ *   1. Client construction                — Sui RPC, Contra client, Auditor.
+ *   2. Read state (chain queries)         — balances, account status, auditors, pause/deny.
+ *   3. End-user transactions              — mint, register, wrap, unwrap, transfer.
+ *   4. Issuer transactions                — deny list, global pause, freeze admins.
+ *   5. Auditor flow                       — recover an account and decrypt.
+ *   6. Faucet                             — devnet SUI for gas.
+ *   7. Deployment                         — publish bytecodes and register BU.
+ *   8. Tx helpers                         — execute and check for merge-failure events.
+ *
+ * Hooks (e.g. `useSuiClient`, `useSignAndExecuteTransaction`) stay where
+ * they are — they're React-bound. Components pull values out of those
+ * hooks and pass them as plain arguments to the functions here.
+ */
+
+import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import type { SuiEvent } from '@mysten/sui/jsonRpc';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction } from '@mysten/sui/transactions';
+import type { TransactionResult } from '@mysten/sui/transactions';
+import { SUI_DENY_LIST_OBJECT_ID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
+import { publishBytecodes } from 'contra-utils';
+import {
+	ContraAuditor,
+	ContraClient,
+	contraContracts,
+	DiscreteLogTable,
+	EncryptedAmount,
+	G,
+	point,
+	randomScalar,
+	TokenAccount,
+	TransferEventBcs,
+} from 'ts-sdk';
+import type {
+	AuditorVersionEntry,
+	ContraCompatibleClient,
+	ContraPackageConfig,
+	TokenAuditors,
+	TokenBalance,
+} from 'ts-sdk';
+
+// ─────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────
+
+/** On-chain TokenConfig — package + registry IDs needed to talk to the
+ *  Contra contracts for a particular deployment. Mirrors the Move struct
+ *  at `move/sources/token_config.move`. */
+export interface TokenConfig {
+	id: string;
+	buPackage: string;
+	buTreasury: string;
+	contraPackage: string;
+	tokenRegistry: string;
+	accountRegistry: string;
+	binaryDigest: number[];
+}
+
+/** Whether a wallet has registered the per-account and per-token-account
+ *  objects. We need both to send/receive private transfers. */
+export type AccountStatus =
+	| 'loading'
+	| 'registered'
+	| 'needs-account'
+	| 'needs-token-account'
+	| 'error';
+
+/** Compiled Move bytecodes produced by `sui move build`, used by the
+ *  issuer to publish a fresh deployment. */
+export interface Bytecodes {
+	modules: string[];
+	dependencies: string[];
+	digest: number[];
+}
+
+/** A ristretto255 keypair for an auditor: scalar private key and 32-byte
+ *  compressed public key, both serialized as lowercase hex (no `0x`). */
+export interface AuditorKey {
+	privateKey: string;
+	publicKey: string;
+}
+
+export interface CreateTokenResult {
+	buPackageId: string;
+	buTreasuryId: string;
+	contraPackageId: string;
+	tokenRegistryId: string;
+	accountRegistryId: string;
+	confidentialTokenId: string;
+	managementCapId: string;
+	tokenConfigId: string;
+	denyCapId: string;
+	auditorKeys: AuditorKey[];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 1. Client construction
+// ─────────────────────────────────────────────────────────────────────
+
+/** A devnet RPC client. Used in non-React contexts (issuer flows, the
+ *  worker, deployment). React components should use `useSuiClient()`
+ *  from dapp-kit instead. */
+export function getDevnetSuiClient(): SuiJsonRpcClient {
+	return new SuiJsonRpcClient({
+		network: 'devnet',
+		url: getJsonRpcFullnodeUrl('devnet'),
+	});
+}
+
+/** Build a `ContraClient` for a given deployment. The client carries
+ *  the package config and the precomputed discrete-log table used to
+ *  decrypt twisted-ElGamal ciphertexts on the user side. */
+export function createContraClient(
+	suiClient: ContraCompatibleClient,
+	config: TokenConfig,
+	table: DiscreteLogTable,
+): ContraClient {
+	return new ContraClient({
+		suiClient,
+		packageConfig: contraPackageConfig(config),
+		table,
+	});
+}
+
+/** Build a `ContraAuditor`. The auditor decrypts ~32-bit limbs of the
+ *  user's twisted-ElGamal private key, so it uses a larger DLog table
+ *  than the user. */
+export function createContraAuditor(
+	suiClient: ContraCompatibleClient,
+	packageConfig: ContraPackageConfig,
+	tokenType: string,
+	table: DiscreteLogTable,
+	auditorKeyForVersion: Map<number, AuditorVersionEntry>,
+): ContraAuditor {
+	return new ContraAuditor({
+		suiClient,
+		packageConfig,
+		tokenType,
+		table,
+		auditorKeyForVersion,
+	});
+}
+
+/** Helper for callers that already have a `TokenConfig`. */
+export function contraPackageConfig(config: TokenConfig): ContraPackageConfig {
+	return {
+		packageId: config.contraPackage,
+		accountRegistryId: config.accountRegistry,
+		tokenRegistryId: config.tokenRegistry,
+	};
+}
+
+/** Construct a user `TokenAccount` from a wallet address, coin type,
+ *  package config, and locally-stored hex viewing key. */
+export function makeTokenAccount(
+	address: string,
+	tokenType: string,
+	packageConfig: ContraPackageConfig,
+	encKeyHex: string,
+): TokenAccount {
+	return new TokenAccount(address, tokenType, packageConfig, BigInt('0x' + encKeyHex));
+}
+
+/** Construct a fresh `TokenAccount` with a randomly-generated viewing
+ *  key — used during initial registration. */
+export function generateTokenAccount(
+	address: string,
+	tokenType: string,
+	packageConfig: ContraPackageConfig,
+): TokenAccount {
+	return new TokenAccount(address, tokenType, packageConfig);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 2. Read state (chain queries)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Check whether a wallet has the on-chain Account and per-token
+ *  TokenAccount objects required to send/receive private BU. */
+export async function fetchAccountStatus(
+	contraClient: ContraClient,
+	suiClient: SuiJsonRpcClient,
+	address: string,
+	tokenType: string,
+): Promise<Exclude<AccountStatus, 'loading' | 'error'>> {
+	const accountId = contraClient.getAccountId(address);
+	const tokenAccountId = contraClient.getTokenAccountId(address, tokenType);
+	const [accountRes, tokenAccountRes] = await Promise.all([
+		suiClient.getObject({ id: accountId }),
+		suiClient.getObject({ id: tokenAccountId }),
+	]);
+	if (accountRes.data && tokenAccountRes.data) return 'registered';
+	if (accountRes.data) return 'needs-token-account';
+	return 'needs-account';
+}
+
+/** Decrypt the user's confidential balance (active + pending). */
+export function fetchConfidentialBalance(
+	contraClient: ContraClient,
+	tokenAccount: TokenAccount,
+): Promise<TokenBalance> {
+	return contraClient.getBalance(tokenAccount);
+}
+
+/** Sum the encrypted active and pending balances into a single number
+ *  in BU units (1e9 = 1 BU). Useful for UI display. */
+export function totalConfidentialBalanceBu(balance: TokenBalance): number {
+	const total = balance.balance.amount + balance.pending.amount + balance.pendingPublicBalance;
+	return Number(total) / 1e9;
+}
+
+/** Fetch the on-chain auditor public-key set for the given token. */
+export function fetchAuditors(
+	contraClient: ContraClient,
+	tokenType: string,
+): Promise<TokenAuditors> {
+	return contraClient.getAuditors(tokenType);
+}
+
+/** Read a `TokenConfig` Move object. Returns the fields needed to
+ *  construct a `ContraClient`. The `binaryDigest` lets the caller check
+ *  the on-chain bytecode matches the bundle the app was built against. */
+export async function fetchTokenConfig(
+	suiClient: SuiJsonRpcClient,
+	configId: string,
+): Promise<TokenConfig | undefined> {
+	const result = await suiClient.getObject({
+		id: configId,
+		options: { showContent: true },
+	});
+	const content = result.data?.content;
+	if (!content || content.dataType !== 'moveObject') return undefined;
+	const fields = content.fields as Record<string, unknown>;
+	return {
+		id: configId,
+		buPackage: fields.bu_package as string,
+		buTreasury: fields.bu_treasury as string,
+		contraPackage: fields.contra_package as string,
+		tokenRegistry: fields.token_registry as string,
+		accountRegistry: fields.account_registry as string,
+		binaryDigest: parseByteVector(fields.binary_digest),
+	};
+}
+
+function parseByteVector(value: unknown): number[] {
+	if (Array.isArray(value)) return value.map((v) => Number(v));
+	if (typeof value === 'string') {
+		const bin = atob(value);
+		return Array.from(bin, (c) => c.charCodeAt(0));
+	}
+	return [];
+}
+
+/** Read the on-chain `ConfidentialToken` object and extract its freeze
+ *  admin set and active flag. */
+export async function fetchFreezeAdmins(
+	suiClient: SuiJsonRpcClient,
+	confidentialTokenId: string,
+): Promise<{ admins: string[]; isActive: boolean | null }> {
+	const obj = await suiClient.getObject({
+		id: confidentialTokenId,
+		options: { showContent: true },
+	});
+	const content = obj.data?.content;
+	if (!content || content.dataType !== 'moveObject') {
+		return { admins: [], isActive: null };
+	}
+	const fields = content.fields as Record<string, unknown>;
+	// VecSet<address> serializes as { fields: { contents: ["0x..."] } }.
+	const admins = fields.freeze_admins as { fields?: { contents?: unknown } } | undefined;
+	const list = admins?.fields?.contents;
+	return {
+		admins: Array.isArray(list) ? list.map((a) => String(a).toLowerCase()) : [],
+		isActive: typeof fields.is_active === 'boolean' ? fields.is_active : null,
+	};
+}
+
+/** Returns true if the global pause flag is set for `coinType` for the
+ *  next epoch. We check the next-epoch flag (not current-epoch) so the
+ *  UI reflects the issuer's most recent intent immediately. */
+export async function isGlobalPauseEnabledNextEpoch(
+	suiClient: SuiJsonRpcClient,
+	sender: string,
+	coinType: string,
+): Promise<boolean | null> {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `0x2::coin::deny_list_v2_is_global_pause_enabled_next_epoch`,
+		typeArguments: [coinType],
+		arguments: [tx.object(SUI_DENY_LIST_OBJECT_ID)],
+	});
+	const res = await suiClient.devInspectTransactionBlock({
+		sender,
+		transactionBlock: tx,
+	});
+	const ret = res.results?.[0]?.returnValues?.[0]?.[0];
+	if (Array.isArray(ret) && ret.length === 1) return ret[0] === 1;
+	return null;
+}
+
+/** Returns true if `address` is on the deny list for `coinType` at the
+ *  next epoch. */
+export async function isAddressDeniedNextEpoch(
+	suiClient: SuiJsonRpcClient,
+	sender: string,
+	coinType: string,
+	address: string,
+): Promise<boolean> {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `0x2::coin::deny_list_v2_contains_next_epoch`,
+		typeArguments: [coinType],
+		arguments: [tx.object(SUI_DENY_LIST_OBJECT_ID), tx.pure.address(address)],
+	});
+	const res = await suiClient.devInspectTransactionBlock({
+		sender,
+		transactionBlock: tx,
+	});
+	const ret = res.results?.[0]?.returnValues?.[0]?.[0];
+	return Array.isArray(ret) && ret.length === 1 && ret[0] === 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 3. End-user transactions
+// ─────────────────────────────────────────────────────────────────────
+
+/** Mint 10 BU test tokens to the caller's public balance. */
+export function buildMintTx(config: TokenConfig): Transaction {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `${config.buPackage}::bu::mint_10`,
+		arguments: [tx.object(config.buTreasury)],
+	});
+	return tx;
+}
+
+/** Build a transaction that registers the wallet's private account
+ *  and mints initial BU. Pass `accountStatus` so we can skip
+ *  `newAccount` when only the per-token TokenAccount is missing.
+ *
+ *  Calls (in order):
+ *    1. `contraClient.newAccount`        — only when no Account exists yet.
+ *    2. `contraClient.register`          — proves the viewing key under the auditor pubkeys.
+ *    3. `contraClient.shareAccount`      — only when newAccount was used.
+ *    4. `bu::mint_10`                    — fund the new account so the user can play.
+ */
+export async function buildRegisterAccountTx(opts: {
+	contraClient: ContraClient;
+	config: TokenConfig;
+	tokenAccount: TokenAccount;
+	address: string;
+	tokenType: string;
+	accountStatus: 'needs-account' | 'needs-token-account';
+}): Promise<Transaction> {
+	const { contraClient, config, tokenAccount, accountStatus, tokenType } = opts;
+	const { pks: auditorPublicKeys } = await contraClient.getAuditors(tokenType);
+
+	const tx = new Transaction();
+	if (accountStatus === 'needs-account') {
+		const account = tx.add(contraClient.newAccount({ owner: opts.address }));
+		tx.add(await contraClient.register({ tokenAccount, account, auditorPublicKeys }));
+		tx.add(contraClient.shareAccount({ account }));
+	} else {
+		tx.add(await contraClient.register({ tokenAccount, auditorPublicKeys }));
+	}
+	tx.moveCall({
+		target: `${config.buPackage}::bu::mint_10`,
+		arguments: [tx.object(config.buTreasury)],
+	});
+	return tx;
+}
+
+/** Wrap (public → private) `amountRaw` BU base units to `receiver`.
+ *  Splits a coin off the sender's largest BU coin object and feeds it
+ *  to `contraClient.wrap`. */
+export async function buildWrapTx(opts: {
+	suiClient: SuiJsonRpcClient;
+	contraClient: ContraClient;
+	sender: string;
+	receiver: string;
+	tokenType: string;
+	amountRaw: bigint;
+	memo?: string;
+}): Promise<Transaction> {
+	const { data: coins } = await opts.suiClient.getCoins({
+		owner: opts.sender,
+		coinType: opts.tokenType,
+	});
+	if (!coins.length) throw new Error('No BU coins found');
+
+	const tx = new Transaction();
+	const [payment] = tx.splitCoins(tx.object(coins[0].coinObjectId), [opts.amountRaw]);
+	tx.add(
+		opts.contraClient.wrap({
+			coin: payment,
+			receiver: opts.receiver,
+			tokenType: opts.tokenType,
+			memo: opts.memo,
+		}),
+	);
+	return tx;
+}
+
+/** Unwrap (private → public) `amountRaw` BU base units, transferring
+ *  the resulting coin to `recipient`. Returns the built transaction; the
+ *  caller still needs to sign and check for `TryUnwrapFailedEvent`
+ *  via `executeAndCheckMergeFailure`. */
+export async function buildUnwrapTx(opts: {
+	contraClient: ContraClient;
+	tokenAccount: TokenAccount;
+	amountRaw: bigint;
+	recipient: string;
+	merge?: boolean;
+}): Promise<Transaction> {
+	const unwrapFn: (tx: Transaction) => TransactionResult = await opts.contraClient.unwrap({
+		tokenAccount: opts.tokenAccount,
+		amount: opts.amountRaw,
+		merge: opts.merge ?? true,
+	});
+	const tx = new Transaction();
+	const coin = tx.add(unwrapFn);
+	tx.transferObjects([coin], opts.recipient);
+	return tx;
+}
+
+/** Private transfer: send `amountRaw` BU base units from the user's
+ *  private balance to `receiverAddress`'s private account. The caller
+ *  must check for `TryTransferFailedEvent` after execution. */
+export async function buildTransferTx(opts: {
+	contraClient: ContraClient;
+	tokenAccount: TokenAccount;
+	receiverAddress: string;
+	amountRaw: bigint;
+	merge?: boolean;
+	memo?: string;
+}): Promise<Transaction> {
+	const transferFn = await opts.contraClient.transfer({
+		tokenAccount: opts.tokenAccount,
+		receiverAddress: opts.receiverAddress,
+		amount: opts.amountRaw,
+		merge: opts.merge ?? true,
+		memo: opts.memo,
+	});
+	const tx = new Transaction();
+	tx.add(transferFn);
+	return tx;
+}
+
+/** Verify that `address` has registered the per-account object so we
+ *  can target it as a private-transfer recipient. Returns true iff the
+ *  account exists. */
+export async function recipientHasPrivateAccount(
+	contraClient: ContraClient,
+	suiClient: SuiJsonRpcClient,
+	address: string,
+): Promise<boolean> {
+	try {
+		const id = contraClient.getAccountId(address);
+		const res = await suiClient.getObject({ id });
+		return !!res.data;
+	} catch {
+		return false;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 4. Issuer transactions
+// ─────────────────────────────────────────────────────────────────────
+
+/** Add an address to the BU coin-level deny list. Effective for inputs
+ *  immediately, and for receiving from the next epoch. */
+export function buildAddDenyTx(opts: {
+	coinType: string;
+	denyCapId: string;
+	address: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `0x2::coin::deny_list_v2_add`,
+		typeArguments: [opts.coinType],
+		arguments: [
+			tx.object(SUI_DENY_LIST_OBJECT_ID),
+			tx.object(opts.denyCapId),
+			tx.pure.address(opts.address),
+		],
+	});
+	return tx;
+}
+
+export function buildRemoveDenyTx(opts: {
+	coinType: string;
+	denyCapId: string;
+	address: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `0x2::coin::deny_list_v2_remove`,
+		typeArguments: [opts.coinType],
+		arguments: [
+			tx.object(SUI_DENY_LIST_OBJECT_ID),
+			tx.object(opts.denyCapId),
+			tx.pure.address(opts.address),
+		],
+	});
+	return tx;
+}
+
+export function buildEnableGlobalPauseTx(opts: {
+	coinType: string;
+	denyCapId: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `0x2::coin::deny_list_v2_enable_global_pause`,
+		typeArguments: [opts.coinType],
+		arguments: [tx.object(SUI_DENY_LIST_OBJECT_ID), tx.object(opts.denyCapId)],
+	});
+	return tx;
+}
+
+export function buildDisableGlobalPauseTx(opts: {
+	coinType: string;
+	denyCapId: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `0x2::coin::deny_list_v2_disable_global_pause`,
+		typeArguments: [opts.coinType],
+		arguments: [tx.object(SUI_DENY_LIST_OBJECT_ID), tx.object(opts.denyCapId)],
+	});
+	return tx;
+}
+
+export function buildAddFreezeAdminTx(opts: {
+	config: TokenConfig;
+	confidentialTokenId: string;
+	managementCapId: string;
+	address: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.add(
+		contraContracts.issueFreezeCap({
+			package: opts.config.contraPackage,
+			typeArguments: [`${opts.config.buPackage}::bu::BU`],
+			arguments: {
+				ct: opts.confidentialTokenId,
+				T: opts.managementCapId,
+				addr: opts.address,
+			},
+		}),
+	);
+	return tx;
+}
+
+export function buildRemoveFreezeAdminTx(opts: {
+	config: TokenConfig;
+	confidentialTokenId: string;
+	managementCapId: string;
+	address: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.add(
+		contraContracts.revokeFreezeCap({
+			package: opts.config.contraPackage,
+			typeArguments: [`${opts.config.buPackage}::bu::BU`],
+			arguments: {
+				ct: opts.confidentialTokenId,
+				T: opts.managementCapId,
+				addr: opts.address,
+			},
+		}),
+	);
+	return tx;
+}
+
+export function buildGlobalFreezeTx(opts: {
+	config: TokenConfig;
+	confidentialTokenId: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.add(
+		contraContracts.globalFreeze({
+			package: opts.config.contraPackage,
+			typeArguments: [`${opts.config.buPackage}::bu::BU`],
+			arguments: { ct: opts.confidentialTokenId },
+		}),
+	);
+	return tx;
+}
+
+export function buildGlobalUnfreezeTx(opts: {
+	config: TokenConfig;
+	confidentialTokenId: string;
+}): Transaction {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `${opts.config.buPackage}::bu::unfreeze_confidential`,
+		arguments: [tx.object(opts.config.buTreasury), tx.object(opts.confidentialTokenId)],
+	});
+	return tx;
+}
+
+/** Sign and execute a transaction with an issuer-held secret key
+ *  (i.e. without a connected wallet). Used by the issuer monitor for
+ *  deny-list, pause, and freeze-admin operations. */
+export async function executeIssuerTx(opts: {
+	client: SuiJsonRpcClient;
+	secretKey: string;
+	transaction: Transaction;
+}): Promise<{ digest: string }> {
+	const keypair = Ed25519Keypair.fromSecretKey(opts.secretKey);
+	const res = await opts.client.signAndExecuteTransaction({
+		transaction: opts.transaction,
+		signer: keypair,
+		options: { showEffects: true },
+	});
+	await opts.client.waitForTransaction({ digest: res.digest });
+	const status = res.effects?.status;
+	if (status && status.status !== 'success') {
+		throw new Error(status.error ?? 'Transaction failed');
+	}
+	return { digest: res.digest };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 5. Auditor flow
+// ─────────────────────────────────────────────────────────────────────
+
+/** Recover a `TokenAccount` from a target address using the auditor's
+ *  knowledge of the encrypted viewing key, then decrypt that account's
+ *  balance. */
+export async function auditAccount(
+	auditor: ContraAuditor,
+	contraClient: ContraClient,
+	address: string,
+): Promise<{ tokenAccount: TokenAccount; balance: TokenBalance }> {
+	const tokenAccount = await auditor.getTokenAccount(address);
+	const balance = await contraClient.getBalance(tokenAccount);
+	return { tokenAccount, balance };
+}
+
+/** Decrypt the encrypted amount carried inside a `TransferEvent` from
+ *  the perspective of either the sender or the receiver. Returns `null`
+ *  if the event isn't a valid `TransferEvent` BCS payload or the local
+ *  viewing key can't decrypt it. */
+export function decryptTransferEventAmount(opts: {
+	event: SuiEvent;
+	side: 'sender' | 'receiver';
+	tokenAccount: TokenAccount;
+	table: DiscreteLogTable;
+}): bigint | null {
+	try {
+		const decoded = TransferEventBcs.fromBase64(opts.event.bcs);
+		const encrypted =
+			opts.side === 'sender' ? decoded.encrypted_amount_sender : decoded.encrypted_amount_receiver;
+		return opts.tokenAccount.decryptAmount(EncryptedAmount.fromBcs(encrypted), opts.table);
+	} catch (e) {
+		console.error('[sdk] failed to decrypt TransferEvent', e);
+		return null;
+	}
+}
+
+/** Cheaply check that a candidate auditor private key matches a given
+ *  on-chain auditor public key (for verification UIs). */
+export function auditorPrivateKeyMatchesPublic(
+	privateKey: bigint,
+	publicKeyBytes: Uint8Array,
+): boolean {
+	const expected = G.multiply(privateKey).toBytes();
+	if (expected.length !== publicKeyBytes.length) return false;
+	for (let i = 0; i < expected.length; i++) {
+		if (expected[i] !== publicKeyBytes[i]) return false;
+	}
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 6. Faucet
+// ─────────────────────────────────────────────────────────────────────
+
+export function requestDevnetSui(address: string): Promise<unknown> {
+	return requestSuiFromFaucetV2({
+		host: getFaucetHost('devnet'),
+		recipient: address,
+	});
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 7. Deployment (issuer setup)
+// ─────────────────────────────────────────────────────────────────────
+
+const NUM_AUDITORS = 2;
+
+function bytesToHex(bytes: Uint8Array): string {
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function findObjectByType(
+	objects: Array<{ objectId: string; objectType: string }>,
+	typeSubstring: string,
+): string {
+	const obj = objects.find((o) => o.objectType.includes(typeSubstring));
+	if (!obj) {
+		throw new Error(`No object found matching type "${typeSubstring}"`);
+	}
+	return obj.objectId;
+}
+
+/** Deploy the BU token and Contra packages, register BU as a
+ *  confidential token, and create an on-chain TokenConfig. Returns
+ *  every object id the kaisho UI needs to drive the deployment plus a
+ *  freshly-generated set of auditor keypairs. */
+export async function createTokenFromBytecodes(
+	bytecodes: Bytecodes,
+	keypair: Ed25519Keypair,
+	client: SuiJsonRpcClient,
+	log: (msg: string) => void = () => {},
+): Promise<CreateTokenResult> {
+	log('Publishing packages on chain...');
+	const result = await publishBytecodes(bytecodes, keypair, client);
+	const packageId = result.packageId;
+	await client.waitForTransaction({ digest: result.digest });
+	log(`Published package: ${packageId}`);
+
+	const buTreasuryId = findObjectByType(result.createdObjects, 'BuTreasury');
+	const tokenRegistryId = findObjectByType(result.createdObjects, 'TokenRegistry');
+	const accountRegistryId = findObjectByType(result.createdObjects, 'AccountRegistry');
+	const denyCapId = findObjectByType(result.createdObjects, 'DenyCapV2');
+	log(`BuTreasury: ${buTreasuryId}`);
+	log(`TokenRegistry: ${tokenRegistryId}`);
+	log(`AccountRegistry: ${accountRegistryId}`);
+	log(`DenyCap: ${denyCapId}`);
+
+	log(`Generating ${NUM_AUDITORS} auditor keypair(s)...`);
+	const auditorKeys: AuditorKey[] = Array.from({ length: NUM_AUDITORS }, () => {
+		const sk = randomScalar();
+		const pk = G.multiply(sk).toBytes();
+		return { privateKey: sk.toString(16), publicKey: bytesToHex(pk) };
+	});
+	auditorKeys.forEach((k, i) => log(`Auditor ${i + 1} pubkey: ${k.publicKey}`));
+
+	log('Registering BU as confidential token...');
+	const regTx = new Transaction();
+	const auditorPubKeyArgs = auditorKeys.map((k) =>
+		point(Uint8Array.from(k.publicKey.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
+	);
+	regTx.moveCall({
+		target: `${packageId}::bu::register_confidential`,
+		arguments: [
+			regTx.object(buTreasuryId),
+			regTx.object(tokenRegistryId),
+			regTx.makeMoveVec({
+				type: `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`,
+				elements: auditorPubKeyArgs,
+			}),
+		],
+	});
+	const regResult = await client.signAndExecuteTransaction({
+		transaction: regTx,
+		signer: keypair,
+		options: { showObjectChanges: true },
+	});
+	await client.waitForTransaction({ digest: regResult.digest });
+
+	const confidentialTokenObj = (regResult.objectChanges ?? []).find(
+		(c) => c.type === 'created' && c.objectType.includes('ConfidentialToken'),
+	);
+	if (!confidentialTokenObj || confidentialTokenObj.type !== 'created') {
+		throw new Error('Failed to find created ConfidentialToken object');
+	}
+	const confidentialTokenId = confidentialTokenObj.objectId;
+	log(`ConfidentialToken: ${confidentialTokenId}`);
+
+	const managementCapObj = (regResult.objectChanges ?? []).find(
+		(c) => c.type === 'created' && c.objectType.includes('ManagementCap'),
+	);
+	if (!managementCapObj || managementCapObj.type !== 'created') {
+		throw new Error('Failed to find created ManagementCap object');
+	}
+	const managementCapId = managementCapObj.objectId;
+	log(`ManagementCap: ${managementCapId}`);
+
+	log('Creating on-chain TokenConfig...');
+	const tx = new Transaction();
+	tx.moveCall({
+		target: `${packageId}::token_config::create`,
+		arguments: [
+			tx.pure.address(packageId),
+			tx.pure.address(buTreasuryId),
+			tx.pure.address(packageId),
+			tx.pure.address(tokenRegistryId),
+			tx.pure.address(accountRegistryId),
+			tx.pure.vector('u8', bytecodes.digest),
+		],
+	});
+	const configResult = await client.signAndExecuteTransaction({
+		transaction: tx,
+		signer: keypair,
+		options: { showObjectChanges: true },
+	});
+	const configObj = (configResult.objectChanges ?? []).find(
+		(c) => c.type === 'created' && c.objectType.includes('TokenConfig'),
+	);
+	if (!configObj || configObj.type !== 'created') {
+		throw new Error('Failed to find created TokenConfig object');
+	}
+	const tokenConfigId = configObj.objectId;
+	log(`TokenConfig: ${tokenConfigId}`);
+
+	return {
+		buPackageId: packageId,
+		buTreasuryId,
+		contraPackageId: packageId,
+		tokenRegistryId,
+		accountRegistryId,
+		confidentialTokenId,
+		managementCapId,
+		tokenConfigId,
+		denyCapId,
+		auditorKeys,
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 8. Tx execution helpers
+// ─────────────────────────────────────────────────────────────────────
+
+/** Some Contra transactions emit a sentinel event when a merge step
+ *  raced against another tx and the operation rolled back gracefully
+ *  (e.g. `TryTransferFailedEvent`, `TryUnwrapFailedEvent`). Wait for
+ *  the transaction with events, then return whether the sentinel fired. */
+export async function transactionEmittedEvent(
+	suiClient: SuiJsonRpcClient,
+	digest: string,
+	eventTypeSubstring: string,
+): Promise<boolean> {
+	const txResponse = await suiClient.waitForTransaction({
+		digest,
+		options: { showEvents: true },
+	});
+	return !!txResponse.events?.some((e: SuiEvent) => e.type.includes(eventTypeSubstring));
+}

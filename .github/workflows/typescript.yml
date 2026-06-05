@@ -1,0 +1,203 @@
+name: TypeScript
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: Format (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [ts-sdk, apps/kaisho, utils/ts-utils, apps/payment-channel/ts]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # pin@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # pin@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pin@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: ${{ matrix.workspace }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ${{ matrix.workspace }}
+
+      - name: Check formatting
+        run: pnpm format:check
+        working-directory: ${{ matrix.workspace }}
+
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # pin@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # pin@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pin@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: ts-sdk/pnpm-lock.yaml
+
+      # ts-sdk and contra-utils have a circular `file:` dep: contra-utils
+      # imports types from ts-sdk (for setup helpers), and ts-sdk's e2e
+      # tests import from contra-utils. Build ts-sdk first — its `src/` does
+      # not reference contra-utils, only its `test/` does — then build
+      # contra-utils against ts-sdk's dist, then run ts-sdk tests against
+      # contra-utils's dist.
+      - name: Add wasm32 Rust target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      # Build the WASM package before installing ts-sdk: pnpm packs `file:` deps
+      # at install time, so the nodejs/web outputs must already exist.
+      - name: Build WASM bindings
+        run: pnpm build:wasm
+        working-directory: utils/bulletproofs-wasm
+
+      - name: Install ts-sdk dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ts-sdk
+
+      - name: Build ts-sdk
+        run: pnpm build
+        working-directory: ts-sdk
+
+      - name: Install + build contra-utils
+        run: pnpm install --frozen-lockfile && pnpm build
+        working-directory: utils/ts-utils
+
+      # pnpm packs `file:` dep contents into its virtual store at install
+      # time, picking up only what `files` lists in package.json. Since
+      # contra-utils' dist/ didn't exist when ts-sdk was first installed,
+      # nothing got packed; --force re-links it now that dist/ is built.
+      - name: Refresh contra-utils link in ts-sdk
+        run: pnpm install --frozen-lockfile --force
+        working-directory: ts-sdk
+
+      - name: Test
+        run: pnpm test
+        working-directory: ts-sdk
+
+      # apps/payment-channel/ts depends on both ts-sdk and contra-utils via
+      # file: deps, so install runs only after the steps above have produced
+      # their dist/ outputs.
+      - name: Install + typecheck payment-channel
+        run: pnpm install --frozen-lockfile && pnpm typecheck
+        working-directory: apps/payment-channel/ts
+
+  e2e:
+    # Hits public Sui devnet (faucet + RPC). Surfaced as a separate job so
+    # branch protection rules can keep `Build and Test` required while
+    # leaving this one informational.
+    name: E2E (devnet)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # pin@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # pin@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pin@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: ts-sdk/pnpm-lock.yaml
+
+      - name: Add wasm32 Rust target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      # Build the WASM package before installing ts-sdk: pnpm packs `file:` deps
+      # at install time, so the nodejs/web outputs must already exist.
+      - name: Build WASM bindings
+        run: pnpm build:wasm
+        working-directory: utils/bulletproofs-wasm
+
+      # See note in build-and-test about the circular file: dep ordering.
+      - name: Install ts-sdk dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ts-sdk
+
+      - name: Install sui CLI
+        # ContraInitializer in the e2e suite shells out to `sui move build` to
+        # publish the contra package on devnet, so the CLI must be on $PATH.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/Mystenlabs/suiup/main/install.sh | sh
+          suiup install sui -y
+          sui --version
+
+      - name: Configure sui CLI for devnet
+        # `sui move build -e devnet` needs a client.yaml that registers a
+        # `devnet` env, otherwise the CLI errors with "No sui config…" and
+        # the test harness blows up parsing the error as JSON. We don't need
+        # a populated keystore — signing happens via the JSON-RPC client in
+        # the test code, not the CLI.
+        run: |
+          mkdir -p "$HOME/.sui/sui_config"
+          cat > "$HOME/.sui/sui_config/client.yaml" <<EOF
+          keystore:
+            File: $HOME/.sui/sui_config/sui.keystore
+          envs:
+            - alias: devnet
+              rpc: "https://fullnode.devnet.sui.io:443"
+              ws: ~
+              basic_auth: ~
+          active_env: devnet
+          active_address: ~
+          EOF
+          echo '[]' > "$HOME/.sui/sui_config/sui.keystore"
+          sui client envs
+
+      - name: Build ts-sdk
+        run: pnpm build
+        working-directory: ts-sdk
+
+      - name: Install + build contra-utils
+        run: pnpm install --frozen-lockfile && pnpm build
+        working-directory: utils/ts-utils
+
+      # See note in build-and-test about --force.
+      - name: Refresh contra-utils link in ts-sdk
+        run: pnpm install --frozen-lockfile --force
+        working-directory: ts-sdk
+
+      - name: Test (e2e)
+        run: pnpm test:e2e
+        working-directory: ts-sdk
+
+      # Same ts-sdk + contra-utils build chain feeds payment-channel's e2e.
+      - name: Install payment-channel dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/payment-channel/ts
+
+      - name: Test (e2e) payment-channel
+        run: pnpm test:e2e
+        working-directory: apps/payment-channel/ts

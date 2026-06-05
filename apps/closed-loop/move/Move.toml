@@ -1,0 +1,10 @@
+[package]
+name = "closed_loop"
+edition = "2024"
+
+[dependencies]
+contra = { local = "../../../move" }
+bu_token = { local = "../../../utils/move/test_token" }
+
+[environments]
+devnet = "4fe43958"

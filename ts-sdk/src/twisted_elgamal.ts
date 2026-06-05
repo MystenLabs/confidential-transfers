@@ -1,0 +1,500 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+import { Field } from '@noble/curves/abstract/modular.js';
+import { ristretto255 } from '@noble/curves/ed25519.js';
+
+import { DecryptionFailedError, InvalidArgumentError } from './error.js';
+import { DdhTupleNizk, ElGamalNizk } from './nizk.js';
+import { PedersenCommitment } from './pedersen.js';
+import {
+	G,
+	H,
+	mul,
+	mulUnsafe,
+	pointFromBcs,
+	randomScalar,
+	ZERO,
+	type RistrettoPoint,
+} from './ristretto255.js';
+
+/**
+ * When enabled, the discrete-log table and decrypt routines emit timing
+ * and size diagnostics to `console.log`. Off by default to keep host
+ * applications quiet; toggle with {@link setDebugLogging}.
+ */
+let debugLogging = false;
+
+/** Enable or disable diagnostic logging for table construction and decryption. */
+export function setDebugLogging(enabled: boolean): void {
+	debugLogging = enabled;
+}
+
+/** ed25519 base field for Montgomery batch inversion. */
+const Fp = Field(2n ** 255n - 19n);
+
+// NOTE: `cosetX` and `computeTableEntries` read noble's PRIVATE extended-point
+// representation — `(point).ep` with bigint `X/Y/Z/T` fields — and build the
+// torsion points below via the extended-point constructor `new EP(X, Y, Z, T)`.
+// This is a deliberate performance optimization (extracting Edwards
+// x-coordinates with a single batch inversion is ~70x faster than the public
+// `toBytes()` per point when building the discrete-log table).
+
+/** The 4 torsion points that form the ristretto equivalence kernel, in extended (X,Y,Z,T) coords. */
+const SQRT_M1 = 19681161376707505956807079304988542015446066515923890162744021073123829784752n;
+const p = 2n ** 255n - 19n;
+const EP = (ristretto255.Point.BASE as any).ep.constructor;
+const TORSION_EPS = [
+	new EP(0n, 1n, 1n, 0n), // identity
+	new EP(0n, p - 1n, 1n, 0n), // (0, -1)
+	new EP(SQRT_M1, 0n, 1n, 0n), // (√-1, 0)
+	new EP(p - SQRT_M1, 0n, 1n, 0n), // (-√-1, 0)
+];
+
+/** The 4 Edwards .x coordinates of the ristretto equivalence class of `point`. */
+function cosetX(point: RistrettoPoint): bigint[] {
+	const ep = (point as any).ep;
+	const shifted = TORSION_EPS.map((t: any) => ep.add(t));
+	const invertedZs = Fp.invertBatch(shifted.map((s: any) => s.Z));
+	return shifted.map((s: any, k) => Fp.mul(s.X, invertedZs[k]));
+}
+
+export type PublicKey = RistrettoPoint;
+export type PrivateKey = bigint;
+
+export function generateKeyPair(): [PublicKey, PrivateKey] {
+	const privateKey = randomScalar();
+	const pk = mul(G, privateKey);
+	return [pk, privateKey];
+}
+
+/**
+ * Compute the raw table entries (truncated x-coordinate → index pairs)
+ * for a given numBits. This is a pure function that can run in a web
+ * worker. Returns a flat Uint32Array of [key, value, key, value, ...]
+ * pairs that can be transferred to the main thread.
+ */
+export function computeTableEntries(numBits: number): Uint32Array {
+	const start = performance.now();
+	const tableSize = 2 ** numBits;
+
+	// Phase 1: compute all points via cheap projective addition.
+	const points = new Array<RistrettoPoint>(tableSize);
+	points[0] = ZERO;
+	for (let i = 1; i < tableSize; i++) {
+		points[i] = points[i - 1].add(H);
+	}
+
+	// Phase 2: extract affine x-coordinates with a single batch inversion.
+	const invertedZs = Fp.invertBatch(points.map((p) => (p as any).ep.Z as bigint));
+	const xCoords = points.map((p, i) => Fp.mul((p as any).ep.X as bigint, invertedZs[i]));
+
+	// Phase 3: pack into a flat Uint32Array [key, value, key, value, ...]
+	const entries = new Uint32Array(tableSize * 2);
+	for (let i = 0; i < tableSize; i++) {
+		entries[i * 2] = Number(xCoords[i] & 0xffffffffn);
+		entries[i * 2 + 1] = i;
+	}
+
+	if (debugLogging) {
+		const sizeBytes = tableSize * (4 + 4);
+		const elapsed = performance.now() - start;
+		console.log(
+			`[computeTableEntries] computed in ${elapsed.toFixed(1)}ms | numBits=${numBits} | size=${(sizeBytes / 1024).toFixed(0)}KB`,
+		);
+	}
+	return entries;
+}
+
+/**
+ * Precomputed discrete-log table for ristretto255. Stores sequential
+ * multiples of H keyed by truncated 4-byte Edwards x-coordinates,
+ * with verification by scalar multiplication to guard against collisions.
+ *
+ * Decrypt searches by subtracting `2^numBits * H` (the giant step)
+ * each iteration and checking the table. Small values (the common
+ * case for u16 limbs) are found on the first lookup with no loop.
+ *
+ * Larger `numBits` makes decryption faster (fewer giant-step iterations
+ * before a hit) but quadruples the table memory each bit: the table
+ * holds `2^numBits` entries of 8 bytes each, so e.g. `numBits = 16`
+ * is 512 KiB and `numBits = 24` is 128 MiB.
+ */
+export class DiscreteLogTable {
+	readonly numBits: number;
+	readonly tableSize: number;
+	readonly giantStep: RistrettoPoint;
+	#table: Map<number, number[]>;
+	// Small internal cache to speed up lookups for repeated calls.
+	static readonly MAX_CACHE_SIZE = 1024;
+	#cache: Map<number, bigint>;
+
+	private constructor(numBits: number, table: Map<number, number[]>) {
+		this.numBits = numBits;
+		this.tableSize = 2 ** numBits;
+		this.giantStep = mul(H, BigInt(this.tableSize));
+		this.#table = table;
+		this.#cache = new Map();
+	}
+
+	/** Compute the table synchronously (convenience for tests / Node). */
+	static create(numBits: number = 16): DiscreteLogTable {
+		if (numBits > 32) {
+			throw new InvalidArgumentError(`numBits must be <= 32 (got ${numBits})`);
+		}
+		const entries = computeTableEntries(numBits);
+		return DiscreteLogTable.fromEntries(numBits, entries);
+	}
+
+	/** Construct from pre-computed entries (e.g. from a web worker). */
+	static fromEntries(numBits: number, entries: Uint32Array): DiscreteLogTable {
+		const table = new Map<number, number[]>();
+		let collisions = 0;
+		for (let i = 0; i < entries.length; i += 2) {
+			const key = entries[i];
+			const value = entries[i + 1];
+			const existing = table.get(key);
+			if (existing) {
+				existing.push(value);
+				collisions++;
+			} else {
+				table.set(key, [value]);
+			}
+		}
+
+		if (debugLogging) {
+			const sizeBytes = 2 ** numBits * (4 + 4);
+			console.log(
+				`[DiscreteLogTable] created | numBits=${numBits} | size=${(sizeBytes / 1024).toFixed(0)}KB | collisions=${collisions}`,
+			);
+		}
+		return new DiscreteLogTable(numBits, table);
+	}
+
+	/**
+	 * Look up a point in the cache or precomputed table. Returns the
+	 * baby-step value (table index) if matched, `undefined` otherwise.
+	 * The caller adds the giant-step offset.
+	 */
+	lookup(point: RistrettoPoint): { value: bigint; cached: boolean } | undefined {
+		// Cache key truncates to 32 bits; verify hits against the point.
+		const cacheKey = Number(point.x & 0xffffffffn);
+		const cached = this.#cache.get(cacheKey);
+		if (cached !== undefined && mulUnsafe(H, cached).equals(point)) {
+			return { value: cached, cached: true };
+		}
+
+		for (const x of cosetX(point)) {
+			const candidates = this.#table.get(Number(x & 0xffffffffn));
+			if (candidates === undefined) continue;
+			for (const babyStepIndex of candidates) {
+				const result = BigInt(babyStepIndex);
+				if (mulUnsafe(H, result).equals(point)) {
+					if (this.#cache.size >= DiscreteLogTable.MAX_CACHE_SIZE) {
+						// FIFO eviction: Map iteration is insertion-ordered.
+						const oldest = this.#cache.keys().next().value;
+						if (oldest !== undefined) this.#cache.delete(oldest);
+					}
+					this.#cache.set(cacheKey, result);
+					return { value: result, cached: false };
+				}
+			}
+		}
+		return undefined;
+	}
+}
+
+/**
+ * A twisted ElGamal encryption — `ciphertext = r*G + m*H` and
+ * `decryptionHandle = r*pk` — of a u16 value (decryptable up to ~2^32).
+ *
+ * The two fields match the `contra::twisted_elgamal::Encryption` Move
+ * struct. Use `Ciphertext.fromBcs` to lift the raw shape produced by the
+ * generated `twisted_elgamal.Encryption` BCS schema into a `Ciphertext`.
+ */
+export class Ciphertext {
+	ciphertext: RistrettoPoint;
+	decryptionHandle: RistrettoPoint;
+
+	constructor(ciphertext: RistrettoPoint, decryptionHandle: RistrettoPoint) {
+		this.ciphertext = ciphertext;
+		this.decryptionHandle = decryptionHandle;
+	}
+
+	static encryptWithBlinding(
+		pk: PublicKey,
+		value: bigint,
+		blinding: bigint,
+	): { ciphertext: Ciphertext; blinding: bigint } {
+		const commitment = new PedersenCommitment(value, blinding);
+		return { ciphertext: new Ciphertext(commitment.p, mul(pk, blinding)), blinding };
+	}
+
+	static encrypt(pk: PublicKey, value: bigint): { ciphertext: Ciphertext; blinding: bigint } {
+		const blinding = randomScalar();
+		return Ciphertext.encryptWithBlinding(pk, value, blinding);
+	}
+
+	/**
+	 * Encrypt a value under `pk` and generate an ElGamal consistency proof.
+	 * `blinding` defaults to a fresh random scalar; pass it explicitly to
+	 * re-key an existing amount while keeping the same per-limb commitment.
+	 */
+	static encryptWithConsistencyProof(
+		dst: Uint8Array,
+		pk: PublicKey,
+		value: bigint,
+	): { ciphertext: Ciphertext; blinding: bigint; proof: ElGamalNizk } {
+		const blinding = randomScalar();
+		const { ciphertext } = Ciphertext.encryptWithBlinding(pk, value, blinding);
+		const proof = ElGamalNizk.prove(dst, blinding, value, ciphertext, pk);
+		return { ciphertext, blinding, proof };
+	}
+
+	/**
+	 * Prove that this ciphertext encrypts zero under the given key pair.
+	 * Returns a `DdhTupleNizk` proving `decryptionHandle = sk * ciphertext`.
+	 */
+	proveIsZero(dst: Uint8Array, sk: PrivateKey, pk: PublicKey): DdhTupleNizk {
+		return DdhTupleNizk.prove(dst, sk, G, this.ciphertext, pk, this.decryptionHandle);
+	}
+
+	/**
+	 * Prove that this ciphertext decrypts to `value` under the key pair
+	 * `(sk, pk)`, without revealing `sk`.
+	 */
+	proveDecryption(dst: Uint8Array, sk: PrivateKey, pk: PublicKey, value: bigint): DdhTupleNizk {
+		const commitmentToZero = this.ciphertext.subtract(mul(H, value));
+		return DdhTupleNizk.prove(dst, sk, G, commitmentToZero, pk, this.decryptionHandle);
+	}
+
+	/**
+	 * Verify a `proveDecryption` proof: returns `true` iff `proof`
+	 * demonstrates that this ciphertext decrypts to `value` under the
+	 * secret key corresponding to `pk`.
+	 */
+	verifyDecryption(dst: Uint8Array, pk: PublicKey, value: bigint, proof: DdhTupleNizk): boolean {
+		const commitmentToZero = this.ciphertext.subtract(mul(H, value));
+		return proof.verify(dst, G, commitmentToZero, pk, this.decryptionHandle);
+	}
+
+	/**
+	 * Construct a `Ciphertext` from the BCS-decoded shape produced by the
+	 * generated `twisted_elgamal.Encryption` schema.
+	 */
+	static fromBcs(raw: {
+		ciphertext: { bytes: number[] };
+		decryption_handle: { bytes: number[] };
+	}): Ciphertext {
+		return new Ciphertext(pointFromBcs(raw.ciphertext), pointFromBcs(raw.decryption_handle));
+	}
+
+	/** Trivial encryption of `value` with zero blinding: `(value*H, identity)`. */
+	static trivial(value: bigint): Ciphertext {
+		return new Ciphertext(mul(H, value), ZERO);
+	}
+
+	/** Component-wise addition of two ciphertexts. */
+	add(other: Ciphertext): Ciphertext {
+		return new Ciphertext(
+			this.ciphertext.add(other.ciphertext),
+			this.decryptionHandle.add(other.decryptionHandle),
+		);
+	}
+
+	/** Component-wise subtraction. */
+	subtract(other: Ciphertext): Ciphertext {
+		return new Ciphertext(
+			this.ciphertext.subtract(other.ciphertext),
+			this.decryptionHandle.subtract(other.decryptionHandle),
+		);
+	}
+
+	/** Scalar-multiply both components by `2^bits`. */
+	shiftLeft(bits: number): Ciphertext {
+		const factor = 1n << BigInt(bits);
+		return new Ciphertext(mul(this.ciphertext, factor), mul(this.decryptionHandle, factor));
+	}
+
+	/**
+	 * Decrypt this ciphertext under `privateKey`, recovering the
+	 * underlying plaintext via baby-step giant-step over `table`.
+	 * Throws {@link DecryptionFailedError} if the plaintext is outside
+	 * the table's `2^(2 * numBits)` range or the key is wrong.
+	 */
+	decrypt(privateKey: PrivateKey, table: DiscreteLogTable): bigint {
+		return this.decryptWithInverse(ristretto255.Point.Fn.inv(privateKey), table);
+	}
+
+	/**
+	 * Like {@link decrypt}, but takes a precomputed scalar-field inverse
+	 * of the private key so that callers decrypting many ciphertexts
+	 * under the same key invert once and reuse the result.
+	 */
+	decryptWithInverse(privateKeyInverse: bigint, table: DiscreteLogTable): bigint {
+		const start = performance.now();
+		const c = this.ciphertext.subtract(mul(this.decryptionHandle, privateKeyInverse));
+
+		// Giant-step loop: subtract tableSize*H each iteration, look up
+		// the remainder in the baby-step table. Small values (common case
+		// for u16 limbs) are found on the first lookup with no subtraction.
+		const tableSize = BigInt(table.tableSize);
+		let point = c;
+		for (let g = 0n; g < tableSize; g++) {
+			const hit = table.lookup(point);
+			if (hit !== undefined) {
+				const result = g * tableSize + hit.value;
+				if (debugLogging) {
+					const elapsed = performance.now() - start;
+					console.log(
+						`[decrypt] ${hit.cached ? 'cache hit' : 'cache miss'} | ${elapsed.toFixed(1)}ms | value=${result}`,
+					);
+				}
+				return result;
+			}
+			point = point.subtract(table.giantStep);
+		}
+
+		throw new DecryptionFailedError(table.numBits);
+	}
+}
+
+/**
+ * Four twisted ElGamal ciphertext limbs that together represent an
+ * on-chain `contra::encrypted_amount::EncryptedAmount`. The underlying
+ * plaintext is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
+ */
+export class EncryptedAmount {
+	l0: Ciphertext;
+	l1: Ciphertext;
+	l2: Ciphertext;
+	l3: Ciphertext;
+
+	constructor(l0: Ciphertext, l1: Ciphertext, l2: Ciphertext, l3: Ciphertext) {
+		this.l0 = l0;
+		this.l1 = l1;
+		this.l2 = l2;
+		this.l3 = l3;
+	}
+
+	/**
+	 * Construct an `EncryptedAmount` from the BCS-decoded shape produced by the generated
+	 * `encrypted_amount.EncryptedAmount` schema.
+	 */
+	static fromBcs(raw: {
+		l0: { ciphertext: { bytes: number[] }; decryption_handle: { bytes: number[] } };
+		l1: { ciphertext: { bytes: number[] }; decryption_handle: { bytes: number[] } };
+		l2: { ciphertext: { bytes: number[] }; decryption_handle: { bytes: number[] } };
+		l3: { ciphertext: { bytes: number[] }; decryption_handle: { bytes: number[] } };
+	}): EncryptedAmount {
+		return new EncryptedAmount(
+			Ciphertext.fromBcs(raw.l0),
+			Ciphertext.fromBcs(raw.l1),
+			Ciphertext.fromBcs(raw.l2),
+			Ciphertext.fromBcs(raw.l3),
+		);
+	}
+
+	/**
+	 * Trivially encrypt `value` with zero blinding, splitting it into
+	 * four u16 limbs. Matches the on-chain `from_value` helper.
+	 */
+	static trivial(value: bigint): EncryptedAmount {
+		return new EncryptedAmount(
+			Ciphertext.trivial(value & 0xffffn),
+			Ciphertext.trivial((value >> 16n) & 0xffffn),
+			Ciphertext.trivial((value >> 32n) & 0xffffn),
+			Ciphertext.trivial((value >> 48n) & 0xffffn),
+		);
+	}
+
+	/**
+	 * Combine the four limbs into a single `Ciphertext` encoding the
+	 * full u64 value, matching the on-chain
+	 * `EncryptedAmount::to_encryption()`.
+	 */
+	collapse(): Ciphertext {
+		return this.l0.add(this.l1.shiftLeft(16).add(this.l2.shiftLeft(32).add(this.l3.shiftLeft(48))));
+	}
+
+	/**
+	 * Decrypt all four limbs and combine into the underlying u64
+	 * plaintext. Each limb is decrypted independently and shifted
+	 * into place: `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
+	 */
+	decrypt(privateKey: PrivateKey, table: DiscreteLogTable): bigint {
+		const inv = ristretto255.Point.Fn.inv(privateKey);
+		const d0 = this.l0.decryptWithInverse(inv, table);
+		const d1 = this.l1.decryptWithInverse(inv, table);
+		const d2 = this.l2.decryptWithInverse(inv, table);
+		const d3 = this.l3.decryptWithInverse(inv, table);
+		return d0 + (d1 << 16n) + (d2 << 32n) + (d3 << 48n);
+	}
+}
+
+export function collapseBlindings(blindings: { blinding: bigint }[]): bigint {
+	return blindings
+		.map((e) => e.blinding)
+		.reduce((acc, r, i) => {
+			const shift = BigInt(i * 16);
+			const shifted = shift === 0n ? r : ristretto255.Point.Fn.create(r * (1n << shift));
+			return ristretto255.Point.Fn.create(acc + shifted);
+		}, 0n);
+}
+
+/**
+ * A Twisted ElGamal ciphertext encrypted to multiple recipients.
+ * All recipients share the same Pedersen commitment `C = r*G + m*H`;
+ * each recipient j gets their own decryption handle `D_j = r * pk_j`.
+ *
+ */
+export class MultiRecipientEncryption {
+	commitment: RistrettoPoint;
+	decryptionHandles: RistrettoPoint[];
+
+	constructor(commitment: RistrettoPoint, decryptionHandles: RistrettoPoint[]) {
+		this.commitment = commitment;
+		this.decryptionHandles = decryptionHandles;
+	}
+
+	/**
+	 * Encrypt `value` to all `recipientKeys` using the provided shared blinding `r`.
+	 */
+	static encrypt(
+		recipientKeys: PublicKey[],
+		value: bigint,
+		blinding: bigint,
+	): MultiRecipientEncryption {
+		const commitment = new PedersenCommitment(value, blinding).p;
+		const decryptionHandles = recipientKeys.map((pk) => mul(pk, blinding));
+		return new MultiRecipientEncryption(commitment, decryptionHandles);
+	}
+
+	/**
+	 * Construct a `MultiRecipientEncryption` from the BCS-decoded shape produced
+	 * by the generated `twisted_elgamal.MultiRecipientEncryption` schema.
+	 */
+	static fromBcs(raw: {
+		ciphertext: { bytes: number[] };
+		decryption_handles: { bytes: number[] }[];
+	}): MultiRecipientEncryption {
+		return new MultiRecipientEncryption(
+			pointFromBcs(raw.ciphertext),
+			raw.decryption_handles.map(pointFromBcs),
+		);
+	}
+
+	/**
+	 * Extract the single-recipient `Ciphertext` for recipient at `index`.
+	 */
+	#ciphertextFor(index: number): Ciphertext {
+		return new Ciphertext(this.commitment, this.decryptionHandles[index]);
+	}
+
+	/**
+	 * Decrypt this ciphertext for recipient at `index` using `privateKey`.
+	 */
+	decrypt(index: number, privateKey: PrivateKey, table: DiscreteLogTable): bigint {
+		return this.#ciphertextFor(index).decrypt(privateKey, table);
+	}
+}

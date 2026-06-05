@@ -1,0 +1,6 @@
+[package]
+name = "mycoin"
+edition = "2024"
+
+[environments]
+devnet = "4fe43958"

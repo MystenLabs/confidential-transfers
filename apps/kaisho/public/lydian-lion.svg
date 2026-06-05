@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <circle cx="32" cy="32" r="30" fill="#C9A84C" stroke="#8B6914" stroke-width="2"/>
+  <circle cx="32" cy="32" r="25" fill="none" stroke="#8B6914" stroke-width="1" stroke-dasharray="3 2"/>
+  <!-- Stylised lion head -->
+  <g transform="translate(32,34)" stroke="#5C3D0E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Mane -->
+    <path d="M-10,-8 Q-14,-4 -12,2 Q-14,6 -10,10" />
+    <path d="M10,-8 Q14,-4 12,2 Q14,6 10,10" />
+    <path d="M-8,-10 Q-4,-14 0,-12 Q4,-14 8,-10" />
+    <!-- Face outline -->
+    <ellipse cx="0" cy="0" rx="9" ry="10" fill="#B8922E"/>
+    <!-- Eyes -->
+    <circle cx="-3.5" cy="-3" r="1.2" fill="#5C3D0E"/>
+    <circle cx="3.5" cy="-3" r="1.2" fill="#5C3D0E"/>
+    <!-- Nose -->
+    <path d="M-1.5,1 L0,2.5 L1.5,1" />
+    <!-- Mouth -->
+    <path d="M-3,4.5 Q0,7 3,4.5" />
+    <!-- Whiskers -->
+    <line x1="-9" y1="2" x2="-5" y2="1.5" />
+    <line x1="-9" y1="4" x2="-5" y2="3" />
+    <line x1="9" y1="2" x2="5" y2="1.5" />
+    <line x1="9" y1="4" x2="5" y2="3" />
+  </g>
+</svg>

@@ -1,0 +1,9 @@
+[package]
+name = "gated"
+edition = "2024"
+
+[dependencies]
+contra = { local = "../../../../../move" }
+
+[environments]
+devnet = "4fe43958"
