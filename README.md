@@ -235,3 +235,4 @@ Known gaps in the current implementation:
 - **Client SDK is not yet designed for wallets.** `ContraClient` targets the example apps and test suites in this repo: it assumes the calling process can hold the user's viewing key directly and builds whole transactions.
 - **Client SDK, no permissioned operations.** `ContraClient` only builds calls against the permissionless entry points. Wrapper calls into issuer-defined permissioned `register` / `wrap` / `unwrap` flows must currently be assembled by hand in the issuer's own client code.
 - **Kaisho app stores user secrets in browser local storage.** The example wallet currently persists viewing/secret keys to local storage only; a future version will use [Seal](https://github.com/MystenLabs/seal) for managed secret storage.
+- **Standalone Move package.** The contract is currently a standalone Move package; later it will be deployed as part of the protocol.
