@@ -6,6 +6,7 @@ module contra::contra_tests;
 
 use contra::{
     auditors,
+    balance,
     contra,
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
@@ -1830,4 +1831,251 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
     );
     // Verifier uses a different dst, thus the Fiat-Shamir challenges diverge and the ElGamal consistency check rejects.
     assert!(!encrypted_amount::verify(&proof, verifier_dst, &vector[ea], &vector[pk]));
+}
+
+// === update_active_balance pending-budget tests ===
+
+// `update_active_balance` may be called with unmerged pending deposits present: re-stating only
+// touches `active`, and `has_deposit_slot` reserves the headroom for the `+1` it adds to
+// `active.upper_bound`, so a later `merge` cannot overflow. This pins that re-stating is not
+// over-restricted (it does not require an empty `pending`).
+#[test]
+fun update_active_balance_allows_unmerged_pending() {
+    let setup_addr = @0x0;
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let sk_2 = ristretto255::scalar_from_u64(67890);
+    let pk_2 = ristretto255::g_mul(&sk_2, &ristretto255::g_generator());
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector<Element<G>>[],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(addr1);
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, &ct, pk_1, option::none());
+
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(addr2);
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_2.register<TestCurrency>(&auth, &ct, pk_2, option::none());
+
+    // account_1 establishes a spendable balance.
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+
+    // account_1 transfers 50 to account_2 -> account_2.pending holds one unmerged deposit.
+    scenario.next_tx(addr1);
+    let new_balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    let r = 32533;
+    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let receiver_amount = amount_for_testing(50, &pk_2, r);
+    let sender_amount = amount_for_testing(50, &pk_1, r);
+    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r, elgamal_dst);
+    let old_balance = account_1.balance<TestCurrency>();
+    let sum_proof = nizk::sum_proof_for_testing(
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        &old_balance,
+        &new_balance_ea.collapse(),
+        &sender_amount.collapse(),
+        &sk_1,
+    );
+    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
+        consistency_proof_for_testing(elgamal_dst, 50, &receiver_amount, r, &pk_2),
+        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
+    ]);
+    transfer<TestCurrency>(
+        &mut account_1,
+        &mut account_2,
+        vector[],
+        &ct,
+        new_balance_ea,
+        pk_2,
+        receiver_amount,
+        well_formed_proofs,
+        sender_amount,
+        consistency_proof,
+        sum_proof,
+        &deny_list,
+        scenario.ctx(),
+    );
+
+    // account_2 re-states its (still zero) active while the pending deposit is unmerged: succeeds.
+    scenario.next_tx(addr2);
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    let dst2_elgamal = account_2.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_elgamal(),
+    );
+    let dst2_ddh = account_2.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
+    let restate_r = 55555;
+    let (restate_ea, restate_proof) = amount_and_proof_for_testing(
+        0,
+        &pk_2,
+        restate_r,
+        dst2_elgamal,
+    );
+    let diff = encrypted_amount::collapse_for_testing(&restate_ea).sub(
+        &account_2.balance<TestCurrency>(),
+    );
+    let balance_proof = nizk::zero_proof_for_testing(dst2_ddh, &diff, &sk_2);
+    account_2.update_active_balance<TestCurrency>(&auth, restate_ea, restate_proof, &balance_proof);
+
+    // The re-state took effect: active now carries the fresh blinding's decryption handle, and the
+    // pending deposit is untouched.
+    let d_new = ristretto255::g_mul(&ristretto255::scalar_from_u64(restate_r), &pk_2);
+    assert_eq!(*account_2.balance<TestCurrency>().decryption_handle(), d_new);
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+    scenario.end();
+}
+
+// The intended use of `update_active_balance`, re-stating active while `pending` is empty, stays
+// available after the guard above.
+#[test]
+fun update_active_balance_succeeds_with_empty_pending() {
+    let setup_addr = @0x0;
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector<Element<G>>[],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(addr1);
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, &ct, pk_1, option::none());
+
+    // Install a known active balance of 50; `set_balance_by_issuer` clears pending, so it is empty.
+    let r = 99999;
+    let balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, r),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_ea);
+
+    // Re-state value 50 under a fresh blinding while pending is empty: allowed.
+    let r_restate = r + 7;
+    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
+    let (restate_ea, restate_proof) = amount_and_proof_for_testing(
+        50,
+        &pk_1,
+        r_restate,
+        elgamal_dst,
+    );
+    let diff = encrypted_amount::collapse_for_testing(&restate_ea).sub(
+        &account_1.balance<TestCurrency>(),
+    );
+    let balance_proof = nizk::zero_proof_for_testing(ddh_dst, &diff, &sk_1);
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.update_active_balance<TestCurrency>(&auth, restate_ea, restate_proof, &balance_proof);
+
+    // The active balance now carries the fresh blinding's decryption handle.
+    let d_new = ristretto255::g_mul(&ristretto255::scalar_from_u64(r_restate), &pk_1);
+    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
+    sui::test_scenario::return_shared(deny_list);
+    scenario.end();
+}
+
+// Boundary: `has_deposit_slot` holds `pending.upper_bound()` at `max_upper_bound() - 2` at most, so
+// even after a re-state bumps `active.upper_bound` from 0 to 1, `merge` lands exactly on
+// `max_upper_bound()` and the u16 `upper_bound` does not overflow.
+#[test]
+fun merge_at_deposit_cap_does_not_overflow_upper_bound() {
+    let mut active = balance::new_with_upper_bound_for_testing<TestCurrency>(1);
+    let mut pending = balance::new_with_upper_bound_for_testing<TestCurrency>(
+        balance::max_upper_bound() - 2,
+    );
+    active.merge_into(&mut pending); // 1 + (max_upper_bound() - 2) = max_upper_bound() - 1
+    active.merge_public(balance::public_coin_for_testing<TestCurrency>(1)); // + 1 = max_upper_bound()
+    assert_eq!(active.upper_bound(), balance::max_upper_bound());
+    active.destroy_for_testing();
+    pending.destroy_for_testing();
+}
+
+// One past the cap (the state `has_deposit_slot` now forbids) the same merge overflows the u16
+// `upper_bound`. This is the regression the fix keeps unreachable.
+#[test, expected_failure(arithmetic_error, location = ::contra::balance)]
+fun merge_one_past_deposit_cap_overflows_upper_bound() {
+    let mut active = balance::new_with_upper_bound_for_testing<TestCurrency>(1);
+    let mut pending = balance::new_with_upper_bound_for_testing<TestCurrency>(
+        balance::max_upper_bound() - 1,
+    );
+    active.merge_into(&mut pending); // 1 + (max_upper_bound() - 1) = max_upper_bound()
+    active.merge_public(balance::public_coin_for_testing<TestCurrency>(1)); // + 1 overflows u16
+    active.destroy_for_testing();
+    pending.destroy_for_testing();
 }

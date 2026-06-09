@@ -312,3 +312,20 @@ fun set_zero<T>(self: &mut EncryptedBalance<T>) {
     self.amount = encrypted_amount::zero();
     self.upper_bound = 0;
 }
+
+// === Test helpers ===
+
+#[test_only]
+public(package) fun new_with_upper_bound_for_testing<T>(upper_bound: u16): EncryptedBalance<T> {
+    EncryptedBalance { amount: encrypted_amount::zero(), upper_bound }
+}
+
+#[test_only]
+public(package) fun public_coin_for_testing<T>(value: u64): PublicCoin<T> {
+    PublicCoin { value }
+}
+
+#[test_only]
+public(package) fun destroy_for_testing<T>(self: EncryptedBalance<T>) {
+    let EncryptedBalance { amount: _, upper_bound: _ } = self;
+}

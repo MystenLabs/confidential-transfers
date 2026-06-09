@@ -971,13 +971,16 @@ fun has_token<T>(account: &Account): bool {
     df::exists(&account.id, TokenAccountKey<T>())
 }
 
-/// Slots available for new pending deposits. Always reserves one slot for a possible future
-/// `merge_public` bump, so the cap compared against is `max_upper_bound() - 1` rather than
-/// `max_upper_bound()`.
+/// Slots available for new pending deposits. Reserves two `upper_bound` headroom slots beyond
+/// `pending`: one for a future `merge_public` `+1`, and one for the `+1` that re-stating `active`
+/// (`update_active_balance` or `set_public_key`) adds when it resets `active.upper_bound` to 1
+/// outside the deposit path. Holding `pending.upper_bound()` at `max_upper_bound() - 2` at most
+/// keeps the worst-case `merge` after such a re-state (`1 + pending.upper_bound() + 1`) within
+/// `max_upper_bound()`, so the u16 `upper_bound` never overflows.
 fun has_deposit_slot<T>(self: &TokenAccount<T>): bool {
     let cap = balance::max_upper_bound_minus_1();
     let used = self.active.upper_bound() + self.pending.upper_bound();
-    cap > used
+    cap > used && self.pending.upper_bound() < balance::max_upper_bound() - 2
 }
 
 /// 20-byte session_id for `account`'s `TokenAccount<T>`.
