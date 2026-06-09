@@ -143,7 +143,7 @@ public(package) fun collapse<T>(self: &EncryptedBalance<T>): Encryption {
 public(package) fun merge_into<T>(self: &mut EncryptedBalance<T>, other: &mut EncryptedBalance<T>) {
     self.amount.add_assign(&other.amount);
     self.upper_bound = self.upper_bound + other.upper_bound;
-    other.set_zero();
+    other.set_empty();
 }
 
 /// Fold an `EncryptedCoin` into `self`. Aborts if the coin's pk doesn't match the caller-supplied
@@ -298,7 +298,7 @@ public(package) fun overwrite_unchecked<T>(
 
 /// Reset `self` to zero without proof.
 public(package) fun clear_unchecked<T>(self: &mut EncryptedBalance<T>, _t: &mut TreasuryCap<T>) {
-    self.set_zero();
+    self.set_empty();
 }
 
 /// Reset a `PublicCoin` to zero without proof.
@@ -314,8 +314,9 @@ fun overwrite<T>(self: &mut EncryptedBalance<T>, new: &WellFormedEncryptedAmount
     self.upper_bound = 1;
 }
 
-/// Reset `self` to zero.
-fun set_zero<T>(self: &mut EncryptedBalance<T>) {
+/// Reset `self` to the same state `empty()` returns. Used by `merge_into` to clear the moved-from
+/// side, so after `merge` the pending balance is back at `upper_bound = 0`.
+fun set_empty<T>(self: &mut EncryptedBalance<T>) {
     self.amount = encrypted_amount::zero();
     self.upper_bound = 0;
 }
