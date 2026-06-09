@@ -356,7 +356,7 @@ public(package) fun register_internal<T>(
             is_frozen: false,
             accepts_deposits: true,
             active: balance::new<T>(),
-            pending: balance::new<T>(),
+            pending: balance::empty<T>(),
             public_balance: balance::zero<T>(),
         },
     );
