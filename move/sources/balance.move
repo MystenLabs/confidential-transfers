@@ -99,12 +99,8 @@ public(package) fun amount<T>(coin: &EncryptedCoin<T>): &WellFormedEncryptedAmou
 
 // === EncryptedBalance ===
 
-/// An `EncryptedBalance` encrypting zero with `upper_bound = 1`. Used to initialize `active`:
-/// reserving the slot up front makes `active.upper_bound() + pending.upper_bound() ≤
-/// max_upper_bound() - 1` (the cap `has_deposit_slot` enforces) automatically imply
-/// `pending.upper_bound() ≤ max_upper_bound() - 2`, so a later `update_active_balance` that
-/// re-states `active` to a fresh well-formed value (which also lands at `upper_bound = 1`) can't
-/// push the next `merge` over the u16 budget.
+/// An `EncryptedBalance` encrypting zero with `upper_bound = 1`. Used for `active`: keeping
+/// `active.ub ≥ 1` reserves the slot a later `overwrite` would take from `merge`'s u16 budget.
 public(package) fun new<T>(): EncryptedBalance<T> {
     EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 1 }
 }
