@@ -99,13 +99,17 @@ public(package) fun amount<T>(coin: &EncryptedCoin<T>): &WellFormedEncryptedAmou
 
 // === EncryptedBalance ===
 
-/// An `EncryptedBalance` encrypting zero.
+/// An `EncryptedBalance` encrypting zero with `upper_bound = 1`.
 public(package) fun new<T>(): EncryptedBalance<T> {
+    EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 1 }
+}
+
+/// An `EncryptedBalance` encrypting zero with `upper_bound = 0`.
+public(package) fun empty<T>(): EncryptedBalance<T> {
     EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 0 }
 }
 
-/// The number of u16-bounded values folded into `self`. Used by the caller to enforce a
-/// protocol-level cap on combined active+pending growth.
+/// The number of u16-bounded values folded into `self`.
 public(package) fun upper_bound<T>(self: &EncryptedBalance<T>): u16 {
     self.upper_bound
 }
@@ -136,7 +140,7 @@ public(package) fun collapse<T>(self: &EncryptedBalance<T>): Encryption {
 public(package) fun merge_into<T>(self: &mut EncryptedBalance<T>, other: &mut EncryptedBalance<T>) {
     self.amount.add_assign(&other.amount);
     self.upper_bound = self.upper_bound + other.upper_bound;
-    other.set_zero();
+    other.set_empty();
 }
 
 /// Fold an `EncryptedCoin` into `self`. Aborts if the coin's pk doesn't match the caller-supplied
@@ -291,7 +295,7 @@ public(package) fun overwrite_unchecked<T>(
 
 /// Reset `self` to zero without proof.
 public(package) fun clear_unchecked<T>(self: &mut EncryptedBalance<T>, _t: &mut TreasuryCap<T>) {
-    self.set_zero();
+    self.set_empty();
 }
 
 /// Reset a `PublicCoin` to zero without proof.
@@ -307,8 +311,8 @@ fun overwrite<T>(self: &mut EncryptedBalance<T>, new: &WellFormedEncryptedAmount
     self.upper_bound = 1;
 }
 
-/// Reset `self` to zero.
-fun set_zero<T>(self: &mut EncryptedBalance<T>) {
+/// Reset `self` to the same state `empty()` returns.
+fun set_empty<T>(self: &mut EncryptedBalance<T>) {
     self.amount = encrypted_amount::zero();
     self.upper_bound = 0;
 }

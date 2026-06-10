@@ -118,11 +118,11 @@ describe('core user flows (devnet)', () => {
 		await expectBalances([
 			[
 				user1TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
 			],
 			[
 				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
 			],
 		]);
 	}, 180_000);
@@ -164,11 +164,11 @@ describe('core user flows (devnet)', () => {
 		await expectBalances([
 			[
 				user1TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 5n * ONE, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 5n * ONE, balanceUpperBound: 1 },
 			],
 			[
 				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
 			],
 		]);
 
@@ -182,7 +182,7 @@ describe('core user flows (devnet)', () => {
 			],
 			[
 				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
 			],
 		]);
 
@@ -196,7 +196,7 @@ describe('core user flows (devnet)', () => {
 			],
 			[
 				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
 			],
 		]);
 
@@ -211,7 +211,7 @@ describe('core user flows (devnet)', () => {
 			],
 			[
 				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 1n * ONE, balanceUpperBound: 0 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 1n * ONE, balanceUpperBound: 1 },
 			],
 		]);
 
@@ -229,7 +229,7 @@ describe('core user flows (devnet)', () => {
 					balance: 0n,
 					pending: 1n * ONE,
 					pendingPublicBalance: 1n * ONE,
-					balanceUpperBound: 0,
+					balanceUpperBound: 1,
 				},
 			],
 		]);
@@ -761,7 +761,7 @@ describe('core user flows (devnet)', () => {
 						balance: 0n,
 						pending: 1n * ONE,
 						pendingPublicBalance: 0n,
-						balanceUpperBound: 0,
+						balanceUpperBound: 1,
 					},
 				],
 			]);
@@ -1132,7 +1132,7 @@ describe('core user flows (devnet)', () => {
 				balance: 0n,
 				pending: transferAmount,
 				pendingPublicBalance: 0n,
-				balanceUpperBound: 0,
+				balanceUpperBound: 1,
 			});
 
 			// The re-keyed sender is unpaused: a transfer back to it succeeds (the SDK would throw
