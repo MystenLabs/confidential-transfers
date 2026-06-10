@@ -314,7 +314,7 @@ public fun register<T>(
     key_encryption: Option<KeyEncryption>,
 ) {
     let session_id = account.session_id<T>();
-    let verified_key_encription = ct
+    let verified_key_encryption = ct
         .auditors
         .verify_key_encryption(
             &pk,
@@ -326,7 +326,7 @@ public fun register<T>(
         account,
         auth,
         pk,
-        verified_key_encription,
+        verified_key_encryption,
         session_id,
     );
 }
