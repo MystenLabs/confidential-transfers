@@ -99,20 +99,17 @@ public(package) fun amount<T>(coin: &EncryptedCoin<T>): &WellFormedEncryptedAmou
 
 // === EncryptedBalance ===
 
-/// An `EncryptedBalance` encrypting zero with `upper_bound = 1`. Used for `active`: keeping
-/// `active.ub ≥ 1` reserves the slot a later `overwrite` would take from `merge`'s u16 budget.
+/// An `EncryptedBalance` encrypting zero with `upper_bound = 1`.
 public(package) fun new<T>(): EncryptedBalance<T> {
     EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 1 }
 }
 
-/// An `EncryptedBalance` encrypting zero with `upper_bound = 0`. Used to initialize `pending`,
-/// which always starts (and is reset to) the "nothing folded in yet" state.
+/// An `EncryptedBalance` encrypting zero with `upper_bound = 0`.
 public(package) fun empty<T>(): EncryptedBalance<T> {
     EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 0 }
 }
 
-/// The number of u16-bounded values folded into `self`. Used by the caller to enforce a
-/// protocol-level cap on combined active+pending growth.
+/// The number of u16-bounded values folded into `self`.
 public(package) fun upper_bound<T>(self: &EncryptedBalance<T>): u16 {
     self.upper_bound
 }
@@ -314,8 +311,7 @@ fun overwrite<T>(self: &mut EncryptedBalance<T>, new: &WellFormedEncryptedAmount
     self.upper_bound = 1;
 }
 
-/// Reset `self` to the same state `empty()` returns. Used by `merge_into` to clear the moved-from
-/// side, so after `merge` the pending balance is back at `upper_bound = 0`.
+/// Reset `self` to the same state `empty()` returns.
 fun set_empty<T>(self: &mut EncryptedBalance<T>) {
     self.amount = encrypted_amount::zero();
     self.upper_bound = 0;
