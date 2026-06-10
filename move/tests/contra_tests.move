@@ -1817,7 +1817,7 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
     let amount: u16 = 1234;
     let r: u64 = 7777;
     let prover_dst = b"dst-A-prover-21-bytes";
-    let verifier_dst = b"dst-B-verifier-21-byte";
+    let verifier_dst = b"dst-B-verifier-21-bytes";
 
     let ea = encrypted_amount::new_encrypted_amount(
         encrypt_trivial_for_testing(amount as u64, &pk, r),
