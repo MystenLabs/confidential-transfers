@@ -59,7 +59,7 @@ function cosetX(point: RistrettoPoint): bigint[] {
 	return shifted.map((s: any, k) => Fp.mul(s.X, invertedZs[k]));
 }
 
-/** Key used for indexing the discrete-log table. Computed from the  */
+/** Key used for indexing the discrete-log table computed from the x-coordinate of the point. */
 function key(x: bigint): number {
 	return Number(x & 0xffffffffn);
 }
