@@ -111,10 +111,7 @@ export function computeTableEntries(numBits: number): Uint32Array {
  *
  * The table is held as two parallel, key-sorted `Uint32Array`s — `#keys`
  * (the truncated x-coordinates, ascending) and `#values` (the matching
- * baby-step index `i` such that `i*H` has that key). Lookups binary-search
- * `#keys`. This is a flat 8 bytes per entry with no per-entry object
- * overhead, an order of magnitude smaller than a `Map<number, number[]>`
- * which V8 stores as boxed entries plus a one-element array each.
+ * baby-step index `i` such that `i*H` has that key).
  *
  * Decrypt searches by subtracting `2^numBits * H` (the giant step)
  * each iteration and checking the table. Small values (the common
@@ -129,8 +126,6 @@ export class DiscreteLogTable {
 	readonly numBits: number;
 	readonly tableSize: number;
 	readonly giantStep: RistrettoPoint;
-	// Key-sorted parallel arrays: #keys[j] is the truncated x-coordinate of
-	// #values[j] * H, with #keys sorted ascending for binary search.
 	#keys: Uint32Array;
 	#values: Uint32Array;
 	// Small internal cache to speed up lookups for repeated calls.
@@ -162,13 +157,10 @@ export class DiscreteLogTable {
 	 */
 	static fromEntries(numBits: number, entries: Uint32Array): DiscreteLogTable {
 		const n = entries.length;
+		const keys = new Uint32Array(n);
 		const values = new Uint32Array(n);
 		for (let i = 0; i < n; i++) values[i] = i;
-		// Sort the baby-step indices by their key. Comparator returns a
-		// (possibly > 2^31) difference, which is fine: sort only reads its sign.
 		values.sort((a, b) => entries[a] - entries[b]);
-
-		const keys = new Uint32Array(n);
 		for (let j = 0; j < n; j++) keys[j] = entries[values[j]];
 
 		if (debugLogging) {
