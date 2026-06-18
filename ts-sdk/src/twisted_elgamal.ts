@@ -109,6 +109,13 @@ export function computeTableEntries(numBits: number): Uint32Array {
  * multiples of H keyed by truncated 4-byte Edwards x-coordinates,
  * with verification by scalar multiplication to guard against collisions.
  *
+ * The table is held as two parallel, key-sorted `Uint32Array`s — `#keys`
+ * (the truncated x-coordinates, ascending) and `#values` (the matching
+ * baby-step index `i` such that `i*H` has that key). Lookups binary-search
+ * `#keys`. This is a flat 8 bytes per entry with no per-entry object
+ * overhead, an order of magnitude smaller than a `Map<number, number[]>`
+ * which V8 stores as boxed entries plus a one-element array each.
+ *
  * Decrypt searches by subtracting `2^numBits * H` (the giant step)
  * each iteration and checking the table. Small values (the common
  * case for u16 limbs) are found on the first lookup with no loop.
@@ -122,16 +129,20 @@ export class DiscreteLogTable {
 	readonly numBits: number;
 	readonly tableSize: number;
 	readonly giantStep: RistrettoPoint;
-	#table: Map<number, number[]>;
+	// Key-sorted parallel arrays: #keys[j] is the truncated x-coordinate of
+	// #values[j] * H, with #keys sorted ascending for binary search.
+	#keys: Uint32Array;
+	#values: Uint32Array;
 	// Small internal cache to speed up lookups for repeated calls.
 	static readonly MAX_CACHE_SIZE = 1024;
 	#cache: Map<number, bigint>;
 
-	private constructor(numBits: number, table: Map<number, number[]>) {
+	private constructor(numBits: number, keys: Uint32Array, values: Uint32Array) {
 		this.numBits = numBits;
 		this.tableSize = 2 ** numBits;
 		this.giantStep = mul(H, BigInt(this.tableSize));
-		this.#table = table;
+		this.#keys = keys;
+		this.#values = values;
 		this.#cache = new Map();
 	}
 
@@ -144,28 +155,43 @@ export class DiscreteLogTable {
 		return DiscreteLogTable.fromEntries(numBits, entries);
 	}
 
-	/** Construct from pre-computed entries (e.g. from a web worker). */
+	/**
+	 * Construct from pre-computed entries (e.g. from a web worker), where
+	 * `entries[i]` is the truncated x-coordinate of `i*H`. Sorts the baby-step
+	 * indices by their key into the parallel `#keys` / `#values` arrays.
+	 */
 	static fromEntries(numBits: number, entries: Uint32Array): DiscreteLogTable {
-		const table = new Map<number, number[]>();
-		let collisions = 0;
-		for (let value = 0; value < entries.length; value++) {
-			const key = entries[value];
-			const existing = table.get(key);
-			if (existing) {
-				existing.push(value);
-				collisions++;
-			} else {
-				table.set(key, [value]);
-			}
-		}
+		const n = entries.length;
+		const values = new Uint32Array(n);
+		for (let i = 0; i < n; i++) values[i] = i;
+		// Sort the baby-step indices by their key. Comparator returns a
+		// (possibly > 2^31) difference, which is fine: sort only reads its sign.
+		values.sort((a, b) => entries[a] - entries[b]);
+
+		const keys = new Uint32Array(n);
+		for (let j = 0; j < n; j++) keys[j] = entries[values[j]];
 
 		if (debugLogging) {
-			const sizeBytes = 2 ** numBits * (4 + 4);
+			let collisions = 0;
+			for (let j = 1; j < n; j++) if (keys[j] === keys[j - 1]) collisions++;
+			const sizeBytes = n * (4 + 4);
 			console.log(
 				`[DiscreteLogTable] created | numBits=${numBits} | size=${(sizeBytes / 1024).toFixed(0)}KB | collisions=${collisions}`,
 			);
 		}
-		return new DiscreteLogTable(numBits, table);
+		return new DiscreteLogTable(numBits, keys, values);
+	}
+
+	/** Index of the first entry in `#keys` whose key is `>= target`. */
+	#lowerBound(target: number): number {
+		let lo = 0;
+		let hi = this.#keys.length;
+		while (lo < hi) {
+			const mid = (lo + hi) >>> 1;
+			if (this.#keys[mid] < target) lo = mid + 1;
+			else hi = mid;
+		}
+		return lo;
 	}
 
 	/**
@@ -182,10 +208,14 @@ export class DiscreteLogTable {
 		}
 
 		for (const x of cosetX(point)) {
-			const candidates = this.#table.get(key(x));
-			if (candidates === undefined) continue;
-			for (const babyStepIndex of candidates) {
-				const value = BigInt(babyStepIndex);
+			const target = key(x);
+			// Scan the (usually 1-element) run of entries sharing this key.
+			for (
+				let j = this.#lowerBound(target);
+				j < this.#keys.length && this.#keys[j] === target;
+				j++
+			) {
+				const value = BigInt(this.#values[j]);
 				if (mulUnsafe(H, value).equals(point)) {
 					if (this.#cache.size >= DiscreteLogTable.MAX_CACHE_SIZE) {
 						// FIFO eviction: Map iteration is insertion-ordered.
