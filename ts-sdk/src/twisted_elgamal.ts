@@ -82,17 +82,27 @@ export function generateKeyPair(): [PublicKey, PrivateKey] {
 export function computeTableEntries(numBits: number): Uint32Array {
 	const start = performance.now();
 	const tableSize = 2 ** numBits;
+	const entries = new Uint32Array(tableSize);
 
-	const points = new Array<RistrettoPoint>(tableSize);
-	points[0] = ZERO;
-	for (let i = 1; i < tableSize; i++) {
-		points[i] = points[i - 1].add(H);
+	// Walk `i*H` in fixed-size chunks, extracting affine x-coordinates with one
+	// batch inversion per chunk.
+	const CHUNK = 1 << 12;
+	const xs = new Array<bigint>(CHUNK);
+	const zs = new Array<bigint>(CHUNK);
+	let point = ZERO;
+	for (let base = 0; base < tableSize; base += CHUNK) {
+		const len = Math.min(CHUNK, tableSize - base);
+		for (let k = 0; k < len; k++) {
+			const ep = (point as any).ep;
+			xs[k] = ep.X as bigint;
+			zs[k] = ep.Z as bigint;
+			point = point.add(H);
+		}
+		const invertedZs = Fp.invertBatch(len === CHUNK ? zs : zs.slice(0, len));
+		for (let k = 0; k < len; k++) {
+			entries[base + k] = key(Fp.mul(xs[k], invertedZs[k]));
+		}
 	}
-
-	const invertedZs = Fp.invertBatch(points.map((p) => (p as any).ep.Z as bigint));
-	const entries = Uint32Array.from(points, (p, i) =>
-		key(Fp.mul((p as any).ep.X as bigint, invertedZs[i])),
-	);
 
 	if (debugLogging) {
 		const sizeBytes = tableSize * 4;
@@ -146,8 +156,7 @@ export class DiscreteLogTable {
 		if (numBits > 32) {
 			throw new InvalidArgumentError(`numBits must be <= 32 (got ${numBits})`);
 		}
-		const entries = computeTableEntries(numBits);
-		return DiscreteLogTable.fromEntries(numBits, entries);
+		return DiscreteLogTable.fromEntries(numBits, computeTableEntries(numBits));
 	}
 
 	/**
@@ -157,10 +166,12 @@ export class DiscreteLogTable {
 	 */
 	static fromEntries(numBits: number, entries: Uint32Array): DiscreteLogTable {
 		const n = entries.length;
-		const keys = new Uint32Array(n);
+		
 		const values = new Uint32Array(n);
 		for (let i = 0; i < n; i++) values[i] = i;
 		values.sort((a, b) => entries[a] - entries[b]);
+
+		const keys = new Uint32Array(n);
 		for (let j = 0; j < n; j++) keys[j] = entries[values[j]];
 
 		if (debugLogging) {
@@ -201,7 +212,7 @@ export class DiscreteLogTable {
 
 		for (const x of cosetX(point)) {
 			const target = key(x);
-			// Scan the (usually 1-element) run of entries sharing this key.
+			// Scan the run of entries sharing this key.
 			for (
 				let j = this.#lowerBound(target);
 				j < this.#keys.length && this.#keys[j] === target;
