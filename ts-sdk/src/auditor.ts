@@ -6,11 +6,13 @@ import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
 import { InvalidArgumentError } from './error.js';
 import { getTokenAccountId } from './helpers.js';
 import { limbsToScalar } from './nizk.js';
+import { G, mul, pointFromBcs, SCALAR_ORDER } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import {
 	MultiRecipientEncryption,
 	type DiscreteLogTable,
 	type PrivateKey,
+	type PublicKey,
 } from './twisted_elgamal.js';
 import type {
 	AuditorVersionEntry,
@@ -60,11 +62,16 @@ export class ContraAuditor {
 	 * that was active at registration / key-rotation time — useful when tracking historical
 	 * state across `set_public_key` calls.
 	 *
+	 * `expectedPk` should be the account/event public key from the same object or event.
+	 *
 	 * @throws if `ciphertext` is empty (the user registered when no auditors were configured),
-	 * if this auditor has no record for `version`, or if the recorded `index` is out of range
-	 * for any per-limb ciphertext.
+	 * if this auditor has no record for `version`, if the recorded `index` is out of range for any per-limb
+	 * ciphertext, or if the recovered key does not match `expectedPk`.
 	 */
-	recoverPrivateKey({ ciphertext, version }: VerifiedKeyEncryption): PrivateKey {
+	recoverPrivateKey(
+		{ ciphertext, version }: VerifiedKeyEncryption,
+		expectedPk: PublicKey,
+	): PrivateKey {
 		if (ciphertext.length === 0) {
 			throw new InvalidArgumentError(
 				`Cannot recover private key: account was registered with no auditors (version ${version}).`,
@@ -87,7 +94,17 @@ export class ContraAuditor {
 			}
 			return mrc.decrypt(entry.index, entry.privateKey, this.#table);
 		});
-		return limbsToScalar(limbs);
+		// The on-chain key-consistency proof only binds the reconstructed limbs to the account
+		// public key modulo the scalar order `q`, so reduce to the canonical scalar.
+		const recoveredKey = limbsToScalar(limbs) % SCALAR_ORDER;
+
+		if (!mul(G, recoveredKey).equals(expectedPk)) {
+			throw new InvalidArgumentError(
+				`Recovered key does not match the account public key (version ${version}); ` +
+					`the key-encryption payload is forged or corrupted.`,
+			);
+		}
+		return recoveredKey;
 	}
 
 	/**
@@ -115,7 +132,7 @@ export class ContraAuditor {
 			),
 			version: parsed.verified_key_encryption.version,
 		};
-		const privateKey = this.recoverPrivateKey(verified);
+		const privateKey = this.recoverPrivateKey(verified, pointFromBcs(parsed.pk));
 		return new TokenAccount(address, this.#tokenType, this.#packageConfig, privateKey);
 	}
 }

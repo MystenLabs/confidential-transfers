@@ -865,12 +865,15 @@ describe('core user flows (devnet)', () => {
 			const decoded = NewRegistrationEventBcs.parse(newRegEvent!.bcs);
 			expect(decoded.owner).toBe(userA.address);
 			expect(decoded.verified_key_encryption.version).toBe(versionA);
-			const recoveredFromEvent = auditor.recoverPrivateKey({
-				ciphertext: decoded.verified_key_encryption.ciphertext.map((raw) =>
-					MultiRecipientEncryption.fromBcs(raw),
-				),
-				version: decoded.verified_key_encryption.version,
-			});
+			const recoveredFromEvent = auditor.recoverPrivateKey(
+				{
+					ciphertext: decoded.verified_key_encryption.ciphertext.map((raw) =>
+						MultiRecipientEncryption.fromBcs(raw),
+					),
+					version: decoded.verified_key_encryption.version,
+				},
+				userA.tokenAccount.publicKey,
+			);
 			expect(recoveredFromEvent).toBe(userA.tokenAccount.privateKey);
 
 			// userA: registered under versionA. After wrap(10), transfer(1) to B,
