@@ -166,7 +166,7 @@ export class DiscreteLogTable {
 	 */
 	static fromEntries(numBits: number, entries: Uint32Array): DiscreteLogTable {
 		const n = entries.length;
-		
+
 		const values = new Uint32Array(n);
 		for (let i = 0; i < n; i++) values[i] = i;
 		values.sort((a, b) => entries[a] - entries[b]);
