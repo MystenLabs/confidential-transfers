@@ -145,15 +145,16 @@ fun new_empty_verified_key_encryption(auditors: &Auditors): VerifiedKeyEncryptio
 
 /// Resolve an `Option<KeyEncryption>` against the configured `auditors` and produce a
 /// `VerifiedKeyEncryption`. When auditors are set, a `KeyEncryption` must be provided; the
-/// sigma proof (bound to `dst`) and the aggregate Bulletproof over the limb commitments (bound to
-/// the distinct `range_dst`) are both checked before returning. When auditors are not set, no
+/// sigma proof (bound to `key_consistency_dst`) and the aggregate Bulletproof over the limb
+/// commitments (bound to the distinct `range_dst`) are both checked before returning. When
+/// auditors are not set, no
 /// `KeyEncryption` may be provided and an empty placeholder is returned. Aborts with
 /// `EMissingEncryptedViewingKeyArguments` / `ETooManyEncryptedViewingKeyArguments` on mismatch.
 public(package) fun verify_key_encryption(
     auditors: &Auditors,
     sender_public_key: &Element<G>,
     key_encryption: Option<KeyEncryption>,
-    dst: vector<u8>,
+    key_consistency_dst: vector<u8>,
     range_dst: vector<u8>,
 ): VerifiedKeyEncryption {
     if (auditors.is_empty()) {
@@ -164,7 +165,7 @@ public(package) fun verify_key_encryption(
         let KeyEncryption { ciphertext, proof, range_proof } = key_encryption.destroy_some();
         assert!(
             proof.verify_key_consistency(
-                dst,
+                key_consistency_dst,
                 sender_public_key,
                 auditors.pks(),
                 &ciphertext,
@@ -195,7 +196,7 @@ public(package) fun verify_key_encryption_for_testing(
     auditors: &Auditors,
     sender_public_key: &Element<G>,
     key_encryption: Option<KeyEncryption>,
-    dst: vector<u8>,
+    key_consistency_dst: vector<u8>,
 ): VerifiedKeyEncryption {
     if (auditors.is_empty()) {
         assert!(key_encryption.is_none(), ETooManyEncryptedViewingKeyArguments);
@@ -205,7 +206,7 @@ public(package) fun verify_key_encryption_for_testing(
         let KeyEncryption { ciphertext, proof, range_proof: _ } = key_encryption.destroy_some();
         assert!(
             proof.verify_key_consistency(
-                dst,
+                key_consistency_dst,
                 sender_public_key,
                 auditors.pks(),
                 &ciphertext,

@@ -1097,9 +1097,9 @@ public fun verify_key_encryption_for_testing<T>(
     ct: &ConfidentialToken<T>,
     pk: &Element<G>,
     key_encryption: Option<KeyEncryption>,
-    dst: vector<u8>,
+    key_consistency_dst: vector<u8>,
 ): VerifiedKeyEncryption {
-    ct.auditors.verify_key_encryption_for_testing(pk, key_encryption, dst)
+    ct.auditors.verify_key_encryption_for_testing(pk, key_encryption, key_consistency_dst)
 }
 
 #[test_only]
