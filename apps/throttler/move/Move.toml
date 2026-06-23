@@ -6,4 +6,12 @@ edition = "2024"
 contra = { local = "../../../move" }
 
 [environments]
-devnet = "4fe43958"
+devnet = "80d3582e"
+
+# The protocol-127 framework snapshot the `sui` toolchain resolves for devnet predates
+# `rangeproofs::verify_bulletproofs_with_dst_ristretto255`, even though devnet's on-chain `0x2`
+# framework was upgraded to include it. Pin the system packages to the devnet release rev that has
+# the function so the package builds; remove once the snapshot for the live protocol catches up.
+[dep-replacements.devnet]
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd", override = true }
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd", override = true }
