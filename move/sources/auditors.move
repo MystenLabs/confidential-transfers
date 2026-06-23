@@ -196,7 +196,7 @@ public(package) fun verify_key_encryption_for_testing(
     auditors: &Auditors,
     sender_public_key: &Element<G>,
     key_encryption: Option<KeyEncryption>,
-    key_consistency_dst: vector<u8>,
+    dst: vector<u8>,
 ): VerifiedKeyEncryption {
     if (auditors.is_empty()) {
         assert!(key_encryption.is_none(), ETooManyEncryptedViewingKeyArguments);
@@ -206,7 +206,7 @@ public(package) fun verify_key_encryption_for_testing(
         let KeyEncryption { ciphertext, proof, range_proof: _ } = key_encryption.destroy_some();
         assert!(
             proof.verify_key_consistency(
-                key_consistency_dst,
+                dst,
                 sender_public_key,
                 auditors.pks(),
                 &ciphertext,
