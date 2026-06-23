@@ -35,6 +35,8 @@ import {
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_KEY_CONSISTENCY,
+	PROTOCOL_RANGE_PROOF_16,
+	PROTOCOL_RANGE_PROOF_32,
 	type WellFormedLimb,
 } from './helpers.js';
 import { KeyEncryption } from './key_encryption.js';
@@ -432,6 +434,7 @@ export class ContraClient {
 				? KeyEncryption.prove(
 						batchRangeProver,
 						tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
+						tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 						tokenAccount.privateKey,
 						tokenAccount.publicKey,
 						auditorPublicKeys,
@@ -650,6 +653,7 @@ export class ContraClient {
 		const pid = this.#packageConfig.packageId;
 		const { encryptedAmount, wellFormedProof } = buildEncryptedAmountAndProof(
 			batchRangeProver,
+			tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 			tx,
 			pid,
 			newBalance,
@@ -884,6 +888,7 @@ export class ContraClient {
 			? KeyEncryption.prove(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 					newSk,
 					newPk,
 					auditorPks,
@@ -900,9 +905,21 @@ export class ContraClient {
 			}
 
 			const { encryptedAmount: restatedBalance, wellFormedProof: restatedBalanceProof } =
-				buildEncryptedAmountAndProof(batchRangeProver, tx, pid, newBalanceUnderOldPk);
+				buildEncryptedAmountAndProof(
+					batchRangeProver,
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tx,
+					pid,
+					newBalanceUnderOldPk,
+				);
 			const { encryptedAmount: newBalance, wellFormedProof: newBalanceProof } =
-				buildEncryptedAmountAndProof(batchRangeProver, tx, pid, newBalanceUnderNewPk);
+				buildEncryptedAmountAndProof(
+					batchRangeProver,
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tx,
+					pid,
+					newBalanceUnderNewPk,
+				);
 			return tx.add(
 				contraContracts.trySetPublicKeyAndUnpause({
 					package: pid,
@@ -1144,10 +1161,12 @@ export class ContraClient {
 								),
 							),
 						}),
-						wellFormedProofs: buildWellFormedProof(batchRangeProver, pid, [
-							...prepared.map((p) => p.encAmountReceiver),
-							newBalance,
-						]),
+						wellFormedProofs: buildWellFormedProof(
+							batchRangeProver,
+							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+							pid,
+							[...prepared.map((p) => p.encAmountReceiver), newBalance],
+						),
 						senderAmounts: tx.makeMoveVec({
 							type: `${pid}::encrypted_amount::EncryptedAmount`,
 							elements: prepared.map((p) =>
@@ -1360,6 +1379,7 @@ export class ContraClient {
 			? KeyEncryption.prove(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 					newSk,
 					newPk,
 					auditorPks,
@@ -1398,10 +1418,12 @@ export class ContraClient {
 								),
 							),
 						}),
-						wellFormedProofs: buildWellFormedProof(batchRangeProver, pid, [
-							...prepared.map((p) => p.encAmountReceiver),
-							transferNewBalance,
-						]),
+						wellFormedProofs: buildWellFormedProof(
+							batchRangeProver,
+							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+							pid,
+							[...prepared.map((p) => p.encAmountReceiver), transferNewBalance],
+						),
 						senderAmounts: tx.makeMoveVec({
 							type: `${pid}::encrypted_amount::EncryptedAmount`,
 							elements: prepared.map((p) =>
@@ -1445,9 +1467,16 @@ export class ContraClient {
 			// If the transfer no-op'd on a race, the restate fails and this no-ops too — leaving the
 			// account paused + merged so the caller just retries the transfer + rotation.
 			const { encryptedAmount: restatedEa, wellFormedProof: restatedEaProof } =
-				buildEncryptedAmountAndProof(batchRangeProver, tx, pid, restateUnderOldPk);
+				buildEncryptedAmountAndProof(
+					batchRangeProver,
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tx,
+					pid,
+					restateUnderOldPk,
+				);
 			const { encryptedAmount: newEa, wellFormedProof: newEaProof } = buildEncryptedAmountAndProof(
 				batchRangeProver,
+				tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 				tx,
 				pid,
 				balanceUnderNewPk,
@@ -1537,7 +1566,13 @@ export class ContraClient {
 
 			const pid = this.#packageConfig.packageId;
 			const { encryptedAmount: newBalanceEa, wellFormedProof: newBalanceProof } =
-				buildEncryptedAmountAndProof(batchRangeProver, tx, pid, newBalance);
+				buildEncryptedAmountAndProof(
+					batchRangeProver,
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tx,
+					pid,
+					newBalance,
+				);
 			return tx.add(
 				contraContracts.tryUnwrap({
 					package: pid,

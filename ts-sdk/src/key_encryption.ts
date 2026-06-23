@@ -38,12 +38,17 @@ export class KeyEncryption {
 	/**
 	 * Build a `KeyEncryption` for the given private key under the auditor key set.
 	 * Generates fresh blindings per limb, the sigma proof, and the aggregate
-	 * Bulletproof in one call. `batchRangeProver` is a bound function from the
-	 * caller's `getBulletproofs()` result (WASM already initialized).
+	 * Bulletproof in one call. `consistencyDst` is bound into the sigma transcript
+	 * and `rangeDst` into the Bulletproof transcript; they must equal the `dst` /
+	 * `range_dst` the Move side passes to `auditors::verify_key_encryption` (the
+	 * `DST_KEY_CONSISTENCY` and `DST_KEY_RANGE_PROOF` tags, which are distinct).
+	 * `batchRangeProver` is a bound function from the caller's `getBulletproofs()`
+	 * result (WASM already initialized).
 	 */
 	static prove(
 		batchRangeProver: BatchRangeProver,
-		dst: Uint8Array,
+		consistencyDst: Uint8Array,
+		rangeDst: Uint8Array,
 		senderPrivateKey: PrivateKey,
 		senderPublicKey: RistrettoPoint,
 		auditorPublicKeys: RistrettoPoint[],
@@ -56,14 +61,14 @@ export class KeyEncryption {
 			return MultiRecipientEncryption.encrypt(auditorPublicKeys, limb, r);
 		});
 		const proof = KeyConsistencyProof.prove(
-			dst,
+			consistencyDst,
 			limbs,
 			senderPublicKey,
 			auditorPublicKeys,
 			ciphertexts,
 			blindings,
 		);
-		const { proof: rangeProof } = batchRangeProver(limbs, blindings, LIMB_BITS);
+		const { proof: rangeProof } = batchRangeProver(limbs, blindings, LIMB_BITS, rangeDst);
 		return new KeyEncryption(ciphertexts, proof, rangeProof);
 	}
 }

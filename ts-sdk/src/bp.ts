@@ -35,22 +35,28 @@ export interface Bulletproofs {
 	 *
 	 * `values.length` must be a positive power of 2 and equal `blindings.length`.
 	 * Blindings are ristretto255 scalars (use `randomScalar()` from
-	 * `./ristretto255.js`). Returns the serialized proof and the per-value
-	 * Pedersen commitments in input order, compatible with fastcrypto.
+	 * `./ristretto255.js`). `dst` is the domain-separation tag bound into the
+	 * proof transcript; the on-chain verifier
+	 * (`rangeproofs::verify_bulletproofs_with_dst_ristretto255`) must be handed
+	 * the same tag. Returns the serialized proof and the per-value Pedersen
+	 * commitments in input order, compatible with fastcrypto.
 	 */
 	batchRangeProver(
 		values: bigint[],
 		blindings: bigint[],
 		bitSize: RangeBits,
+		dst: Uint8Array,
 	): { proof: Uint8Array; commitments: RistrettoPoint[] };
 	/**
 	 * Verify an aggregate range proof that every `commitments[i]` encodes a
-	 * value in `[0, 2^bitSize)`. Compatible with fastcrypto's bulletproofs.
+	 * value in `[0, 2^bitSize)` under the domain-separation tag `dst`. Compatible
+	 * with fastcrypto's bulletproofs.
 	 */
 	verifyBatchRangeProof(
 		proof: Uint8Array,
 		commitments: RistrettoPoint[],
 		bitSize: RangeBits,
+		dst: Uint8Array,
 	): boolean;
 }
 
@@ -71,7 +77,7 @@ export async function getBulletproofs(
 	await init({ module_or_path: moduleOrPath });
 
 	return {
-		batchRangeProver(values, blindings, bitSize) {
+		batchRangeProver(values, blindings, bitSize, dst) {
 			if (values.length !== blindings.length) {
 				throw new ContraInternalError(
 					`values.length must equal blindings.length (got ${values.length} and ${blindings.length})`,
@@ -91,6 +97,7 @@ export async function getBulletproofs(
 				new BigUint64Array(values),
 				blindingBuf,
 				bitSize,
+				dst,
 			);
 			const commitments: RistrettoPoint[] = Array.from(chunks(flatCommitments, 32), (c) =>
 				ristretto255.Point.fromBytes(c),
@@ -98,12 +105,12 @@ export async function getBulletproofs(
 			return { proof, commitments };
 		},
 
-		verifyBatchRangeProof(proof, commitments, bitSize) {
+		verifyBatchRangeProof(proof, commitments, bitSize, dst) {
 			const commitmentBuf = new Uint8Array(commitments.length * 32);
 			for (let i = 0; i < commitments.length; i++) {
 				commitmentBuf.set(commitments[i].toBytes(), i * 32);
 			}
-			return wasmVerifyBatchRangeProof(proof, commitmentBuf, bitSize);
+			return wasmVerifyBatchRangeProof(proof, commitmentBuf, bitSize, dst);
 		},
 	};
 }

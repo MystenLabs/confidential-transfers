@@ -1,9 +1,13 @@
 [package]
 name = "gated"
 edition = "2024"
+# Pin framework to the devnet release rev that has verify_bulletproofs_with_dst_ristretto255; see move/Move.toml.
+implicit-dependencies = false
 
 [dependencies]
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 contra = { local = "../../../../../move" }
 
 [environments]
-devnet = "4fe43958"
+devnet = "80d3582e"

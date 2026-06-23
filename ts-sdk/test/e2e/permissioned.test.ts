@@ -29,6 +29,7 @@ import {
 	point,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
+	PROTOCOL_RANGE_PROOF_16,
 } from '../../src/helpers.js';
 import { DdhTupleNizk, ElGamalNizk } from '../../src/nizk.js';
 import { G, randomScalar } from '../../src/ristretto255.js';
@@ -177,10 +178,12 @@ describe('permissioned & uncovered flows (devnet)', () => {
 							),
 						],
 					}),
-					wellFormedProofs: buildWellFormedProof(batchRangeProver, pid, [
-						encAmountReceiver,
-						newBalanceLimbs,
-					]),
+					wellFormedProofs: buildWellFormedProof(
+						batchRangeProver,
+						sender.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+						pid,
+						[encAmountReceiver, newBalanceLimbs],
+					),
 					senderAmounts: tx.makeMoveVec({
 						type: `${pid}::encrypted_amount::EncryptedAmount`,
 						elements: [
@@ -356,7 +359,13 @@ describe('permissioned & uncovered flows (devnet)', () => {
 				}),
 			);
 			const { encryptedAmount: newBalanceEa, wellFormedProof: newBalanceProof } =
-				buildEncryptedAmountAndProof(batchRangeProver, tx, pid, newBalanceLimbs);
+				buildEncryptedAmountAndProof(
+					batchRangeProver,
+					user.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tx,
+					pid,
+					newBalanceLimbs,
+				);
 			const coin = tx.add(
 				contraContracts.tryUnwrap({
 					package: pid,

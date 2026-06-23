@@ -5,13 +5,13 @@
 version = 4
 
 [pinned.devnet.MoveStdlib]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "73dd2c2ba6f9fdb21d7ffde2b50a3f2f0ac39bc1" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 use_environment = "devnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
 
 [pinned.devnet.Sui]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "73dd2c2ba6f9fdb21d7ffde2b50a3f2f0ac39bc1" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 use_environment = "devnet"
 manifest_digest = "E2EF92175C2575B1EA85274B70A9CFD8DE08662B35A68669746BBE7BAC06C17A"
 deps = { MoveStdlib = "MoveStdlib" }
@@ -19,17 +19,17 @@ deps = { MoveStdlib = "MoveStdlib" }
 [pinned.devnet.bu_token]
 source = { local = "../../../utils/move/test_token" }
 use_environment = "devnet"
-manifest_digest = "C56904A0FE4DCDC8766134BBED66990D191C3C5BA5EB822A68BD933A14839ADD"
+manifest_digest = "D1D7185DF23A2CC48DA0244EBCB83571F45BD612DF455774EFC96CE34DC60172"
 deps = { contra = "contra", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.devnet.closed_loop]
 source = { root = true }
 use_environment = "devnet"
-manifest_digest = "E460FF913900CE5D3E9E74B1AE110C924EC27EE3DCC7206DB324D2E787B09179"
+manifest_digest = "3B5EFEC430955D8CE6EF14B8CEB81F39F2A4A7824414A0421FDB5189BF656256"
 deps = { bu_token = "bu_token", contra = "contra", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.devnet.contra]
 source = { local = "../../../move" }
 use_environment = "devnet"
-manifest_digest = "41D1BDD28F3C119A169CE18934867517916EFC7FB9628B27D00844D146B950C3"
+manifest_digest = "2C3B95DE5C755333D5BA5D69C59C967A77E22C21E3001ACFC5307EB07138F58B"
 deps = { std = "MoveStdlib", sui = "Sui" }

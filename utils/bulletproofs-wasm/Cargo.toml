@@ -10,7 +10,7 @@ license = "Apache-2.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "e921e326f5d6fc888935a62774ff617313da97e9", features = ["wasm"] }
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "c6010b9080b00e29d039a48c08898d90c2c1cbdd", features = ["wasm"] }
 wasm-bindgen = "0.2"
 rand = "0.8"
 

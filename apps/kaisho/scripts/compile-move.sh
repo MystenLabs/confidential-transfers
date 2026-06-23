@@ -21,11 +21,19 @@ OUTPUT="$APP_DIR/public/bu_token_bytecodes.json"
 cp "$CONTRA_TOML" "$CONTRA_TOML.bak"
 cp "$BU_TOKEN_TOML" "$BU_TOKEN_TOML.bak"
 
-# Use a "fresh" environment so contra is bundled as unpublished
+# Use a "fresh" environment so contra is bundled as unpublished. The system-package pins mirror
+# move/Move.toml: the protocol snapshot the toolchain resolves predates
+# `rangeproofs::verify_bulletproofs_with_dst_ristretto255`, so pin the framework to the devnet
+# release rev that has it. Remove once the snapshot for the live protocol includes the function.
 cat > "$CONTRA_TOML" << 'TOML'
 [package]
 name = "contra"
 edition = "2024"
+implicit-dependencies = false
+
+[dependencies]
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 
 [environments]
 fresh = "00000001"
@@ -35,9 +43,12 @@ cat > "$BU_TOKEN_TOML" << 'TOML'
 [package]
 name = "bu_token"
 edition = "2024"
+implicit-dependencies = false
 
 [dependencies]
 contra = { local = "../../../move" }
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 
 [environments]
 fresh = "00000001"

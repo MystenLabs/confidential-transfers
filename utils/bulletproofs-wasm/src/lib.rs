@@ -62,17 +62,19 @@ impl BatchRangeProofResult {
 /// Prove `value ∈ [0, 2^bit_size)` using fastcrypto's `RangeProof::prove`.
 ///
 /// `bit_size` must be one of 8, 16, 32, 64. `blinding` is a 32-byte canonical
-/// ristretto255 scalar. Returns the serialized proof and the 32-byte
-/// Pedersen commitment.
+/// ristretto255 scalar. `dst` is the domain-separation tag bound into the proof
+/// transcript; the verifier must supply the same tag. Returns the serialized
+/// proof and the 32-byte Pedersen commitment.
 #[wasm_bindgen(js_name = rangeProof)]
 pub fn range_proof(
     value: u64,
     blinding: &[u8],
     bit_size: u32,
+    dst: &[u8],
 ) -> Result<RangeProofResult, JsError> {
     let range = range_from_bits(bit_size)?;
     let blinding = blinding_from_bytes(blinding)?;
-    let proof = RangeProof::prove(value, &blinding, &range, &mut rand::thread_rng())
+    let proof = RangeProof::prove(value, &blinding, &range, dst, &mut rand::thread_rng())
         .map_err(|e| JsError::new(&format!("prove failed: {:?}", e)))?;
     let commitment = PedersenCommitment::new(&RistrettoScalar::from(value), &blinding);
     Ok(RangeProofResult {
@@ -86,12 +88,14 @@ pub fn range_proof(
 ///
 /// `values.len()` must be a power of 2 and equal to `blindings.len() / 32`;
 /// `blindings` is `32 * values.len()` bytes, each a canonical ristretto255
-/// scalar.
+/// scalar. `dst` is the domain-separation tag bound into the proof transcript;
+/// the verifier must supply the same tag.
 #[wasm_bindgen(js_name = batchRangeProof)]
 pub fn batch_range_proof(
     values: &[u64],
     blindings: &[u8],
     bit_size: u32,
+    dst: &[u8],
 ) -> Result<BatchRangeProofResult, JsError> {
     let range = range_from_bits(bit_size)?;
     let n = values.len();
@@ -103,7 +107,7 @@ pub fn batch_range_proof(
         .map(blinding_from_bytes)
         .collect::<Result<_, _>>()?;
 
-    let proof = RangeProof::prove_batch(values, &blindings, &range, &mut rand::thread_rng())
+    let proof = RangeProof::prove_batch(values, &blindings, &range, dst, &mut rand::thread_rng())
         .map_err(|e| JsError::new(&format!("prove_batch failed: {:?}", e)))?;
 
     let commitments_bytes: Vec<u8> = values
@@ -120,15 +124,20 @@ pub fn batch_range_proof(
 }
 
 /// Verify a fastcrypto range proof that the value committed in `commitment`
-/// lies in `[0, 2^bit_size)`. Returns `true` if the proof verifies, `false`
-/// otherwise.
+/// lies in `[0, 2^bit_size)`. `dst` must match the tag used when proving.
+/// Returns `true` if the proof verifies, `false` otherwise.
 #[wasm_bindgen(js_name = verifyRangeProof)]
-pub fn verify_range_proof(proof: &[u8], commitment: &[u8], bit_size: u32) -> Result<bool, JsError> {
+pub fn verify_range_proof(
+    proof: &[u8],
+    commitment: &[u8],
+    bit_size: u32,
+    dst: &[u8],
+) -> Result<bool, JsError> {
     let range = range_from_bits(bit_size)?;
     let proof = RangeProof::from_bytes(proof)
         .map_err(|e| JsError::new(&format!("invalid proof bytes: {:?}", e)))?;
     let commitment = commitment_from_bytes(commitment)?;
-    Ok(proof.verify(&commitment, &range, &mut rand::thread_rng()).is_ok())
+    Ok(proof.verify(&commitment, &range, dst, &mut rand::thread_rng()).is_ok())
 }
 
 /// Verify an aggregate range proof that every commitment encodes a value in
@@ -136,12 +145,14 @@ pub fn verify_range_proof(proof: &[u8], commitment: &[u8], bit_size: u32) -> Res
 ///
 /// `commitments` is a flat buffer of 32-byte ristretto255 points concatenated
 /// in the same order the proof was generated with. The number of commitments
-/// must be a power of 2 and equal to the one used when proving.
+/// must be a power of 2 and equal to the one used when proving. `dst` must match
+/// the tag used when proving.
 #[wasm_bindgen(js_name = verifyBatchRangeProof)]
 pub fn verify_batch_range_proof(
     proof: &[u8],
     commitments: &[u8],
     bit_size: u32,
+    dst: &[u8],
 ) -> Result<bool, JsError> {
     let range = range_from_bits(bit_size)?;
     if commitments.len() % 32 != 0 {
@@ -153,7 +164,7 @@ pub fn verify_batch_range_proof(
         .collect::<Result<_, _>>()?;
     let proof = RangeProof::from_bytes(proof)
         .map_err(|e| JsError::new(&format!("invalid proof bytes: {:?}", e)))?;
-    Ok(proof.verify_batch(&commitments, &range, &mut rand::thread_rng()).is_ok())
+    Ok(proof.verify_batch(&commitments, &range, dst, &mut rand::thread_rng()).is_ok())
 }
 
 fn range_from_bits(bit_size: u32) -> Result<Range, JsError> {

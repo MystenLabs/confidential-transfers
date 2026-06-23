@@ -109,6 +109,8 @@ const PERMISSIONED_UNWRAP: u8 = 2;
 const DST_DDH: u8 = 0x01;
 const DST_ELGAMAL: u8 = 0x02;
 const DST_KEY_CONSISTENCY: u8 = 0x03;
+const DST_RANGE_PROOF_16: u8 = 0x04;
+const DST_RANGE_PROOF_32: u8 = 0x05;
 
 // === Registries ===
 
@@ -320,6 +322,7 @@ public fun register<T>(
             &pk,
             key_encryption,
             session_id.dst(DST_KEY_CONSISTENCY),
+            session_id.dst(DST_RANGE_PROOF_32),
         );
 
     register_internal(
@@ -401,7 +404,14 @@ public fun set_public_key<T>(
         new_balance,
         new_balance_proof,
         handle_eq_proof,
-        ct.auditors.verify_key_encryption(&new_pk, key_encryption, sid.dst(DST_KEY_CONSISTENCY)),
+        ct
+            .auditors
+            .verify_key_encryption(
+                &new_pk,
+                key_encryption,
+                sid.dst(DST_KEY_CONSISTENCY),
+                sid.dst(DST_RANGE_PROOF_32),
+            ),
         sid.dst(DST_DDH),
     );
 }
@@ -449,7 +459,14 @@ public fun try_set_public_key_and_unpause<T>(
         new_balance,
         new_balance_proof,
         handle_eq_proof,
-        ct.auditors.verify_key_encryption(&new_pk, key_encryption, sid.dst(DST_KEY_CONSISTENCY)),
+        ct
+            .auditors
+            .verify_key_encryption(
+                &new_pk,
+                key_encryption,
+                sid.dst(DST_KEY_CONSISTENCY),
+                sid.dst(DST_RANGE_PROOF_32),
+            ),
         sid.dst(DST_DDH),
     );
     account[TokenAccountKey<T>()].accepts_deposits = true;
@@ -474,6 +491,7 @@ public(package) fun set_public_key_internal<T>(
     assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
     let new_balance = new_balance.into_well_formed(
         token_account.session_id.dst(DST_ELGAMAL),
+        token_account.session_id.dst(DST_RANGE_PROOF_16),
         new_pk,
         new_balance_proof,
     );
@@ -571,6 +589,7 @@ public fun batched_transfer<T>(
     let mut wfeas = encrypted_amount::batch_into_well_formed(
         receiver_amounts,
         sender.session_id.dst(DST_ELGAMAL),
+        sender.session_id.dst(DST_RANGE_PROOF_16),
         receiver_pks,
         well_formed_proofs,
     );
@@ -725,6 +744,7 @@ fun try_update_active<T>(
 ): bool {
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
+        sid.dst(DST_RANGE_PROOF_16),
         self.pk,
         new_balance_proof,
     );
@@ -822,6 +842,7 @@ fun try_unwrap_internal<T>(
     let sid = account.session_id;
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
+        sid.dst(DST_RANGE_PROOF_16),
         account.pk,
         new_balance_proof,
     );
@@ -1020,6 +1041,12 @@ public fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
 
 #[test_only]
 public fun protocol_id_key_consistency(): u8 { DST_KEY_CONSISTENCY }
+
+#[test_only]
+public fun protocol_id_range_proof_16(): u8 { DST_RANGE_PROOF_16 }
+
+#[test_only]
+public fun protocol_id_range_proof_32(): u8 { DST_RANGE_PROOF_32 }
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {
