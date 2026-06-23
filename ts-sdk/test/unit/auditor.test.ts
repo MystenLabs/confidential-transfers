@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ContraAuditor } from '../../src/auditor.js';
 import { limbsToScalar, scalarToLimbs } from '../../src/nizk.js';
-import { G, mul, SCALAR_ORDER } from '../../src/ristretto255.js';
+import { G, GROUP_ORDER, mul } from '../../src/ristretto255.js';
 import {
 	DiscreteLogTable,
 	generateKeyPair,
@@ -56,10 +56,10 @@ describe('ContraAuditor.recoverPrivateKey', () => {
 
 	it('recovers the canonical key from a non-canonical alias X = sk + q', () => {
 		const sk = 1234567890n;
-		const alias = sk + SCALAR_ORDER;
+		const alias = sk + GROUP_ORDER;
 
 		// Sanity: the alias is a distinct, non-canonical 256-bit value whose limbs are all valid u32.
-		expect(alias).toBeGreaterThanOrEqual(SCALAR_ORDER);
+		expect(alias).toBeGreaterThanOrEqual(GROUP_ORDER);
 		const limbs = scalarToLimbs(alias);
 		expect(limbs.every((l) => l < 1n << 32n)).toBe(true);
 		expect(limbsToScalar(limbs)).toBe(alias);
