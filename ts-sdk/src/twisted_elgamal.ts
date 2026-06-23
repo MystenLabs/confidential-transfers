@@ -59,6 +59,11 @@ function cosetX(point: RistrettoPoint): bigint[] {
 	return shifted.map((s: any, k) => Fp.mul(s.X, invertedZs[k]));
 }
 
+/** Key used for indexing the discrete-log table computed from the x-coordinate of the point. */
+function key(x: bigint): number {
+	return Number(x & 0xffffffffn);
+}
+
 export type PublicKey = RistrettoPoint;
 export type PrivateKey = bigint;
 
@@ -69,35 +74,38 @@ export function generateKeyPair(): [PublicKey, PrivateKey] {
 }
 
 /**
- * Compute the raw table entries (truncated x-coordinate → index pairs)
- * for a given numBits. This is a pure function that can run in a web
- * worker. Returns a flat Uint32Array of [key, value, key, value, ...]
- * pairs that can be transferred to the main thread.
+ * Compute the raw table entries (truncated x-coordinates) for a given
+ * numBits. This is a pure function that can run in a web worker. Returns
+ * a Uint32Array where `entries[i]` is the truncated x-coordinate of `i*H`.
+ * The result can be transferred to the main thread.
  */
 export function computeTableEntries(numBits: number): Uint32Array {
 	const start = performance.now();
 	const tableSize = 2 ** numBits;
+	const entries = new Uint32Array(tableSize);
 
-	// Phase 1: compute all points via cheap projective addition.
-	const points = new Array<RistrettoPoint>(tableSize);
-	points[0] = ZERO;
-	for (let i = 1; i < tableSize; i++) {
-		points[i] = points[i - 1].add(H);
-	}
-
-	// Phase 2: extract affine x-coordinates with a single batch inversion.
-	const invertedZs = Fp.invertBatch(points.map((p) => (p as any).ep.Z as bigint));
-	const xCoords = points.map((p, i) => Fp.mul((p as any).ep.X as bigint, invertedZs[i]));
-
-	// Phase 3: pack into a flat Uint32Array [key, value, key, value, ...]
-	const entries = new Uint32Array(tableSize * 2);
-	for (let i = 0; i < tableSize; i++) {
-		entries[i * 2] = Number(xCoords[i] & 0xffffffffn);
-		entries[i * 2 + 1] = i;
+	// Walk `i*H` in fixed-size chunks, extracting affine x-coordinates with one
+	// batch inversion per chunk.
+	const CHUNK = 1 << 12;
+	const xs = new Array<bigint>(CHUNK);
+	const zs = new Array<bigint>(CHUNK);
+	let point = ZERO;
+	for (let base = 0; base < tableSize; base += CHUNK) {
+		const len = Math.min(CHUNK, tableSize - base);
+		for (let k = 0; k < len; k++) {
+			const ep = (point as any).ep;
+			xs[k] = ep.X as bigint;
+			zs[k] = ep.Z as bigint;
+			point = point.add(H);
+		}
+		const invertedZs = Fp.invertBatch(len === CHUNK ? zs : zs.slice(0, len));
+		for (let k = 0; k < len; k++) {
+			entries[base + k] = key(Fp.mul(xs[k], invertedZs[k]));
+		}
 	}
 
 	if (debugLogging) {
-		const sizeBytes = tableSize * (4 + 4);
+		const sizeBytes = tableSize * 4;
 		const elapsed = performance.now() - start;
 		console.log(
 			`[computeTableEntries] computed in ${elapsed.toFixed(1)}ms | numBits=${numBits} | size=${(sizeBytes / 1024).toFixed(0)}KB`,
@@ -110,6 +118,10 @@ export function computeTableEntries(numBits: number): Uint32Array {
  * Precomputed discrete-log table for ristretto255. Stores sequential
  * multiples of H keyed by truncated 4-byte Edwards x-coordinates,
  * with verification by scalar multiplication to guard against collisions.
+ *
+ * The table is held as two parallel, key-sorted `Uint32Array`s — `#keys`
+ * (the truncated x-coordinates, ascending) and `#values` (the matching
+ * baby-step index `i` such that `i*H` has that key).
  *
  * Decrypt searches by subtracting `2^numBits * H` (the giant step)
  * each iteration and checking the table. Small values (the common
@@ -124,16 +136,18 @@ export class DiscreteLogTable {
 	readonly numBits: number;
 	readonly tableSize: number;
 	readonly giantStep: RistrettoPoint;
-	#table: Map<number, number[]>;
+	#keys: Uint32Array;
+	#values: Uint32Array;
 	// Small internal cache to speed up lookups for repeated calls.
 	static readonly MAX_CACHE_SIZE = 1024;
 	#cache: Map<number, bigint>;
 
-	private constructor(numBits: number, table: Map<number, number[]>) {
+	private constructor(numBits: number, keys: Uint32Array, values: Uint32Array) {
 		this.numBits = numBits;
 		this.tableSize = 2 ** numBits;
 		this.giantStep = mul(H, BigInt(this.tableSize));
-		this.#table = table;
+		this.#keys = keys;
+		this.#values = values;
 		this.#cache = new Map();
 	}
 
@@ -142,33 +156,45 @@ export class DiscreteLogTable {
 		if (numBits > 32) {
 			throw new InvalidArgumentError(`numBits must be <= 32 (got ${numBits})`);
 		}
-		const entries = computeTableEntries(numBits);
-		return DiscreteLogTable.fromEntries(numBits, entries);
+		return DiscreteLogTable.fromEntries(numBits, computeTableEntries(numBits));
 	}
 
-	/** Construct from pre-computed entries (e.g. from a web worker). */
+	/**
+	 * Construct from pre-computed entries (e.g. from a web worker), where
+	 * `entries[i]` is the truncated x-coordinate of `i*H`. Sorts the baby-step
+	 * indices by their key into the parallel `#keys` / `#values` arrays.
+	 */
 	static fromEntries(numBits: number, entries: Uint32Array): DiscreteLogTable {
-		const table = new Map<number, number[]>();
-		let collisions = 0;
-		for (let i = 0; i < entries.length; i += 2) {
-			const key = entries[i];
-			const value = entries[i + 1];
-			const existing = table.get(key);
-			if (existing) {
-				existing.push(value);
-				collisions++;
-			} else {
-				table.set(key, [value]);
-			}
-		}
+		const n = entries.length;
+
+		const values = new Uint32Array(n);
+		for (let i = 0; i < n; i++) values[i] = i;
+		values.sort((a, b) => entries[a] - entries[b]);
+
+		const keys = new Uint32Array(n);
+		for (let j = 0; j < n; j++) keys[j] = entries[values[j]];
 
 		if (debugLogging) {
-			const sizeBytes = 2 ** numBits * (4 + 4);
+			let collisions = 0;
+			for (let j = 1; j < n; j++) if (keys[j] === keys[j - 1]) collisions++;
+			const sizeBytes = n * (4 + 4);
 			console.log(
 				`[DiscreteLogTable] created | numBits=${numBits} | size=${(sizeBytes / 1024).toFixed(0)}KB | collisions=${collisions}`,
 			);
 		}
-		return new DiscreteLogTable(numBits, table);
+		return new DiscreteLogTable(numBits, keys, values);
+	}
+
+	/** Index of the first entry in `#keys` whose key is `>= target`. */
+	#lowerBound(target: number): number {
+		let lo = 0;
+		let hi = this.#keys.length;
+		while (lo < hi) {
+			const mid = (lo + hi) >>> 1;
+			if (this.#keys[mid] < target) lo = mid + 1;
+			else hi = mid;
+		}
+		return lo;
 	}
 
 	/**
@@ -178,25 +204,29 @@ export class DiscreteLogTable {
 	 */
 	lookup(point: RistrettoPoint): { value: bigint; cached: boolean } | undefined {
 		// Cache key truncates to 32 bits; verify hits against the point.
-		const cacheKey = Number(point.x & 0xffffffffn);
+		const cacheKey = key(point.x);
 		const cached = this.#cache.get(cacheKey);
 		if (cached !== undefined && mulUnsafe(H, cached).equals(point)) {
 			return { value: cached, cached: true };
 		}
 
 		for (const x of cosetX(point)) {
-			const candidates = this.#table.get(Number(x & 0xffffffffn));
-			if (candidates === undefined) continue;
-			for (const babyStepIndex of candidates) {
-				const result = BigInt(babyStepIndex);
-				if (mulUnsafe(H, result).equals(point)) {
+			const target = key(x);
+			// Scan the run of entries sharing this key.
+			for (
+				let j = this.#lowerBound(target);
+				j < this.#keys.length && this.#keys[j] === target;
+				j++
+			) {
+				const value = BigInt(this.#values[j]);
+				if (mulUnsafe(H, value).equals(point)) {
 					if (this.#cache.size >= DiscreteLogTable.MAX_CACHE_SIZE) {
 						// FIFO eviction: Map iteration is insertion-ordered.
 						const oldest = this.#cache.keys().next().value;
 						if (oldest !== undefined) this.#cache.delete(oldest);
 					}
-					this.#cache.set(cacheKey, result);
-					return { value: result, cached: false };
+					this.#cache.set(cacheKey, value);
+					return { value, cached: false };
 				}
 			}
 		}
@@ -333,13 +363,12 @@ export class Ciphertext {
 	 */
 	decryptWithInverse(privateKeyInverse: bigint, table: DiscreteLogTable): bigint {
 		const start = performance.now();
-		const c = this.ciphertext.subtract(mul(this.decryptionHandle, privateKeyInverse));
 
 		// Giant-step loop: subtract tableSize*H each iteration, look up
 		// the remainder in the baby-step table. Small values (common case
 		// for u16 limbs) are found on the first lookup with no subtraction.
 		const tableSize = BigInt(table.tableSize);
-		let point = c;
+		let point = this.ciphertext.subtract(mul(this.decryptionHandle, privateKeyInverse));
 		for (let g = 0n; g < tableSize; g++) {
 			const hit = table.lookup(point);
 			if (hit !== undefined) {
