@@ -101,7 +101,7 @@ public(package) fun with_witness<T, W: drop>(
         policy.is_some_and!(|p| p.witness_type == type_name::with_defining_ids<W>()),
         EAuthorizationError,
     );
-
+    // TODO: consider limiting it to permissioned operations only (defense in depth)
     Auth { operations: 1u32 << operation, owner }
 }
 

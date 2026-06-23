@@ -341,7 +341,6 @@ public(package) fun register_internal<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
-    // TODO: Can we skip the next check? what should we check instead in the zk proofs?
     assert!(pk != g_identity(), EIdentityPublicKey);
 
     events::emit_new_registration<T>(account.owner, pk, verified_key_encryption);

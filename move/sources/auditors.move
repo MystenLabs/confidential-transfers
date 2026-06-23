@@ -35,7 +35,7 @@ const EIdentityAuditorPublicKey: u64 = 3;
 /// stale and prompt the user to rotate before transferring.
 public struct Auditors has store {
     pks: vector<Element<G>>,
-    version: u32, // TODO: should this be u16 to save space?
+    version: u32,
     recommended_min_version: u32,
 }
 
