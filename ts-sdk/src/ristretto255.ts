@@ -59,8 +59,8 @@ H.precompute(8);
 /** The ristretto255 identity (zero) point. */
 export const ZERO: RistrettoPoint = ristretto255.Point.ZERO;
 
-/** The order `q` of the ristretto255 scalar field (number of scalars). */
-export const SCALAR_ORDER: bigint = ristretto255.Point.Fn.ORDER;
+/** The order of the ristretto255 scalar field. */
+export const GROUP_ORDER: bigint = ristretto255.Point.Fn.ORDER;
 
 /**
  * Constant-time scalar multiplication `scalar * point` that accepts `0`.

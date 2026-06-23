@@ -6,7 +6,7 @@ import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
 import { InvalidArgumentError } from './error.js';
 import { getTokenAccountId } from './helpers.js';
 import { limbsToScalar } from './nizk.js';
-import { G, mul, pointFromBcs, SCALAR_ORDER } from './ristretto255.js';
+import { G, mul, pointFromBcs, GROUP_ORDER } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import {
 	MultiRecipientEncryption,
@@ -95,8 +95,9 @@ export class ContraAuditor {
 			return mrc.decrypt(entry.index, entry.privateKey, this.#table);
 		});
 		// The on-chain key-consistency proof only binds the reconstructed limbs to the account
-		// public key modulo the scalar order `q`, so reduce to the canonical scalar.
-		const recoveredKey = limbsToScalar(limbs) % SCALAR_ORDER;
+		// public key modulo the group order, so reduce to the canonical representation.
+		// TODO: Maybe log when a recovered key is not canonical?
+		const recoveredKey = limbsToScalar(limbs) % GROUP_ORDER;
 
 		if (!mul(G, recoveredKey).equals(expectedPk)) {
 			throw new InvalidArgumentError(
