@@ -6,7 +6,7 @@ import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
 import { InvalidArgumentError } from './error.js';
 import { getTokenAccountId } from './helpers.js';
 import { limbsToScalar } from './nizk.js';
-import { G, mul, pointFromBcs, GROUP_ORDER } from './ristretto255.js';
+import { G, GROUP_ORDER, mul, pointFromBcs } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import {
 	MultiRecipientEncryption,
