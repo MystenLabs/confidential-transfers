@@ -62,10 +62,10 @@ export const PROTOCOL_DDH = 0x01;
 export const PROTOCOL_ELGAMAL = 0x02;
 /** Domain-separation byte for key-consistency proofs in Fiat-Shamir transcripts. */
 export const PROTOCOL_KEY_CONSISTENCY = 0x03;
-/** Domain-separation byte for amount well-formedness Bulletproof range proofs. */
-export const PROTOCOL_RANGE_PROOF = 0x04;
-/** Domain-separation byte for auditor key-encryption Bulletproof range proofs. */
-export const PROTOCOL_KEY_RANGE_PROOF = 0x05;
+/** Domain-separation byte for 16-bit (amount well-formedness) Bulletproof range proofs. */
+export const PROTOCOL_RANGE_PROOF_16 = 0x04;
+/** Domain-separation byte for 32-bit (auditor key-encryption) Bulletproof range proofs. */
+export const PROTOCOL_RANGE_PROOF_32 = 0x05;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.

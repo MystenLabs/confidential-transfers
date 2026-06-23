@@ -106,14 +106,14 @@ public fun new_well_formed_proof(
 
 /// Check `proof` against `amounts` under `pks`: every limb of every amount is u16 (range proof,
 /// bound to `range_dst`) and each amount is a valid ElGamal encryption to its matching `pks[i]`
-/// (consistency proof, bound to `dst`). The two DSTs are distinct so a range proof can't be
+/// (consistency proof, bound to `elgamal_dst`). The two DSTs are distinct so a range proof can't be
 /// replayed as a consistency proof. Returns `false` on any verification failure; aborts only on
 /// length mismatch between `amounts`, `pks`, and `proof.consistency_proofs`. An empty
 /// `proof.range_proofs` skips the range check entirely — only reachable via the `#[test_only]`
 /// constructor; `new_well_formed_proof` rejects empty input.
 public(package) fun verify(
     proof: &WellFormedProof,
-    dst: vector<u8>,
+    elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
     amounts: &vector<EncryptedAmount>,
     pks: &vector<Element<G>>,
@@ -126,35 +126,38 @@ public(package) fun verify(
         EMismatchedBatchLength,
     );
     verify_well_formed_range_proofs(amounts, &proof.range_proofs, range_dst)
-    && verify_well_formed_knowledge(amounts, &proof.consistency_proofs, pks, dst)
+    && verify_well_formed_knowledge(amounts, &proof.consistency_proofs, pks, elgamal_dst)
 }
 
-/// Verify `proof` (a batch-of-1 `WellFormedProof`) against `amount` under `pk`, `dst`
+/// Verify `proof` (a batch-of-1 `WellFormedProof`) against `amount` under `pk`, `elgamal_dst`
 /// (consistency), and `range_dst` (range), and wrap into a `WellFormedEncryptedAmount`. Aborts
 /// with `EWellFormedProofFailed` on failure.
 public(package) fun into_well_formed(
     amount: EncryptedAmount,
-    dst: vector<u8>,
+    elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
     pk: Element<G>,
     proof: WellFormedProof,
 ): WellFormedEncryptedAmount {
-    assert!(proof.verify(dst, range_dst, &vector[amount], &vector[pk]), EWellFormedProofFailed);
+    assert!(
+        proof.verify(elgamal_dst, range_dst, &vector[amount], &vector[pk]),
+        EWellFormedProofFailed,
+    );
     WellFormedEncryptedAmount { amount, pk }
 }
 
-/// Verify `proof` against `amounts` under `pks`, `dst` (consistency), and `range_dst` (range) —
-/// one aggregate proof for the whole batch — and wrap each `amounts[i]` into a
+/// Verify `proof` against `amounts` under `pks`, `elgamal_dst` (consistency), and `range_dst`
+/// (range) — one aggregate proof for the whole batch — and wrap each `amounts[i]` into a
 /// `WellFormedEncryptedAmount { amount, pk: pks[i] }`. Aborts with `EWellFormedProofFailed` on
 /// failure.
 public(package) fun batch_into_well_formed(
     amounts: vector<EncryptedAmount>,
-    dst: vector<u8>,
+    elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
     pks: vector<Element<G>>,
     proof: WellFormedProof,
 ): vector<WellFormedEncryptedAmount> {
-    assert!(proof.verify(dst, range_dst, &amounts, &pks), EWellFormedProofFailed);
+    assert!(proof.verify(elgamal_dst, range_dst, &amounts, &pks), EWellFormedProofFailed);
     amounts.zip_map!(pks, |amount, pk| WellFormedEncryptedAmount { amount, pk })
 }
 

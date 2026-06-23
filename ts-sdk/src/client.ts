@@ -35,8 +35,8 @@ import {
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_KEY_CONSISTENCY,
-	PROTOCOL_KEY_RANGE_PROOF,
-	PROTOCOL_RANGE_PROOF,
+	PROTOCOL_RANGE_PROOF_16,
+	PROTOCOL_RANGE_PROOF_32,
 	type WellFormedLimb,
 } from './helpers.js';
 import { KeyEncryption } from './key_encryption.js';
@@ -434,7 +434,7 @@ export class ContraClient {
 				? KeyEncryption.prove(
 						batchRangeProver,
 						tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-						tokenAccount.dst(PROTOCOL_KEY_RANGE_PROOF),
+						tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 						tokenAccount.privateKey,
 						tokenAccount.publicKey,
 						auditorPublicKeys,
@@ -653,7 +653,7 @@ export class ContraClient {
 		const pid = this.#packageConfig.packageId;
 		const { encryptedAmount, wellFormedProof } = buildEncryptedAmountAndProof(
 			batchRangeProver,
-			tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+			tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 			tx,
 			pid,
 			newBalance,
@@ -888,7 +888,7 @@ export class ContraClient {
 			? KeyEncryption.prove(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-					tokenAccount.dst(PROTOCOL_KEY_RANGE_PROOF),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 					newSk,
 					newPk,
 					auditorPks,
@@ -907,7 +907,7 @@ export class ContraClient {
 			const { encryptedAmount: restatedBalance, wellFormedProof: restatedBalanceProof } =
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 					tx,
 					pid,
 					newBalanceUnderOldPk,
@@ -915,7 +915,7 @@ export class ContraClient {
 			const { encryptedAmount: newBalance, wellFormedProof: newBalanceProof } =
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 					tx,
 					pid,
 					newBalanceUnderNewPk,
@@ -1163,7 +1163,7 @@ export class ContraClient {
 						}),
 						wellFormedProofs: buildWellFormedProof(
 							batchRangeProver,
-							tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 							pid,
 							[...prepared.map((p) => p.encAmountReceiver), newBalance],
 						),
@@ -1379,7 +1379,7 @@ export class ContraClient {
 			? KeyEncryption.prove(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-					tokenAccount.dst(PROTOCOL_KEY_RANGE_PROOF),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 					newSk,
 					newPk,
 					auditorPks,
@@ -1420,7 +1420,7 @@ export class ContraClient {
 						}),
 						wellFormedProofs: buildWellFormedProof(
 							batchRangeProver,
-							tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 							pid,
 							[...prepared.map((p) => p.encAmountReceiver), transferNewBalance],
 						),
@@ -1469,14 +1469,14 @@ export class ContraClient {
 			const { encryptedAmount: restatedEa, wellFormedProof: restatedEaProof } =
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 					tx,
 					pid,
 					restateUnderOldPk,
 				);
 			const { encryptedAmount: newEa, wellFormedProof: newEaProof } = buildEncryptedAmountAndProof(
 				batchRangeProver,
-				tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+				tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 				tx,
 				pid,
 				balanceUnderNewPk,
@@ -1568,7 +1568,7 @@ export class ContraClient {
 			const { encryptedAmount: newBalanceEa, wellFormedProof: newBalanceProof } =
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF),
+					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 					tx,
 					pid,
 					newBalance,

@@ -29,7 +29,7 @@ import {
 	buildKeyEncryptionOption,
 	point,
 	PROTOCOL_KEY_CONSISTENCY,
-	PROTOCOL_KEY_RANGE_PROOF,
+	PROTOCOL_RANGE_PROOF_32,
 } from '../../src/helpers.js';
 import { KeyEncryption } from '../../src/key_encryption.js';
 import type { TokenAccount } from '../../src/token_account.js';
@@ -247,7 +247,7 @@ export class Gated {
 		return KeyEncryption.prove(
 			batchRangeProver,
 			tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-			tokenAccount.dst(PROTOCOL_KEY_RANGE_PROOF),
+			tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
 			tokenAccount.privateKey,
 			tokenAccount.publicKey,
 			auditorPks,
