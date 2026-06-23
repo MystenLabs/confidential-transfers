@@ -62,6 +62,10 @@ export const PROTOCOL_DDH = 0x01;
 export const PROTOCOL_ELGAMAL = 0x02;
 /** Domain-separation byte for key-consistency proofs in Fiat-Shamir transcripts. */
 export const PROTOCOL_KEY_CONSISTENCY = 0x03;
+/** Domain-separation byte for amount well-formedness Bulletproof range proofs. */
+export const PROTOCOL_RANGE_PROOF = 0x04;
+/** Domain-separation byte for auditor key-encryption Bulletproof range proofs. */
+export const PROTOCOL_KEY_RANGE_PROOF = 0x05;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.
@@ -237,7 +241,7 @@ export function buildEncryptedAmount(packageId: string, limbs: Ciphertext[]) {
 
 /**
  * Maximum number of amounts a single Bulletproof chunk can cover. Sui's
- * `rangeproofs::verify_bulletproofs_ristretto255` caps the aggregated commitment count at 32 for
+ * `rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment count at 32 for
  * 16-bit range proofs, and each amount contributes 4 limb commitments, so a chunk holds at most
  * `32 / 4 = 8` amounts. Mirrors `MAX_BATCH_SIZE` in `encrypted_amount.move`.
  */
@@ -251,10 +255,14 @@ const MAX_BATCH_SIZE = 8;
  * (e.g. N=7 → [4, 2, 1]; N=20 → [8, 8, 4]). The on-chain verifier reconstructs the same partition
  * from N, so no explicit sizes vector needs to be carried. The pk isn't stored in the proof; the
  * consumer supplies a parallel `vector<Element<G>>` to `verify`, so callers must hand pks
- * separately to whichever Move entry verifies the proof.
+ * separately to whichever Move entry verifies the proof. `rangeDst` is the domain-separation tag
+ * bound into the Bulletproof transcript; it must equal the `range_dst` the Move entry passes to
+ * `encrypted_amount::verify` (the `DST_RANGE_PROOF` tag) — distinct from the `DST_ELGAMAL` tag the
+ * per-limb consistency proofs in `batch` were generated under.
  */
 export function buildWellFormedProof(
 	batchRangeProver: BatchRangeProver,
+	rangeDst: Uint8Array,
 	packageId: string,
 	batch: WellFormedLimb[][],
 ) {
@@ -276,6 +284,7 @@ export function buildWellFormedProof(
 						chunk.flatMap((amount) => amount.map((l) => l.value)),
 						chunk.flatMap((amount) => amount.map((l) => l.blinding)),
 						16,
+						rangeDst,
 					).proof,
 				),
 			);
@@ -323,6 +332,7 @@ export function buildWellFormedProof(
  */
 export function buildEncryptedAmountAndProof(
 	batchRangeProver: BatchRangeProver,
+	rangeDst: Uint8Array,
 	tx: Transaction,
 	packageId: string,
 	limbs: WellFormedLimb[],
@@ -334,7 +344,7 @@ export function buildEncryptedAmountAndProof(
 				limbs.map((l) => l.ciphertext),
 			),
 		),
-		wellFormedProof: tx.add(buildWellFormedProof(batchRangeProver, packageId, [limbs])),
+		wellFormedProof: tx.add(buildWellFormedProof(batchRangeProver, rangeDst, packageId, [limbs])),
 	};
 }
 

@@ -145,15 +145,16 @@ fun new_empty_verified_key_encryption(auditors: &Auditors): VerifiedKeyEncryptio
 
 /// Resolve an `Option<KeyEncryption>` against the configured `auditors` and produce a
 /// `VerifiedKeyEncryption`. When auditors are set, a `KeyEncryption` must be provided; the
-/// sigma proof and the aggregate Bulletproof over the limb commitments are both checked
-/// before returning. When auditors are not set, no `KeyEncryption` may be provided and an
-/// empty placeholder is returned. Aborts with `EMissingEncryptedViewingKeyArguments` /
-/// `ETooManyEncryptedViewingKeyArguments` on mismatch.
+/// sigma proof (bound to `dst`) and the aggregate Bulletproof over the limb commitments (bound to
+/// the distinct `range_dst`) are both checked before returning. When auditors are not set, no
+/// `KeyEncryption` may be provided and an empty placeholder is returned. Aborts with
+/// `EMissingEncryptedViewingKeyArguments` / `ETooManyEncryptedViewingKeyArguments` on mismatch.
 public(package) fun verify_key_encryption(
     auditors: &Auditors,
     sender_public_key: &Element<G>,
     key_encryption: Option<KeyEncryption>,
     dst: vector<u8>,
+    range_dst: vector<u8>,
 ): VerifiedKeyEncryption {
     if (auditors.is_empty()) {
         assert!(key_encryption.is_none(), ETooManyEncryptedViewingKeyArguments);
@@ -161,22 +162,21 @@ public(package) fun verify_key_encryption(
     } else {
         assert!(key_encryption.is_some(), EMissingEncryptedViewingKeyArguments);
         let KeyEncryption { ciphertext, proof, range_proof } = key_encryption.destroy_some();
-        // TODO: use different DSTs for the key consistency and range proofs below.
         assert!(
-            proof.verify_key_consistency(                
+            proof.verify_key_consistency(
                 dst,
                 sender_public_key,
                 auditors.pks(),
                 &ciphertext,
             ) &&
-                // TODO: add dst to rangeproofs
-                rangeproofs::verify_bulletproofs_ristretto255(
+                rangeproofs::verify_bulletproofs_with_dst_ristretto255(
                     &range_proof,
                     LIMB_BITS,
                     &vector::tabulate!(
                         ciphertext.length(),
                         |i| *ciphertext[i].multi_recipient_ciphertext(),
                     ),
+                    &range_dst,
                     BULLETPROOFS_VERSION,
                 ),
             EInvalidEncryptedViewingKey,

@@ -25,7 +25,12 @@ import {
 
 import { getBulletproofs } from '../../src/bp.js';
 import * as contraContracts from '../../src/contracts/contra/contra.js';
-import { buildKeyEncryptionOption, point, PROTOCOL_KEY_CONSISTENCY } from '../../src/helpers.js';
+import {
+	buildKeyEncryptionOption,
+	point,
+	PROTOCOL_KEY_CONSISTENCY,
+	PROTOCOL_KEY_RANGE_PROOF,
+} from '../../src/helpers.js';
 import { KeyEncryption } from '../../src/key_encryption.js';
 import type { TokenAccount } from '../../src/token_account.js';
 import type { ContraTestClient, FreshUser, Harness, Signer } from './harness.js';
@@ -242,6 +247,7 @@ export class Gated {
 		return KeyEncryption.prove(
 			batchRangeProver,
 			tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
+			tokenAccount.dst(PROTOCOL_KEY_RANGE_PROOF),
 			tokenAccount.privateKey,
 			tokenAccount.publicKey,
 			auditorPks,

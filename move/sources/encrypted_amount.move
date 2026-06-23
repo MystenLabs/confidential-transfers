@@ -15,7 +15,7 @@ use sui::{
 
 /// Bulletproof construction version. `0` is the original Bulletproofs construction
 /// (Bünz et al., 2018), the only version currently supported by
-/// `sui::rangeproofs::verify_bulletproofs_ristretto255`.
+/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255`.
 const BULLETPROOFS_VERSION: u8 = 0;
 
 /// Bit-length used by the per-limb range check: each limb encrypts a u16, so the proof
@@ -23,8 +23,8 @@ const BULLETPROOFS_VERSION: u8 = 0;
 const LIMB_BITS: u8 = 16;
 
 /// Maximum number of amounts covered by a single Bulletproof chunk.
-/// `sui::rangeproofs::verify_bulletproofs_ristretto255` caps the aggregated commitment count at
-/// 32 for `LIMB_BITS = 16`, and each amount contributes 4 limb commitments, so a single proof
+/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
+/// count at 32 for `LIMB_BITS = 16`, and each amount contributes 4 limb commitments, so a single proof
 /// covers at most `32 / 4 = 8` amounts.
 const MAX_BATCH_SIZE: u64 = 8;
 
@@ -104,15 +104,17 @@ public fun new_well_formed_proof(
     WellFormedProof { range_proofs, consistency_proofs }
 }
 
-/// Check `proof` against `amounts` under `pks` and `dst`: every limb of every amount is u16 and
-/// each amount is a valid ElGamal encryption to its matching `pks[i]`. Returns `false` on any
-/// verification failure; aborts only on length mismatch between `amounts`, `pks`, and
-/// `proof.consistency_proofs`. An empty `proof.range_proofs` skips the range check
-/// entirely — only reachable via the `#[test_only]` constructor; `new_well_formed_proof` rejects
-/// empty input.
+/// Check `proof` against `amounts` under `pks`: every limb of every amount is u16 (range proof,
+/// bound to `range_dst`) and each amount is a valid ElGamal encryption to its matching `pks[i]`
+/// (consistency proof, bound to `dst`). The two DSTs are distinct so a range proof can't be
+/// replayed as a consistency proof. Returns `false` on any verification failure; aborts only on
+/// length mismatch between `amounts`, `pks`, and `proof.consistency_proofs`. An empty
+/// `proof.range_proofs` skips the range check entirely — only reachable via the `#[test_only]`
+/// constructor; `new_well_formed_proof` rejects empty input.
 public(package) fun verify(
     proof: &WellFormedProof,
     dst: vector<u8>,
+    range_dst: vector<u8>,
     amounts: &vector<EncryptedAmount>,
     pks: &vector<Element<G>>,
 ): bool {
@@ -123,32 +125,36 @@ public(package) fun verify(
         proof.range_proofs.is_empty() || proof.range_proofs.length() == batch_sizes(n).length(),
         EMismatchedBatchLength,
     );
-    verify_well_formed_range_proofs(amounts, &proof.range_proofs)
+    verify_well_formed_range_proofs(amounts, &proof.range_proofs, range_dst)
     && verify_well_formed_knowledge(amounts, &proof.consistency_proofs, pks, dst)
 }
 
-/// Verify `proof` (a batch-of-1 `WellFormedProof`) against `amount` under `pk` and `dst`, and
-/// wrap into a `WellFormedEncryptedAmount`. Aborts with `EWellFormedProofFailed` on failure.
+/// Verify `proof` (a batch-of-1 `WellFormedProof`) against `amount` under `pk`, `dst`
+/// (consistency), and `range_dst` (range), and wrap into a `WellFormedEncryptedAmount`. Aborts
+/// with `EWellFormedProofFailed` on failure.
 public(package) fun into_well_formed(
     amount: EncryptedAmount,
     dst: vector<u8>,
+    range_dst: vector<u8>,
     pk: Element<G>,
     proof: WellFormedProof,
 ): WellFormedEncryptedAmount {
-    assert!(proof.verify(dst, &vector[amount], &vector[pk]), EWellFormedProofFailed);
+    assert!(proof.verify(dst, range_dst, &vector[amount], &vector[pk]), EWellFormedProofFailed);
     WellFormedEncryptedAmount { amount, pk }
 }
 
-/// Verify `proof` against `amounts` under `pks` and `dst` (one aggregate proof for the whole
-/// batch), and wrap each `amounts[i]` into a `WellFormedEncryptedAmount { amount, pk: pks[i] }`.
-/// Aborts with `EWellFormedProofFailed` on failure.
+/// Verify `proof` against `amounts` under `pks`, `dst` (consistency), and `range_dst` (range) —
+/// one aggregate proof for the whole batch — and wrap each `amounts[i]` into a
+/// `WellFormedEncryptedAmount { amount, pk: pks[i] }`. Aborts with `EWellFormedProofFailed` on
+/// failure.
 public(package) fun batch_into_well_formed(
     amounts: vector<EncryptedAmount>,
     dst: vector<u8>,
+    range_dst: vector<u8>,
     pks: vector<Element<G>>,
     proof: WellFormedProof,
 ): vector<WellFormedEncryptedAmount> {
-    assert!(proof.verify(dst, &amounts, &pks), EWellFormedProofFailed);
+    assert!(proof.verify(dst, range_dst, &amounts, &pks), EWellFormedProofFailed);
     amounts.zip_map!(pks, |amount, pk| WellFormedEncryptedAmount { amount, pk })
 }
 
@@ -286,6 +292,7 @@ public(package) fun add_assign(a: &mut EncryptedAmount, b: &EncryptedAmount) {
 fun verify_well_formed_range_proofs(
     amounts: &vector<EncryptedAmount>,
     range_proofs: &vector<vector<u8>>,
+    dst: vector<u8>,
 ): bool {
     // For testing only: no range proofs skips the range check.
     if (range_proofs.is_empty()) return true;
@@ -295,11 +302,11 @@ fun verify_well_formed_range_proofs(
         let chunk = *chunk;
         let start = offset;
         offset = offset + chunk;
-        // TODO: add dst to rangeproofs
-        rangeproofs::verify_bulletproofs_ristretto255(
+        rangeproofs::verify_bulletproofs_with_dst_ristretto255(
             range_proof,
             LIMB_BITS,
             &vector::tabulate!(4 * chunk, |j| *amounts[start + j / 4][j % 4].ciphertext()),
+            &dst,
             BULLETPROOFS_VERSION,
         )
     }).all!(|ok| *ok)
