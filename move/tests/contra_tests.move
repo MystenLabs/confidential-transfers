@@ -1724,7 +1724,9 @@ fun verify_well_formed_proof_dst_match_succeeds() {
     let proof = encrypted_amount::new_well_formed_proof_singleton_for_testing(
         consistency_proof_for_testing(dst, amount, &ea, r, &pk),
     );
-    assert!(encrypted_amount::verify(&proof, dst, &vector[ea], &vector[pk]));
+    assert!(
+        encrypted_amount::verify(&proof, dst, b"range-proof-dst-21byt", &vector[ea], &vector[pk]),
+    );
 }
 
 // === Identity-pk rejection ===
@@ -1829,5 +1831,13 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
         consistency_proof_for_testing(prover_dst, amount, &ea, r, &pk),
     );
     // Verifier uses a different dst, thus the Fiat-Shamir challenges diverge and the ElGamal consistency check rejects.
-    assert!(!encrypted_amount::verify(&proof, verifier_dst, &vector[ea], &vector[pk]));
+    assert!(
+        !encrypted_amount::verify(
+            &proof,
+            verifier_dst,
+            b"range-proof-dst-21byt",
+            &vector[ea],
+            &vector[pk],
+        ),
+    );
 }

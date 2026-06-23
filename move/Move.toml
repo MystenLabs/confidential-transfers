@@ -1,14 +1,16 @@
 [package]
 name = "contra"
 edition = "2024"
+# The protocol-127 framework snapshot the `sui` toolchain resolves for devnet predates
+# `rangeproofs::verify_bulletproofs_with_dst_ristretto255` (the function was added to the framework
+# source and to devnet's on-chain 0x2 without regenerating the snapshot). Disable the implicit
+# system dependencies and pin the framework to the devnet release rev that has the function so the
+# package compiles. Remove once the snapshot for the live protocol includes the function.
+implicit-dependencies = false
+
+[dependencies]
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 
 [environments]
 devnet = "80d3582e"
-
-# The protocol-127 framework snapshot the `sui` toolchain resolves for devnet predates
-# `rangeproofs::verify_bulletproofs_with_dst_ristretto255`, even though devnet's on-chain `0x2`
-# framework was upgraded to include it. Pin the system packages to the devnet release rev that has
-# the function so the package builds; remove once the snapshot for the live protocol catches up.
-[dep-replacements.devnet]
-std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd", override = true }
-sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd", override = true }
