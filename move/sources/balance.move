@@ -15,7 +15,7 @@ use contra::{
         sum_commitments
     },
     nizk::{DdhProof, BatchedDdhProof, ElGamalProof, verify_elgamal},
-    twisted_elgamal::Encryption
+    twisted_elgamal::{Self, Encryption}
 };
 use sui::{
     balance::withdraw_funds_from_object,
@@ -28,12 +28,8 @@ use sui::{
 
 /// `try_split_batch`: consistency proof failed.
 const EConsistencyProofFailed: u64 = 0;
-/// `try_split_batch`: sender amounts don't sum to receiver amounts.
-const EMismatchedTransferTotal: u64 = 1;
-/// `try_split_batch`: sender and receiver vectors have different length.
-const EMismatchedBatchLength: u64 = 2;
 /// A value carried into the balance was encrypted under a different key.
-const EInvalidPublicKey: u64 = 3;
+const EInvalidPublicKey: u64 = 1;
 
 // === Structs ===
 
@@ -186,27 +182,27 @@ public(package) fun try_split_to_public<T>(
 }
 
 /// Split receiver-keyed coins off `self` for a batched transfer. Returns `some(coins)` on a
-/// verifying balance proof, else `none`. Aborts if `new_balance.pk() != sender_pk`, the
-/// sender/receiver vectors have different length, the sender total doesn't match the receiver
-/// total, or the consistency proof fails.
+/// verifying balance proof, else `none`. Aborts if `new_balance.pk() != sender_pk` or the
+/// consistency proof fails.
+///
+/// The transferred total's commitment is reconstructed from `receiver_amounts` (sender and receiver
+/// commitments match). Only its handle `total_sender_handle` is sent, proven by `consistency_proof`.
 public(package) fun try_split_batch<T>(
     self: &mut EncryptedBalance<T>,
     sender_pk: &Element<G>,
     new_balance: WellFormedEncryptedAmount,
     receiver_amounts: vector<WellFormedEncryptedAmount>,
-    sender_amounts: &vector<EncryptedAmount>,
+    total_sender_handle: Element<G>,
     consistency_proof: ElGamalProof,
     consistency_dst: vector<u8>,
     balance_proof: &DdhProof,
     balance_dst: vector<u8>,
 ): Option<vector<EncryptedCoin<T>>> {
     assert!(new_balance.pk() == sender_pk, EInvalidPublicKey);
-    assert!(sender_amounts.length() == receiver_amounts.length(), EMismatchedBatchLength);
 
-    let total_sender = encrypted_amount::collapse_sum(sender_amounts);
-    assert!(
-        *total_sender.ciphertext() == sum_commitments(&receiver_amounts),
-        EMismatchedTransferTotal,
+    let total_sender = twisted_elgamal::new(
+        sum_commitments(&receiver_amounts),
+        total_sender_handle,
     );
     assert!(
         // Check that the total sender is a valid ElGamal encryption under the sender public key.

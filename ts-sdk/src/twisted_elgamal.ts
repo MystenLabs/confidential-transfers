@@ -235,6 +235,33 @@ export class DiscreteLogTable {
 }
 
 /**
+ * Baby-step giant-step search for the `m` with `point = m*H`, over `table`:
+ * subtract the giant step each iteration until a baby-step entry matches. Small
+ * values (the common case for u16 limbs) are found on the first lookup with no
+ * subtraction. Throws {@link DecryptionFailedError} if `m` is outside the table's
+ * `2^(2 * numBits)` range.
+ */
+function solveBsgs(point: RistrettoPoint, table: DiscreteLogTable): bigint {
+	const start = performance.now();
+	const tableSize = BigInt(table.tableSize);
+	for (let g = 0n; g < tableSize; g++) {
+		const hit = table.lookup(point);
+		if (hit !== undefined) {
+			const result = g * tableSize + hit.value;
+			if (debugLogging) {
+				const elapsed = performance.now() - start;
+				console.log(
+					`[decrypt] ${hit.cached ? 'cache hit' : 'cache miss'} | ${elapsed.toFixed(1)}ms | value=${result}`,
+				);
+			}
+			return result;
+		}
+		point = point.subtract(table.giantStep);
+	}
+	throw new DecryptionFailedError(table.numBits);
+}
+
+/**
  * A twisted ElGamal encryption — `ciphertext = r*G + m*H` and
  * `decryptionHandle = r*pk` — of a u16 value (decryptable up to ~2^32).
  *
@@ -266,16 +293,15 @@ export class Ciphertext {
 	}
 
 	/**
-	 * Encrypt a value under `pk` and generate an ElGamal consistency proof.
-	 * `blinding` defaults to a fresh random scalar; pass it explicitly to
-	 * re-key an existing amount while keeping the same per-limb commitment.
+	 * Encrypt a value under `pk` with the given `blinding` and generate an ElGamal
+	 * consistency proof.
 	 */
 	static encryptWithConsistencyProof(
 		dst: Uint8Array,
 		pk: PublicKey,
 		value: bigint,
+		blinding: bigint,
 	): { ciphertext: Ciphertext; blinding: bigint; proof: ElGamalNizk } {
-		const blinding = randomScalar();
 		const { ciphertext } = Ciphertext.encryptWithBlinding(pk, value, blinding);
 		const proof = ElGamalNizk.prove(dst, blinding, value, ciphertext, pk);
 		return { ciphertext, blinding, proof };
@@ -362,29 +388,18 @@ export class Ciphertext {
 	 * under the same key invert once and reuse the result.
 	 */
 	decryptWithInverse(privateKeyInverse: bigint, table: DiscreteLogTable): bigint {
-		const start = performance.now();
+		return solveBsgs(
+			this.ciphertext.subtract(mul(this.decryptionHandle, privateKeyInverse)),
+			table,
+		);
+	}
 
-		// Giant-step loop: subtract tableSize*H each iteration, look up
-		// the remainder in the baby-step table. Small values (common case
-		// for u16 limbs) are found on the first lookup with no subtraction.
-		const tableSize = BigInt(table.tableSize);
-		let point = this.ciphertext.subtract(mul(this.decryptionHandle, privateKeyInverse));
-		for (let g = 0n; g < tableSize; g++) {
-			const hit = table.lookup(point);
-			if (hit !== undefined) {
-				const result = g * tableSize + hit.value;
-				if (debugLogging) {
-					const elapsed = performance.now() - start;
-					console.log(
-						`[decrypt] ${hit.cached ? 'cache hit' : 'cache miss'} | ${elapsed.toFixed(1)}ms | value=${result}`,
-					);
-				}
-				return result;
-			}
-			point = point.subtract(table.giantStep);
-		}
-
-		throw new DecryptionFailedError(table.numBits);
+	/**
+	 * Recover the plaintext from the commitment alone, given the blinding `r`
+	 * used to form it.
+	 */
+	decryptWithBlinding(blinding: bigint, table: DiscreteLogTable): bigint {
+		return solveBsgs(this.ciphertext.subtract(mul(G, blinding)), table);
 	}
 }
 
@@ -457,6 +472,21 @@ export class EncryptedAmount {
 		const d1 = this.l1.decryptWithInverse(inv, table);
 		const d2 = this.l2.decryptWithInverse(inv, table);
 		const d3 = this.l3.decryptWithInverse(inv, table);
+		return d0 + (d1 << 16n) + (d2 << 32n) + (d3 << 48n);
+	}
+
+	/**
+	 * Recover the plaintext from the limb commitments alone, given the per-limb
+	 * blindings.
+	 */
+	decryptWithBlindings(
+		blindingForLimb: (limbIndex: number) => bigint,
+		table: DiscreteLogTable,
+	): bigint {
+		const d0 = this.l0.decryptWithBlinding(blindingForLimb(0), table);
+		const d1 = this.l1.decryptWithBlinding(blindingForLimb(1), table);
+		const d2 = this.l2.decryptWithBlinding(blindingForLimb(2), table);
+		const d3 = this.l3.decryptWithBlinding(blindingForLimb(3), table);
 		return d0 + (d1 << 16n) + (d2 << 32n) + (d3 << 48n);
 	}
 }

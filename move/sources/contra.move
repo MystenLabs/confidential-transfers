@@ -170,15 +170,17 @@ public enum TransferBatch<phantom T> {
     BalanceProofFailed,
     /// The balance proof succeeded. Holds the receiver-keyed `EncryptedCoin`s split off the
     /// sender's balance, one per transfer. `add_to_batch` pops one per receiver and credits it to
-    /// their pending deposits. `sender_amounts` is the parallel vector of sender-keyed encryptions
-    /// of the same *total* (individual values aren't constrained — see the `TransferEvent` doc),
-    /// carried only so each `add_to_batch` can emit one in the `TransferEvent`. `sender_pk` is
-    /// likewise carried only for the event.
+    /// their pending deposits. `seed_point` (= `P`) and `next_index` are carried
+    /// only for the events: each `add_to_batch` emits `P` and the receiver's batch index so the
+    /// sender can later re-derive that transfer's blinding (`seed = HKDF(sk * P)`) and recover the
+    /// amount from the on-chain commitment, without any sender-keyed decryption handle. `sender_pk`
+    /// is likewise carried only for the event.
     Ok {
         sender: address,
         sender_pk: Element<G>,
         coins: vector<EncryptedCoin<T>>,
-        sender_amounts: vector<EncryptedAmount>,
+        seed_point: Element<G>,
+        next_index: u8,
     },
 }
 
@@ -536,17 +538,18 @@ public fun wrap<T>(
 }
 
 /// Start a batched transfer from `sender`. `receiver_amounts[i]` is the transferred value
-/// re-encrypted under `receiver_pks[i]`; `sender_amounts[i]` is the same value under the
-/// sender's key, forwarded to the events and otherwise only checked as a sum.
-/// `well_formed_proofs` is a single batched `WellFormedProof` covering
-/// `receiver_amounts ++ [new_balance]` under `receiver_pks ++ [sender_pk]` — one aggregate
-/// Bulletproof for the whole transfer. `consistency_proof` and `balance_proof` together prove
-/// the sender's balance drops by exactly the transfer total (see `balance::try_split_batch`).
+/// re-encrypted under `receiver_pks[i]`. `well_formed_proofs` is a single batched `WellFormedProof`
+/// covering `receiver_amounts ++ [new_balance]` under `receiver_pks ++ [sender_pk]` — one aggregate
+/// Bulletproof for the whole transfer. `total_sender_handle` is the single sender-keyed decryption handle
+/// for the transfer total; `consistency_proof` proves it well-formed and `balance_proof` proves the
+/// sender's balance drops by exactly that total (see `balance::try_split_batch`).
+/// `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
+/// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts
-/// if `well_formed_proofs` does not verify, the sender amounts don't sum to the receivers, or
-/// `consistency_proof` fails. Call `add` once per receiver, in `receiver_amounts` order, then
-/// `finalize`. Authorized by any `Auth<T>` for `sender.owner`.
+/// if `well_formed_proofs` does not verify or `consistency_proof` fails. Call `add` once per
+/// receiver, in `receiver_amounts` order, then `finalize`. Authorized by any `Auth<T>` for
+/// `sender.owner`.
 public fun batched_transfer<T>(
     sender: &mut Account,
     auth: &Auth<T>,
@@ -555,8 +558,9 @@ public fun batched_transfer<T>(
     mut receiver_pks: vector<Element<G>>,
     mut receiver_amounts: vector<EncryptedAmount>,
     well_formed_proofs: WellFormedProof,
-    mut sender_amounts: vector<EncryptedAmount>,
+    total_sender_handle: Element<G>,
     consistency_proof: ElGamalProof,
+    seed_point: Element<G>,
     new_balance: EncryptedAmount,
     balance_proof: DdhProof,
 ): TransferBatch<T> {
@@ -591,7 +595,7 @@ public fun batched_transfer<T>(
             &sender.pk,
             new_balance,
             receiver_amounts,
-            &sender_amounts,
+            total_sender_handle,
             consistency_proof,
             sender.session_id.dst(DST_ELGAMAL),
             &balance_proof,
@@ -600,14 +604,14 @@ public fun batched_transfer<T>(
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
-        // Reverse both so `add_to_batch`'s `pop_back` consumes them in submission order.
+        // Reverse so `add_to_batch`'s `pop_back` consumes coins in submission order.
         coins.reverse();
-        sender_amounts.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
             sender_pk: sender.pk,
             coins,
-            sender_amounts,
+            seed_point,
+            next_index: 0,
         }
     } else {
         withdrawn.destroy_none();
@@ -630,14 +634,19 @@ public fun add_to_batch<T>(
         // If batch is already failed, nothing should be mutated or emitted and the function should immediately return TransferBatch::BalanceProofFailed.
         TransferBatch::BalanceProofFailed => TransferBatch::BalanceProofFailed,
         // If batch is Ok, all mutations and checks must either succeed or assert, but never fail silently.
-        TransferBatch::Ok { sender, sender_pk, mut coins, mut sender_amounts } => {
+        TransferBatch::Ok {
+            sender,
+            sender_pk,
+            mut coins,
+            seed_point,
+            next_index,
+        } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
             let receiver_addr = receiver.owner;
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
 
             let coin = coins.pop_back();
-            let encrypted_amount_sender = sender_amounts.pop_back();
 
             let receiver = &mut receiver[TokenAccountKey<T>()];
             assert!(!receiver.is_frozen, ETransferDenied);
@@ -647,14 +656,21 @@ public fun add_to_batch<T>(
             events::emit_transfer<T>(
                 sender,
                 sender_pk,
-                encrypted_amount_sender,
+                seed_point,
+                next_index,
                 receiver_addr,
                 receiver.pk,
                 *coin.amount().amount(),
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver.pk, coin);
-            TransferBatch::Ok { sender, sender_pk, coins, sender_amounts }
+            TransferBatch::Ok {
+                sender,
+                sender_pk,
+                coins,
+                seed_point,
+                next_index: next_index + 1,
+            }
         },
     }
 }
@@ -671,8 +687,8 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
             events::emit_try_transfer_failed();
             false
         },
-        TransferBatch::Ok { coins, sender_amounts, .. } => {
-            assert!(coins.is_empty() && sender_amounts.is_empty(), EAllAmountsMustBeUsed);
+        TransferBatch::Ok { coins, .. } => {
+            assert!(coins.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
             true
         },

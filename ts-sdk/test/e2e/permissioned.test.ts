@@ -107,15 +107,11 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		const receiverPk = receiver.tokenAccount.publicKey;
 		const elgamalDst = sender.tokenAccount.dst(PROTOCOL_ELGAMAL);
 
-		// Receiver-side well-formed encrypted amount + sender-side raw 4-limb
-		// encryption (same values & blindings, sender's key). The sum check in
-		// `try_split_batch` passes by construction.
+		// Receiver-side well-formed encrypted amount. The transfer total's commitment is
+		// reconstructed on chain from it; only the single sender-keyed handle is sent.
 		const encAmountReceiver = intoLimbs(amount).map((v) => ({
 			value: v,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, receiverPk, v),
-		}));
-		const encAmountSender = encAmountReceiver.map((limb) => ({
-			ciphertext: Ciphertext.encryptWithBlinding(senderPk, limb.value, limb.blinding).ciphertext,
+			...Ciphertext.encryptWithConsistencyProof(elgamalDst, receiverPk, v, randomScalar()),
 		}));
 
 		// Consistency proof on the collapsed sender total (value=amount,
@@ -139,7 +135,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		// rejects it.
 		const newBalanceLimbs = intoLimbs(0n).map((v) => ({
 			value: v,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, senderPk, v),
+			...Ciphertext.encryptWithConsistencyProof(elgamalDst, senderPk, v, randomScalar()),
 		}));
 		const fakeBalanceProof = new DdhTupleNizk(
 			G.multiply(randomScalar()),
@@ -184,16 +180,9 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						pid,
 						[encAmountReceiver, newBalanceLimbs],
 					),
-					senderAmounts: tx.makeMoveVec({
-						type: `${pid}::encrypted_amount::EncryptedAmount`,
-						elements: [
-							buildEncryptedAmount(
-								pid,
-								encAmountSender.map((l) => l.ciphertext),
-							),
-						],
-					}),
+					totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
 					consistencyProof: buildElGamalProof(pid, consistencyProof),
+					seedPoint: point(senderPk.toBytes()),
 					newBalance: buildEncryptedAmount(
 						pid,
 						newBalanceLimbs.map((l) => l.ciphertext),
@@ -329,7 +318,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			const oldBalanceCt = balBefore.balance.ciphertext.collapse();
 			const newBalanceLimbs = intoLimbs(balBefore.balance.amount - proofAmount).map((v) => ({
 				value: v,
-				...Ciphertext.encryptWithConsistencyProof(elgamalDst, pk, v),
+				...Ciphertext.encryptWithConsistencyProof(elgamalDst, pk, v, randomScalar()),
 			}));
 			const balanceProof = new EncryptedAmount(
 				newBalanceLimbs[0].ciphertext,

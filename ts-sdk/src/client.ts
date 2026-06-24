@@ -43,8 +43,9 @@ import {
 } from './helpers.js';
 import { KeyEncryption } from './key_encryption.js';
 import { BatchedDdhNizk, DdhTupleNizk, ElGamalNizk } from './nizk.js';
-import { addScalars, mul, pointFromBcs } from './ristretto255.js';
+import { addScalars, mul, pointFromBcs, randomScalar } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
+import { sampleTransferRandomness } from './transfer_randomness.js';
 import type { DiscreteLogTable, PublicKey } from './twisted_elgamal.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from './twisted_elgamal.js';
 import type {
@@ -546,7 +547,7 @@ export class ContraClient {
 		const ddhDst = tokenAccount.dst(PROTOCOL_DDH);
 		const newBalance = intoLimbs(spendable - amount).map((v) => ({
 			value: v,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, pk, v),
+			...Ciphertext.encryptWithConsistencyProof(elgamalDst, pk, v, randomScalar()),
 		}));
 
 		const balanceProof = new EncryptedAmount(
@@ -851,7 +852,7 @@ export class ContraClient {
 		// on-chain commitments and decryption handles.
 		const newBalanceUnderOldPk = intoLimbs(totalSpendable).map((value) => ({
 			value,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value),
+			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value, randomScalar()),
 		}));
 
 		// Balance proof for `update_active_balance`: collapsed(new) - collapsed(old) == 0.
@@ -1066,35 +1067,37 @@ export class ContraClient {
 			throw new ReceiverDoesNotAcceptDepositsError(refusing);
 		}
 
-		// Per-recipient cryptographic material: each transfer amount as an
-		// `EncryptedAmount` plus a matching `WellFormedProof` (range + consistency proofs)
-		// under its receiver's key, plus the same value re-keyed to the sender. The
-		// sender limbs are raw — only their sum is checked on chain (see `try_split_batch`)
-		// — and are forwarded to the `TransferEvent`s.
-		//
-		// All proofs are constructed by the sender and bound to the sender's ELGAMAL DST;
-		// `batched_transfer` verifies every receiver_amount against its proof under that DST,
-		// and `merge_encrypted` in `add_to_batch` enforces that each coin's pk matches the
-		// receiver it's credited to.
+		// Per-transfer randomness: a single point `P` plus seed-derived per-(recipient, limb)
+		// blindings. `P` is published in each `TransferEvent` so the sender can re-derive these
+		// blindings later (`seed = HKDF(sk * P)`) and recover its outgoing amounts from the
+		// commitments alone — no sender-keyed decryption handles are sent.
+		const randomness = sampleTransferRandomness(senderPk);
+
+		// Each transfer amount under its receiver's key, with the seed-derived blindings and a
+		// `WellFormedProof` (range + consistency), bound to the sender's ELGAMAL DST. No sender-keyed
+		// amount is sent — its commitments equal the receiver's, which the chain sums for the transfer
+		// total (see `try_split_batch`); `add_to_batch` checks each coin's pk against the receiver.
 		const prepared = recipients.map((recipient, i) => {
 			const receiverPk = receiverStates[i].pk;
-			const encAmountReceiver = intoLimbs(recipient.amount).map((value) => ({
+			const encAmountReceiver = intoLimbs(recipient.amount).map((value, j) => ({
 				value,
-				...Ciphertext.encryptWithConsistencyProof(elgamalDst, receiverPk, value),
+				...Ciphertext.encryptWithConsistencyProof(
+					elgamalDst,
+					receiverPk,
+					value,
+					randomness.blinding(i, j),
+				),
 			}));
-			const encAmountSender = encAmountReceiver.map((limb) => ({
-				ciphertext: Ciphertext.encryptWithBlinding(senderPk, limb.value, limb.blinding).ciphertext,
-			}));
-			return { recipient, receiverPk, encAmountReceiver, encAmountSender };
+			return { recipient, receiverPk, encAmountReceiver };
 		});
 
 		// The total transferred amount and its collapsed blinding, across all recipients.
 		const totalAmount = recipients.reduce((acc, r) => acc + r.amount, 0n);
 		const totalBlinding = addScalars(prepared.map((p) => collapseBlindings(p.encAmountReceiver)));
 		// The total re-encrypted under the sender's key: its commitment is the sum of the receiver
-		// commitments (key-independent), its handle is `senderPk * totalBlinding`. The
-		// `consistencyProof` proves on chain that this handle is the honest one — pinning the
-		// amount the balance proof debits.
+		// commitments (key-independent), its handle is `senderPk * totalBlinding`. Only the handle is
+		// sent on chain (`totalSenderHandle`); the `consistencyProof` proves it is the honest one — pinning
+		// the amount the balance proof debits.
 		const { ciphertext: totalSenderEnc } = Ciphertext.encryptWithBlinding(
 			senderPk,
 			totalAmount,
@@ -1132,8 +1135,9 @@ export class ContraClient {
 			// receiver it's credited to.
 			// 1. Start the batched transfer: split the receiver-keyed coins off the sender's
 			//    balance against the balance proof. One `well_formed_proofs` covers receivers
-			//    and the new balance; sender amounts are raw `EncryptedAmount`s in submission
-			//    order; `consistencyProof` covers the sender total.
+			//    and the new balance; `totalSenderHandle` is the single sender-keyed decryption handle
+			//    for the transfer total, proven well-formed by `consistencyProof`;
+			//    `seedPoint` (`P`) is forwarded to the events.
 			let [batch] = tx.add(
 				contraContracts.batchedTransfer({
 					package: pid,
@@ -1161,16 +1165,9 @@ export class ContraClient {
 							pid,
 							[...prepared.map((p) => p.encAmountReceiver), newBalance],
 						),
-						senderAmounts: tx.makeMoveVec({
-							type: `${pid}::encrypted_amount::EncryptedAmount`,
-							elements: prepared.map((p) =>
-								buildEncryptedAmount(
-									pid,
-									p.encAmountSender.map((limb) => limb.ciphertext),
-								),
-							),
-						}),
+						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
 						consistencyProof: buildElGamalProof(pid, consistencyProof),
+						seedPoint: point(randomness.seedPoint.toBytes()),
 						newBalance: buildEncryptedAmount(
 							pid,
 							newBalance.map((l) => l.ciphertext),
@@ -1297,16 +1294,21 @@ export class ContraClient {
 			.add(Ciphertext.trivial(pendingPublicBalance));
 
 		// --- Transfer material, built under the OLD key against the merged balance. ---
+		// Per-transfer randomness (point `P` + seed-derived blindings) under the OLD key; see the
+		// equivalent block in `transferBatch` for the rationale.
+		const randomness = sampleTransferRandomness(oldPk);
 		const prepared = recipients.map((recipient, i) => {
 			const receiverPk = receiverStates[i].pk;
-			const encAmountReceiver = intoLimbs(recipient.amount).map((value) => ({
+			const encAmountReceiver = intoLimbs(recipient.amount).map((value, j) => ({
 				value,
-				...Ciphertext.encryptWithConsistencyProof(elgamalDst, receiverPk, value),
+				...Ciphertext.encryptWithConsistencyProof(
+					elgamalDst,
+					receiverPk,
+					value,
+					randomness.blinding(i, j),
+				),
 			}));
-			const encAmountSender = encAmountReceiver.map((limb) => ({
-				ciphertext: Ciphertext.encryptWithBlinding(oldPk, limb.value, limb.blinding).ciphertext,
-			}));
-			return { recipient, receiverPk, encAmountReceiver, encAmountSender };
+			return { recipient, receiverPk, encAmountReceiver };
 		});
 		const totalAmount = recipients.reduce((acc, r) => acc + r.amount, 0n);
 		if (totalAmount > total) {
@@ -1328,7 +1330,7 @@ export class ContraClient {
 		// Sender's post-transfer balance under the old key: `total - totalAmount`.
 		const transferNewBalance = intoLimbs(total - totalAmount).map((value) => ({
 			value,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value),
+			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value, randomScalar()),
 		}));
 		const transferNewBalanceEnc = new EncryptedAmount(
 			transferNewBalance[0].ciphertext,
@@ -1347,7 +1349,7 @@ export class ContraClient {
 		const postTransferCollapsed = transferNewBalanceEnc.collapse();
 		const restateUnderOldPk = intoLimbs(total - totalAmount).map((value) => ({
 			value,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value),
+			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value, randomScalar()),
 		}));
 		const restateProof = new EncryptedAmount(
 			restateUnderOldPk[0].ciphertext,
@@ -1422,16 +1424,9 @@ export class ContraClient {
 							pid,
 							[...prepared.map((p) => p.encAmountReceiver), transferNewBalance],
 						),
-						senderAmounts: tx.makeMoveVec({
-							type: `${pid}::encrypted_amount::EncryptedAmount`,
-							elements: prepared.map((p) =>
-								buildEncryptedAmount(
-									pid,
-									p.encAmountSender.map((limb) => limb.ciphertext),
-								),
-							),
-						}),
+						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
 						consistencyProof: buildElGamalProof(pid, consistencyProof),
+						seedPoint: point(randomness.seedPoint.toBytes()),
 						newBalance: buildEncryptedAmount(
 							pid,
 							transferNewBalance.map((l) => l.ciphertext),

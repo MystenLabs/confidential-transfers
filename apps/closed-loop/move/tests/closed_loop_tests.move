@@ -96,16 +96,11 @@ fun closed_loop_roundtrip() {
         encrypt_zero_for_testing(),
         encrypt_zero_for_testing(),
     );
-    // Alice's sender-side amount: the same value 50 under pk_alice with blinding r. Forwarded to
-    // the `TransferEvent`; the protocol only verifies its sum against the receiver amounts.
-    let sender_amount = encrypted_amount::new_encrypted_amount(
-        encrypt_trivial_for_testing(50, &pk_alice, r),
-        encrypt_zero_for_testing(),
-        encrypt_zero_for_testing(),
-        encrypt_zero_for_testing(),
-    );
-    // Single consistency proof on the collapsed sender total (value 50, blinding r) under pk_alice.
+    // The collapsed sender total (value 50, blinding r) under pk_alice. The chain reconstructs its
+    // commitment from the receiver amounts; only the single decryption handle is sent.
     let total_sender_enc = encrypt_trivial_for_testing(50, &pk_alice, r);
+    let total_sender_handle = total_sender_enc.decryption_handle_for_testing();
+    // Single consistency proof on the collapsed sender total (value 50, blinding r) under pk_alice.
     let consistency_proof = encrypted_amount::total_consistency_proof_for_testing(
         alice_account.derive_dst_for_testing<PBU>(protocol_id_elgamal()),
         50,
@@ -137,8 +132,9 @@ fun closed_loop_roundtrip() {
             vector[pk_bob],
             vector[taken_amount],
             well_formed_proofs,
-            vector[sender_amount],
+            total_sender_handle,
             consistency_proof,
+            ristretto255::g_identity(),
             new_balance,
             sum_proof,
         )

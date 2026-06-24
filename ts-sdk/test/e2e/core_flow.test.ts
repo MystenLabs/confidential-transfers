@@ -555,12 +555,11 @@ describe('core user flows (devnet)', () => {
 			// --- Private transfer + decrypt TransferEvent via auditor-recovered accounts ---
 			// Establish a transferable balance for user1 (mint, wrap, merge), then
 			// transfer privately to user2 and capture the tx events. The auditor
-			// recovers both sender and receiver TokenAccounts; each side decrypts
-			// its half of the TransferEvent payload (sender uses
-			// `encrypted_amount_sender`, receiver uses
-			// `encrypted_amount_receiver`) and both should equal the
-			// original cleartext amount. State is restored at the end so the next
-			// test sees the same carry-over balances it expects.
+			// recovers both sender and receiver TokenAccounts; the receiver decrypts
+			// `encrypted_amount_receiver`, the sender recovers its own amount from the
+			// same commitments via `seed_point` + `recoverSentAmount`, and both should
+			// equal the original cleartext amount. State is restored at the end so the
+			// next test sees the same carry-over balances it expects.
 			const wrapAmount = 5n * ONE;
 			const transferAmount = 3n * ONE;
 			await tokenIssuer.mint(user1Address, wrapAmount);
@@ -600,8 +599,10 @@ describe('core user flows (devnet)', () => {
 				receiverAccount.publicKey.toBytes(),
 			);
 
-			const decryptedSender = senderAccount.decryptAmount(
-				EncryptedAmount.fromBcs(decodedTransfer.encrypted_amount_sender),
+			const decryptedSender = senderAccount.recoverSentAmount(
+				EncryptedAmount.fromBcs(decodedTransfer.encrypted_amount_receiver),
+				pointFromBcs(decodedTransfer.seed_point),
+				decodedTransfer.batch_index,
 				table,
 			);
 			const decryptedReceiver = receiverAccount.decryptAmount(

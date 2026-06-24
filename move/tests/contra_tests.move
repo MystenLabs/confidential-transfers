@@ -363,7 +363,8 @@ fun test_batched_transfer() {
         consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
     ]);
 
-    // Sender-side amounts, encrypted under pk_1; their collapsed sum feeds the proofs.
+    // Sender-side amounts, encrypted under pk_1; their collapsed sum gives the single decryption
+    // handle the chain needs (the commitment is reconstructed from the receiver amounts).
     let taken_a_sender = amount_for_testing(30, &pk_1, r_a);
     let taken_b_sender = amount_for_testing(20, &pk_1, r_b);
     let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r_a + r_b, elgamal_dst);
@@ -371,6 +372,7 @@ fun test_batched_transfer() {
     // Balance proof: old_balance == new_balance + total.
     let old_balance = account_1.balance<TestCurrency>();
     let total_sender = taken_a_sender.collapse().add(&taken_b_sender.collapse());
+    let total_sender_handle = *total_sender.decryption_handle();
     let balance_proof = nizk::sum_proof_for_testing(
         account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
         &old_balance,
@@ -390,8 +392,9 @@ fun test_batched_transfer() {
             vector[pk_2, pk_3],
             vector[taken_a_ea, taken_b_ea],
             well_formed_proofs,
-            vector[taken_a_sender, taken_b_sender],
+            total_sender_handle,
             consistency_proof,
+            ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
         )
@@ -517,6 +520,9 @@ fun transfer<T>(
     ctx: &mut TxContext,
 ) {
     let auth = ct.authorize_as_sender(ctx);
+    // The chain reconstructs the sender total's commitment from the receiver amounts and only needs
+    // the single collapsed decryption handle; `P` (seed_point) is unverified on chain.
+    let total_sender_handle = *sender_amount.collapse().decryption_handle();
     sender
         .batched_transfer<T>(
             &auth,
@@ -525,8 +531,9 @@ fun transfer<T>(
             vector[receiver_pk],
             vector[receiver_amount],
             well_formed_proofs,
-            vector[sender_amount],
+            total_sender_handle,
             consistency_proof,
+            ristretto255::g_identity(),
             new_balance,
             balance_proof,
         )
@@ -535,8 +542,8 @@ fun transfer<T>(
 }
 
 /// Consistency proof for the collapsed sender total of a transfer: a value-`value` encryption
-/// under `sender_pk` with blinding `r`, matching the total `try_split_batch` reconstructs from
-/// the sender amounts.
+/// under `sender_pk` with blinding `r`, matching the total `try_split_batch` reconstructs from the
+/// receiver commitments and the single sender decryption handle.
 fun total_consistency_proof_for_testing(
     value: u64,
     sender_pk: &Element<G>,
