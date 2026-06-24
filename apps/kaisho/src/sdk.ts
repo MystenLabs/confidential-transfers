@@ -36,6 +36,7 @@ import {
 	EncryptedAmount,
 	G,
 	point,
+	pointFromBcs,
 	randomScalar,
 	TokenAccount,
 	TransferEventBcs,
@@ -660,9 +661,16 @@ export function decryptTransferEventAmount(opts: {
 }): bigint | null {
 	try {
 		const decoded = TransferEventBcs.fromBase64(opts.event.bcs);
-		const encrypted =
-			opts.side === 'sender' ? decoded.encrypted_amount_sender : decoded.encrypted_amount_receiver;
-		return opts.tokenAccount.decryptAmount(EncryptedAmount.fromBcs(encrypted), opts.table);
+		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
+		if (opts.side === 'receiver') {
+			return opts.tokenAccount.decryptAmount(encryptedAmount, opts.table);
+		}
+		return opts.tokenAccount.recoverSentAmount(
+			encryptedAmount,
+			pointFromBcs(decoded.seed_point),
+			decoded.batch_index,
+			opts.table,
+		);
 	} catch (e) {
 		console.error('[sdk] failed to decrypt TransferEvent', e);
 		return null;

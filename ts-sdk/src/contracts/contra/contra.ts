@@ -90,7 +90,6 @@ import * as auditors from './auditors.js';
 import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
-import * as encrypted_amount from './encrypted_amount.js';
 import * as policy from './policy.js';
 
 const $moduleName = '@local-pkg/contra::contra';
@@ -177,11 +176,12 @@ export const TransferBatch = new MoveEnum({
 		/**
 		 * The balance proof succeeded. Holds the receiver-keyed `EncryptedCoin`s split off
 		 * the sender's balance, one per transfer. `add_to_batch` pops one per receiver and
-		 * credits it to their pending deposits. `sender_amounts` is the parallel vector of
-		 * sender-keyed encryptions of the same _total_ (individual values aren't
-		 * constrained — see the `TransferEvent` doc), carried only so each `add_to_batch`
-		 * can emit one in the `TransferEvent`. `sender_pk` is likewise carried only for
-		 * the event.
+		 * credits it to their pending deposits. `seed_point` (= `P`) and
+		 * `next_index` are carried only for the events: each `add_to_batch` emits `P` and the
+		 * receiver's batch index so the sender can later re-derive that transfer's blinding
+		 * (`seed = HKDF(sk * P)`) and recover the amount from the on-chain commitment, without
+		 * any sender-keyed decryption handle. `sender_pk` is likewise carried only for the
+		 * event.
 		 */
 		Ok: new MoveStruct({
 			name: `TransferBatch.Ok`,
@@ -189,7 +189,8 @@ export const TransferBatch = new MoveEnum({
 				sender: bcs.Address,
 				sender_pk: group_ops.Element,
 				coins: bcs.vector(balance.EncryptedCoin),
-				sender_amounts: bcs.vector(encrypted_amount.EncryptedAmount),
+				seed_point: group_ops.Element,
+				next_index: bcs.u8(),
 			},
 		}),
 	},
@@ -662,8 +663,9 @@ export interface BatchedTransferArguments {
 	receiverPks: TransactionArgument;
 	receiverAmounts: TransactionArgument;
 	wellFormedProofs: TransactionArgument;
-	senderAmounts: TransactionArgument;
+	totalSenderHandle: TransactionArgument;
 	consistencyProof: TransactionArgument;
+	seedPoint: TransactionArgument;
 	newBalance: TransactionArgument;
 	balanceProof: TransactionArgument;
 }
@@ -678,8 +680,9 @@ export interface BatchedTransferOptions {
 				receiverPks: TransactionArgument,
 				receiverAmounts: TransactionArgument,
 				wellFormedProofs: TransactionArgument,
-				senderAmounts: TransactionArgument,
+				totalSenderHandle: TransactionArgument,
 				consistencyProof: TransactionArgument,
+				seedPoint: TransactionArgument,
 				newBalance: TransactionArgument,
 				balanceProof: TransactionArgument,
 		  ];
@@ -687,19 +690,20 @@ export interface BatchedTransferOptions {
 }
 /**
  * Start a batched transfer from `sender`. `receiver_amounts[i]` is the transferred
- * value re-encrypted under `receiver_pks[i]`; `sender_amounts[i]` is the same
- * value under the sender's key, forwarded to the events and otherwise only checked
- * as a sum. `well_formed_proofs` is a single batched `WellFormedProof` covering
- * `receiver_amounts ++ [new_balance]` under `receiver_pks ++ [sender_pk]` — one
- * aggregate Bulletproof for the whole transfer. `consistency_proof` and
- * `balance_proof` together prove the sender's balance drops by exactly the
- * transfer total (see `balance::try_split_batch`).
+ * value re-encrypted under `receiver_pks[i]`. `well_formed_proofs` is a single
+ * batched `WellFormedProof` covering `receiver_amounts ++ [new_balance]` under
+ * `receiver_pks ++ [sender_pk]` — one aggregate Bulletproof for the whole transfer.
+ * `total_sender_handle` is the single sender-keyed decryption handle for the transfer
+ * total; `consistency_proof` proves it well-formed and `balance_proof` proves the
+ * sender's balance drops by exactly that total (see `balance::try_split_batch`).
+ * `seed_point` (= `P`) is forwarded to the events so the sender can
+ * re-derive each transfer's blinding and recover its outgoing amounts; it is not
+ * otherwise verified on chain.
  *
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
- * `BalanceProofFailed`. Aborts if `well_formed_proofs` does not verify, the sender
- * amounts don't sum to the receivers, or `consistency_proof` fails. Call `add`
- * once per receiver, in `receiver_amounts` order, then `finalize`. Authorized by
- * any `Auth<T>` for `sender.owner`.
+ * `BalanceProofFailed`. Aborts if `well_formed_proofs` does not verify or
+ * `consistency_proof` fails. Call `add` once per receiver, in `receiver_amounts`
+ * order, then `finalize`. Authorized by any `Auth<T>` for `sender.owner`.
  */
 export function batchedTransfer(options: BatchedTransferOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -711,7 +715,8 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'vector<null>',
 		'vector<null>',
 		null,
-		'vector<null>',
+		null,
+		null,
 		null,
 		null,
 		null,
@@ -723,8 +728,9 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'receiverPks',
 		'receiverAmounts',
 		'wellFormedProofs',
-		'senderAmounts',
+		'totalSenderHandle',
 		'consistencyProof',
+		'seedPoint',
 		'newBalance',
 		'balanceProof',
 	];

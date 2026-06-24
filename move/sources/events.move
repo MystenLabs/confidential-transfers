@@ -36,17 +36,18 @@ public struct WrapEvent<phantom T> has copy, drop {
     memo: vector<u8>,
 }
 
-/// A confidential transfer is made from a sender to a receiver. The transferred amount is emitted
-/// twice: `encrypted_amount_receiver`, the well-formed four-limb encryption under `receiver_pk`,
-/// and `encrypted_amount_sender`, the same value under `sender_pk` so the sender can recognize
-/// its own outgoing transfers. `memo` is an opaque caller-supplied blob, empty if none was provided.
-///
-/// TODO: `encrypted_amount_sender` is only verified as part of the batch total (its individual
-/// value is not range-checked); this representation may change in a future revision.
+/// A confidential transfer is made from a sender to a receiver. The transferred amount is the
+/// well-formed four-limb encryption `encrypted_amount_receiver` under `receiver_pk`. The sender
+/// does not send a separate sender-keyed amount: it recovers its own outgoing value from the
+/// commitments in `encrypted_amount_receiver` (the sender and receiver commitments are identical)
+/// by re-deriving the per-transfer blinding from `seed = HKDF(sk * seed_point)` and
+/// the receiver's `batch_index` within this transfer. `memo` is an opaque caller-supplied blob,
+/// empty if none was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
     sender_pk: Element<G>,
-    encrypted_amount_sender: EncryptedAmount,
+    seed_point: Element<G>,
+    batch_index: u8,
     receiver: address,
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
@@ -144,7 +145,8 @@ public(package) fun emit_wrap<T>(receiver: address, amount: u64, memo: vector<u8
 public(package) fun emit_transfer<T>(
     sender: address,
     sender_pk: Element<G>,
-    encrypted_amount_sender: EncryptedAmount,
+    seed_point: Element<G>,
+    batch_index: u8,
     receiver: address,
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
@@ -153,7 +155,8 @@ public(package) fun emit_transfer<T>(
     event::emit(TransferEvent<T> {
         sender,
         sender_pk,
-        encrypted_amount_sender,
+        seed_point,
+        batch_index,
         receiver,
         receiver_pk,
         encrypted_amount_receiver,

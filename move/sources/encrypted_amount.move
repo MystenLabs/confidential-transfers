@@ -203,14 +203,6 @@ public(package) fun collapse(eq: &EncryptedAmount): Encryption {
     )
 }
 
-/// Collapse the limb-wise sum of `amounts` into one `Encryption`, running the per-limb scalar mults
-/// once for the batch instead of per amount (`collapse` is linear).
-public(package) fun collapse_sum(amounts: &vector<EncryptedAmount>): Encryption {
-    let mut acc = zero();
-    amounts.do_ref!(|a| acc.add_assign(a));
-    acc.collapse()
-}
-
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
 public(package) fun verify_equal(
     ea1: &WellFormedEncryptedAmount,

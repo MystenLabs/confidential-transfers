@@ -3,7 +3,8 @@
 
 import { dst, newSessionId, PROTOCOL_VERIFIED_DEC } from './helpers.js';
 import type { DdhTupleNizk } from './nizk.js';
-import { assertNonZeroScalar, G, mul, randomScalar } from './ristretto255.js';
+import { assertNonZeroScalar, G, mul, randomScalar, type RistrettoPoint } from './ristretto255.js';
+import { recoverTransferRandomness } from './transfer_randomness.js';
 import type {
 	Ciphertext,
 	DiscreteLogTable,
@@ -91,5 +92,22 @@ export class TokenAccount {
 			value,
 		);
 		return { value, proof };
+	}
+
+	/**
+	 * Recover an outgoing batched-transfer amount this account sent, from the
+	 * on-chain `TransferEvent`, without any sender-keyed decryption handle.
+	 */
+	recoverSentAmount(
+		encryptedAmount: EncryptedAmount,
+		seedPoint: RistrettoPoint,
+		batchIndex: number,
+		table: DiscreteLogTable,
+	): bigint {
+		const randomness = recoverTransferRandomness(this.privateKey, seedPoint);
+		return encryptedAmount.decryptWithBlindings(
+			(limbIndex) => randomness.blinding(batchIndex, limbIndex),
+			table,
+		);
 	}
 }
