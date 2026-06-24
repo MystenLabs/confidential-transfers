@@ -19,10 +19,7 @@ jobs:
             - run: suiup install sui@devnet -y
             - run: sui --version
             # `sui move build -e devnet` selects the framework snapshot from the wallet's ACTIVE env
-            # protocol version, not the `-e` target. The default config registers a `devnet` env but
-            # leaves testnet active (protocol 126, whose snapshot predates
-            # `verify_bulletproofs_with_dst_ristretto255`), so make devnet active. This first
-            # `sui client` call also creates the default config.
+            # protocol version, not the `-e` target.
             - run: sui client switch --env devnet
             - run: find . -name "Move.toml" -type f | sed 's|/Move.toml||' | xargs -I {} bash -c "sui move build -e devnet --path '{}'"
             - run: find . -name "Move.toml" -type f | sed 's|/Move.toml||' | xargs -I {} bash -c "sui move test -e devnet --path '{}'"
