@@ -626,15 +626,21 @@ fun amount_and_proof_for_testing(
     (ea, encrypted_amount::new_well_formed_proof_singleton_for_testing(proof))
 }
 
-/// Self-DDH proof for `set_public_key` when the public key is unchanged: with `old_pk = new_pk`
-/// and the new balance byte-equal to the old, the witness `w = new_sk · old_sk⁻¹ = 1` and the
-/// proof is just "the identity rekey." The balance is assumed limb-0-only so its collapsed
-/// blinding equals the limb-0 blinding `r`.
-fun self_handle_eq_proof_for_testing(pk: &Element<G>, r: u64, dst: vector<u8>): nizk::DdhProof {
+/// Batched re-key proof for `set_public_key` when the public key is unchanged: with `old_pk = new_pk`
+/// and the new balance byte-equal to the old, the witness `w = new_sk · old_sk⁻¹ = 1` and the proof
+/// is just "the identity rekey." The balance is assumed limb-0-only (limb-0 blinding `r`; the other
+/// limbs encrypt zero, so their handles are the identity).
+fun self_handle_eq_proof_for_testing(
+    pk: &Element<G>,
+    r: u64,
+    dst: vector<u8>,
+): nizk::BatchedDdhProof {
     let r_scalar = ristretto255::scalar_from_u64(r);
     let d = ristretto255::g_mul(&r_scalar, pk);
-    let w = ristretto255::scalar_one();
-    nizk::set_pk_eq_proof_for_testing(dst, pk, &d, pk, &d, &w)
+    let id = ristretto255::g_identity();
+    // Pair 0 is the public key; pairs 1..4 are the limb handles (only limb 0 is non-identity).
+    let bases = vector[*pk, d, id, id, id];
+    nizk::prove_batched_ddh(dst, &ristretto255::scalar_one(), &bases, &bases, &r_scalar)
 }
 
 #[test]
@@ -777,12 +783,7 @@ fun test_auditor_version_flow() {
     // balance is exactly the encryption we just constructed, so we can re-derive r.
     scenario.next_tx(addr1);
 
-    let (rotation_ea_1, rotation_proof_1) = amount_and_proof_for_testing(
-        50,
-        &pk_1,
-        r_balance,
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal()),
-    );
+    let rotation_ea_1 = amount_for_testing(50, &pk_1, r_balance);
     let key_encryption_1 = build_key_encryption(
         &sk_1,
         &pk_1,
@@ -790,11 +791,13 @@ fun test_auditor_version_flow() {
         100,
         account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_key_consistency()),
     );
-    let ddh_dst_1 = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
+    let batch_ddh_dst_1 = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
     let kc_dst_1 = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_key_consistency(),
     );
-    let proof_1 = self_handle_eq_proof_for_testing(&pk_1, r_balance, ddh_dst_1);
+    let proof_1 = self_handle_eq_proof_for_testing(&pk_1, r_balance, batch_ddh_dst_1);
     let vke_1 = ct.verify_key_encryption_for_testing(
         &pk_1,
         option::some(key_encryption_1),
@@ -804,11 +807,10 @@ fun test_auditor_version_flow() {
     account_1.set_public_key_internal<TestCurrency>(
         &auth,
         pk_1,
-        rotation_ea_1,
-        rotation_proof_1,
+        rotation_ea_1.decryption_handles_for_testing(),
         proof_1,
         vke_1,
-        ddh_dst_1,
+        batch_ddh_dst_1,
     );
     assert_eq!(account_1.verified_key_encryption_version<TestCurrency>(), 1);
     assert!(account_1.verified_key_encryption_is_set<TestCurrency>());
@@ -818,16 +820,13 @@ fun test_auditor_version_flow() {
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.merge<TestCurrency>(&auth);
     // Account 2's balance is the limb-0-only amount it received under blinding `r_xfer`.
-    let ddh_dst_2 = account_2.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
+    let batch_ddh_dst_2 = account_2.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
     let kc_dst_2 = account_2.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_key_consistency(),
     );
-    let (rotation_ea_2, rotation_proof_2) = amount_and_proof_for_testing(
-        50,
-        &pk_2,
-        r_xfer,
-        account_2.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal()),
-    );
+    let rotation_ea_2 = amount_for_testing(50, &pk_2, r_xfer);
     let key_encryption_2_again = build_key_encryption(
         &sk_2,
         &pk_2,
@@ -835,7 +834,7 @@ fun test_auditor_version_flow() {
         300,
         kc_dst_2,
     );
-    let proof_2 = self_handle_eq_proof_for_testing(&pk_2, r_xfer, ddh_dst_2);
+    let proof_2 = self_handle_eq_proof_for_testing(&pk_2, r_xfer, batch_ddh_dst_2);
     let vke_2 = ct.verify_key_encryption_for_testing(
         &pk_2,
         option::some(key_encryption_2_again),
@@ -844,11 +843,10 @@ fun test_auditor_version_flow() {
     account_2.set_public_key_internal<TestCurrency>(
         &auth,
         pk_2,
-        rotation_ea_2,
-        rotation_proof_2,
+        rotation_ea_2.decryption_handles_for_testing(),
         proof_2,
         vke_2,
-        ddh_dst_2,
+        batch_ddh_dst_2,
     );
     assert_eq!(account_2.verified_key_encryption_version<TestCurrency>(), 1);
 
@@ -938,33 +936,32 @@ fun test_set_public_key_replaces_balance_with_new_handle() {
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
 
     // Construct `new_balance` -- same plaintext + blinding under pk_new -- and rotate.
-    let ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_elgamal(),
+    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
     );
     let kc_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_key_consistency(),
     );
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
-    let handle_eq_proof = nizk::set_pk_eq_proof_for_testing(
-        ddh_dst,
-        &pk_old,
-        &d_old,
-        &pk_new,
-        &d_new,
+    let id = ristretto255::g_identity();
+    // Batched re-key proof over (pk, limb-0 handle) — the other limbs are zero (identity handles).
+    let rekey_proof = nizk::prove_batched_ddh(
+        batch_ddh_dst,
         &w,
+        &vector[pk_old, d_old, id, id, id],
+        &vector[pk_new, d_new, id, id, id],
+        &r_scalar,
     );
-    let (new_ea, new_proof) = amount_and_proof_for_testing(50, &pk_new, r, elgamal_dst);
+    let new_ea = amount_for_testing(50, &pk_new, r);
     contra::set_public_key_internal<TestCurrency>(
         &mut account_1,
         &auth,
         pk_new,
-        new_ea,
-        new_proof,
-        handle_eq_proof,
+        new_ea.decryption_handles_for_testing(),
+        rekey_proof,
         ct.verify_key_encryption_for_testing(&pk_new, option::none(), kc_dst),
-        ddh_dst,
+        batch_ddh_dst,
     );
 
     // The on-chain handle must now be bound to `pk_new`. Without the in-function
@@ -1062,6 +1059,9 @@ fun test_try_set_public_key_and_unpause() {
         contra::protocol_id_elgamal(),
     );
     let ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
+    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
 
     // The re-key targets a fresh, client-known blinding `r_restate`; both `new_pk` handles below
     // are built against it.
@@ -1069,6 +1069,7 @@ fun test_try_set_public_key_and_unpause() {
     let r_restate_scalar = ristretto255::scalar_from_u64(r_restate);
     let d_new = ristretto255::g_mul(&r_restate_scalar, &pk_new);
     let d_old_restate = ristretto255::g_mul(&r_restate_scalar, &pk_old);
+    let id = ristretto255::g_identity();
 
     // A failing rotation: the restate's balance proof does not verify (here it is built with the
     // wrong key; in production a racing deposit would make it fail the same way). The account must
@@ -1083,12 +1084,7 @@ fun test_try_set_public_key_and_unpause() {
         &account_1.balance<TestCurrency>(),
     );
     let bad_balance_proof = nizk::zero_proof_for_testing(ddh_dst, &bad_diff, &sk_new);
-    let (bad_rekey_ea, bad_rekey_proof) = amount_and_proof_for_testing(
-        50,
-        &pk_new,
-        r_restate,
-        elgamal_dst,
-    );
+    let bad_rekey_ea = amount_for_testing(50, &pk_new, r_restate);
     contra::try_set_public_key_and_unpause<TestCurrency>(
         &mut account_1,
         &auth,
@@ -1097,15 +1093,13 @@ fun test_try_set_public_key_and_unpause() {
         bad_restate_ea,
         bad_restate_proof,
         bad_balance_proof,
-        bad_rekey_ea,
-        bad_rekey_proof,
-        nizk::set_pk_eq_proof_for_testing(
-            ddh_dst,
-            &pk_old,
-            &d_old_restate,
-            &pk_new,
-            &d_new,
+        bad_rekey_ea.decryption_handles_for_testing(),
+        nizk::prove_batched_ddh(
+            batch_ddh_dst,
             &w,
+            &vector[pk_old, d_old_restate, id, id, id],
+            &vector[pk_new, d_new, id, id, id],
+            &r_restate_scalar,
         ),
         option::none(),
     );
@@ -1124,7 +1118,7 @@ fun test_try_set_public_key_and_unpause() {
         &account_1.balance<TestCurrency>(),
     );
     let balance_proof = nizk::zero_proof_for_testing(ddh_dst, &diff, &sk_old);
-    let (rekey_ea, rekey_proof) = amount_and_proof_for_testing(50, &pk_new, r_restate, elgamal_dst);
+    let rekey_ea = amount_for_testing(50, &pk_new, r_restate);
     contra::try_set_public_key_and_unpause<TestCurrency>(
         &mut account_1,
         &auth,
@@ -1133,15 +1127,13 @@ fun test_try_set_public_key_and_unpause() {
         restate_ea,
         restate_proof,
         balance_proof,
-        rekey_ea,
-        rekey_proof,
-        nizk::set_pk_eq_proof_for_testing(
-            ddh_dst,
-            &pk_old,
-            &d_old_restate,
-            &pk_new,
-            &d_new,
+        rekey_ea.decryption_handles_for_testing(),
+        nizk::prove_batched_ddh(
+            batch_ddh_dst,
             &w,
+            &vector[pk_old, d_old_restate, id, id, id],
+            &vector[pk_new, d_new, id, id, id],
+            &r_restate_scalar,
         ),
         option::none(),
     );

@@ -20,7 +20,7 @@ import * as decodeContracts from './contracts/contra/decode.js';
 import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
 import { InvalidArgumentError } from './error.js';
 import type { KeyEncryption } from './key_encryption.js';
-import type { DdhTupleNizk, ElGamalNizk, KeyConsistencyProof } from './nizk.js';
+import type { BatchedDdhNizk, DdhTupleNizk, ElGamalNizk, KeyConsistencyProof } from './nizk.js';
 import { type RistrettoPoint } from './ristretto255.js';
 import type { Ciphertext, MultiRecipientEncryption } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
@@ -66,6 +66,8 @@ export const PROTOCOL_KEY_CONSISTENCY = 0x03;
 export const PROTOCOL_RANGE_PROOF_16 = 0x04;
 /** Domain-separation byte for 32-bit (auditor key-encryption) Bulletproof range proofs. */
 export const PROTOCOL_RANGE_PROOF_32 = 0x05;
+/** Domain-separation byte for the batched re-keying DDH proof (Π_rekey). */
+export const PROTOCOL_BATCH_DDH = 0x06;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.
@@ -200,6 +202,22 @@ export function buildDdhProof(packageId: string, proof: DdhTupleNizk) {
 		package: packageId,
 		arguments: {
 			parts: elemParts([proof.a.toBytes(), proof.b.toBytes(), numberToBytesLE(proof.z, 32)]),
+		},
+	});
+}
+
+/**
+ * Serialize a `BatchedDdhNizk` into an on-chain `BatchedDdhProof`. The byte layout is the per-pair
+ * Schnorr commitments followed by the trailing scalar response `z`, matching `decode::batched_ddh_proof`.
+ */
+export function buildBatchedDdhProof(packageId: string, proof: BatchedDdhNizk) {
+	return decodeContracts.batchedDdhProof({
+		package: packageId,
+		arguments: {
+			parts: elemParts([
+				...proof.commitments.map((c) => c.toBytes()),
+				numberToBytesLE(proof.z, 32),
+			]),
 		},
 	});
 }

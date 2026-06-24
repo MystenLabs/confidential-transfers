@@ -4,7 +4,7 @@
 module contra::encrypted_amount;
 
 use contra::{
-    nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
+    nizk::{DdhProof, BatchedDdhProof, ElGamalProof, verify_ddh, verify_batched_ddh, verify_elgamal},
     twisted_elgamal::{Self, Encryption, g, encrypt_trivial, encrypt_zero}
 };
 use sui::{
@@ -228,6 +228,40 @@ public(package) fun verify_equal(
     )
 }
 
+/// Re-key `old_amount` (encrypted under `old_pk`) to `new_pk` by swapping each limb's decryption
+/// handle for the matching `new_handles[i]` while keeping its Pedersen commitment. On a verifying
+/// batched re-keying DDH proof (Π_rekey) — a single witness `w` mapping `old_pk` and every old
+/// handle to `new_pk` and `new_handles[i]` — returns the re-keyed amount; otherwise `none`. Reusing
+/// the commitments means only the handles are caller-supplied, and the result encrypts the same
+/// per-limb values under `new_pk` by construction.
+public(package) fun try_rekey(
+    old_amount: &EncryptedAmount,
+    old_pk: &Element<G>,
+    new_pk: &Element<G>,
+    new_handles: vector<Element<G>>,
+    proof: &BatchedDdhProof,
+    dst: vector<u8>,
+): Option<EncryptedAmount> {
+    assert!(new_handles.length() == 4, EMismatchedBatchLength);
+    // Pair 0 re-keys the public key; pairs 1..4 re-key each limb's decryption handle.
+    let mut bases = vector[*old_pk];
+    let mut images = vector[*new_pk];
+    4u64.do!(|i| {
+        bases.push_back(*old_amount[i].decryption_handle());
+        images.push_back(new_handles[i]);
+    });
+    if (proof.verify_batched_ddh(dst, &bases, &images)) {
+        option::some(EncryptedAmount {
+            l0: twisted_elgamal::new(*old_amount[0].ciphertext(), new_handles[0]),
+            l1: twisted_elgamal::new(*old_amount[1].ciphertext(), new_handles[1]),
+            l2: twisted_elgamal::new(*old_amount[2].ciphertext(), new_handles[2]),
+            l3: twisted_elgamal::new(*old_amount[3].ciphertext(), new_handles[3]),
+        })
+    } else {
+        option::none()
+    }
+}
+
 /// Sum of the collapsed Pedersen commitments of `amounts` (ciphertext components only).
 public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>): Element<G> {
     // `collapse_limbs` is linear, so sum the four limb positions across all amounts first (cheap
@@ -390,6 +424,18 @@ public fun new_well_formed_proof_singleton_for_testing(
 #[test_only]
 public fun collapse_for_testing(ea: &EncryptedAmount): Encryption {
     ea.collapse()
+}
+
+/// The four limb decryption handles of `ea`, in order — the `new_handles` argument `try_rekey`
+/// expects.
+#[test_only]
+public fun decryption_handles_for_testing(ea: &EncryptedAmount): vector<Element<G>> {
+    vector[
+        *ea[0].decryption_handle(),
+        *ea[1].decryption_handle(),
+        *ea[2].decryption_handle(),
+        *ea[3].decryption_handle(),
+    ]
 }
 
 #[test_only]

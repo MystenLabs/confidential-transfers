@@ -16,8 +16,7 @@ module closed_loop::confidential_pbu;
 use closed_loop::pbu::{Self, PbuAdminCap, Pool, PBU};
 use contra::{
     contra::{Self, Account, ConfidentialToken, ManagementCap, TokenRegistry},
-    encrypted_amount::{EncryptedAmount, WellFormedProof},
-    nizk::DdhProof
+    nizk::BatchedDdhProof
 };
 use sui::{group_ops::Element, ristretto255::G, vec_set::{Self, VecSet}};
 
@@ -123,9 +122,8 @@ public fun set_public_key(
     whitelist: &Whitelist,
     account: &mut Account,
     new_pk: Element<G>,
-    new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
-    handle_eq_proof: DdhProof,
+    new_handles: vector<Element<G>>,
+    rekey_proof: BatchedDdhProof,
     ctx: &mut TxContext,
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
@@ -135,9 +133,8 @@ public fun set_public_key(
         &auth,
         ct,
         new_pk,
-        new_balance,
-        new_balance_proof,
-        handle_eq_proof,
+        new_handles,
+        rekey_proof,
         option::none(),
     );
 }

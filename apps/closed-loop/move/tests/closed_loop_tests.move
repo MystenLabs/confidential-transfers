@@ -7,7 +7,7 @@ use bu_token::bu::{Self, BuTreasury};
 use closed_loop::{confidential_pbu::{Self, Whitelist}, pbu::{Self, PBU, Pool as PbuPool}};
 use contra::{
     contra::{Self, ConfidentialToken, Pool as ContraPool, protocol_id_ddh, protocol_id_elgamal},
-    encrypted_amount::{Self, collapse_for_testing, consistency_proof_for_testing, limb_for_testing},
+    encrypted_amount::{Self, collapse_for_testing, consistency_proof_for_testing},
     nizk,
     twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero_for_testing}
 };
@@ -299,17 +299,9 @@ fun set_public_key_requires_whitelist() {
     let mut alice_account = account_registry.new(alice);
     confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk, scenario.ctx());
 
-    // Build a zero-valued well-formed balance + dummy NIZK so the call type-checks; the
-    // whitelist abort fires before any proof verification.
-    let zero_balance = encrypted_amount::new_encrypted_amount(
-        encrypt_zero_for_testing(),
-        encrypt_zero_for_testing(),
-        encrypt_zero_for_testing(),
-        encrypt_zero_for_testing(),
-    );
-    let zero_balance_proof = encrypted_amount::new_well_formed_proof_singleton_for_testing(
-        consistency_proof_for_testing(vector[], 0, &zero_balance, 0, &new_pk),
-    );
+    // Dummy re-key args so the call type-checks; the whitelist abort fires before any proof
+    // verification.
+    let new_handles = vector[new_pk, new_pk, new_pk, new_pk];
 
     // `mallory` is not on the whitelist -> this aborts.
     scenario.next_tx(mallory);
@@ -318,9 +310,8 @@ fun set_public_key_requires_whitelist() {
         &whitelist,
         &mut alice_account,
         new_pk,
-        zero_balance,
-        zero_balance_proof,
-        nizk::default_ddh_proof(),
+        new_handles,
+        nizk::default_batched_ddh_proof(),
         scenario.ctx(),
     );
 

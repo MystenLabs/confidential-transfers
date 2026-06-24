@@ -92,6 +92,66 @@ function isValidRelation(
 }
 
 // ---------------------------------------------------------------------------
+// Batched DDH NIZK — matches Move's `contra::nizk::BatchedDdhProof`
+// ---------------------------------------------------------------------------
+
+/**
+ * Fiat-Shamir challenge for the batched DDH proof. Binds, in order, the DST, every base, every
+ * image, and every per-pair Schnorr commitment (matching Move's `challenge_batched_ddh`).
+ */
+function challengeBatchedDdh(
+	dst: Uint8Array,
+	bases: RistrettoPoint[],
+	images: RistrettoPoint[],
+	commitments: RistrettoPoint[],
+): bigint {
+	return fiatShamirChallenge([
+		dst,
+		...bases.map((b) => b.toBytes()),
+		...images.map((i) => i.toBytes()),
+		...commitments.map((c) => c.toBytes()),
+	]);
+}
+
+/**
+ * Non-interactive zero-knowledge proof of a shared-witness DDH relation over a batch of base/image
+ * pairs: proves knowledge of a single `w` such that `images[k] = w * bases[k]` for every `k`.
+ *
+ * Layout matches the on-chain `contra::nizk::BatchedDdhProof` struct.
+ */
+export class BatchedDdhNizk {
+	commitments: RistrettoPoint[];
+	z: bigint;
+
+	constructor(commitments: RistrettoPoint[], z: bigint) {
+		this.commitments = commitments;
+		this.z = z;
+	}
+
+	static prove(
+		dst: Uint8Array,
+		w: bigint,
+		bases: RistrettoPoint[],
+		images: RistrettoPoint[],
+	): BatchedDdhNizk {
+		const s = randomScalar();
+		const commitments = bases.map((b) => mul(b, s));
+		const c = challengeBatchedDdh(dst, bases, images, commitments);
+		const z = ristretto255.Point.Fn.create(s + c * w);
+		return new BatchedDdhNizk(commitments, z);
+	}
+
+	verify(dst: Uint8Array, bases: RistrettoPoint[], images: RistrettoPoint[]): boolean {
+		if (images.length !== bases.length || this.commitments.length !== bases.length) return false;
+		const c = challengeBatchedDdh(dst, bases, images, this.commitments);
+		// z * bases[k] == commitments[k] + c * images[k]
+		return bases.every((base, k) =>
+			isValidRelation(this.commitments[k], images[k], base, this.z, c),
+		);
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ElGamal NIZK — matches Move's `contra::nizk::ElGamalProof`
 // ---------------------------------------------------------------------------
 

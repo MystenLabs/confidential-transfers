@@ -68,7 +68,7 @@ use contra::{
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedProof},
     events,
-    nizk::{DdhProof, ElGamalProof},
+    nizk::{DdhProof, BatchedDdhProof, ElGamalProof},
     policy::{Self, Auth, Policy}
 };
 use sui::{
@@ -111,6 +111,7 @@ const DST_ELGAMAL: u8 = 0x02;
 const DST_KEY_CONSISTENCY: u8 = 0x03;
 const DST_RANGE_PROOF_16: u8 = 0x04;
 const DST_RANGE_PROOF_32: u8 = 0x05;
+const DST_BATCH_DDH: u8 = 0x06;
 
 // === Registries ===
 
@@ -391,9 +392,8 @@ public fun set_public_key<T>(
     auth: &Auth<T>,
     ct: &ConfidentialToken<T>,
     new_pk: Element<G>,
-    new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
-    handle_eq_proof: DdhProof,
+    new_handles: vector<Element<G>>,
+    rekey_proof: BatchedDdhProof,
     key_encryption: Option<KeyEncryption>,
 ) {
     let sid = account[TokenAccountKey<T>()].session_id;
@@ -401,9 +401,8 @@ public fun set_public_key<T>(
         account,
         auth,
         new_pk,
-        new_balance,
-        new_balance_proof,
-        handle_eq_proof,
+        new_handles,
+        rekey_proof,
         ct
             .auditors
             .verify_key_encryption(
@@ -412,7 +411,7 @@ public fun set_public_key<T>(
                 sid.dst(DST_KEY_CONSISTENCY),
                 sid.dst(DST_RANGE_PROOF_32),
             ),
-        sid.dst(DST_DDH),
+        sid.dst(DST_BATCH_DDH),
     );
 }
 
@@ -428,9 +427,8 @@ public fun try_set_public_key_and_unpause<T>(
     restated_balance: EncryptedAmount,
     restated_balance_proof: WellFormedProof,
     balance_proof: DdhProof,
-    new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
-    handle_eq_proof: DdhProof,
+    new_handles: vector<Element<G>>,
+    rekey_proof: BatchedDdhProof,
     key_encryption: Option<KeyEncryption>,
 ) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
@@ -456,9 +454,8 @@ public fun try_set_public_key_and_unpause<T>(
         account,
         auth,
         new_pk,
-        new_balance,
-        new_balance_proof,
-        handle_eq_proof,
+        new_handles,
+        rekey_proof,
         ct
             .auditors
             .verify_key_encryption(
@@ -467,7 +464,7 @@ public fun try_set_public_key_and_unpause<T>(
                 sid.dst(DST_KEY_CONSISTENCY),
                 sid.dst(DST_RANGE_PROOF_32),
             ),
-        sid.dst(DST_DDH),
+        sid.dst(DST_BATCH_DDH),
     );
     account[TokenAccountKey<T>()].accepts_deposits = true;
 }
@@ -477,9 +474,8 @@ public(package) fun set_public_key_internal<T>(
     account: &mut Account,
     auth: &Auth<T>,
     new_pk: Element<G>,
-    new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
-    handle_eq_proof: DdhProof,
+    new_handles: vector<Element<G>>,
+    rekey_proof: BatchedDdhProof,
     new_verified_key_encryption: VerifiedKeyEncryption,
     dst: vector<u8>,
 ) {
@@ -489,20 +485,14 @@ public(package) fun set_public_key_internal<T>(
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
     assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
-    let new_balance = new_balance.into_well_formed(
-        token_account.session_id.dst(DST_ELGAMAL),
-        token_account.session_id.dst(DST_RANGE_PROOF_16),
-        new_pk,
-        new_balance_proof,
-    );
     assert!(
         token_account
             .active
             .try_set_public_key(
                 &token_account.pk,
                 &new_pk,
-                &new_balance,
-                handle_eq_proof,
+                new_handles,
+                rekey_proof,
                 dst,
             ),
         EAmountsEqualityProofFailed,
@@ -1047,6 +1037,9 @@ public fun protocol_id_range_proof_16(): u8 { DST_RANGE_PROOF_16 }
 
 #[test_only]
 public fun protocol_id_range_proof_32(): u8 { DST_RANGE_PROOF_32 }
+
+#[test_only]
+public fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {

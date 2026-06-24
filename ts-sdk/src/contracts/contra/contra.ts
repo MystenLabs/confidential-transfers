@@ -491,9 +491,8 @@ export interface SetPublicKeyArguments {
 	auth: TransactionArgument;
 	ct: RawTransactionArgument<string>;
 	newPk: TransactionArgument;
-	newBalance: TransactionArgument;
-	newBalanceProof: TransactionArgument;
-	handleEqProof: TransactionArgument;
+	newHandles: TransactionArgument;
+	rekeyProof: TransactionArgument;
 	keyEncryption: TransactionArgument;
 }
 export interface SetPublicKeyOptions {
@@ -505,9 +504,8 @@ export interface SetPublicKeyOptions {
 				auth: TransactionArgument,
 				ct: RawTransactionArgument<string>,
 				newPk: TransactionArgument,
-				newBalance: TransactionArgument,
-				newBalanceProof: TransactionArgument,
-				handleEqProof: TransactionArgument,
+				newHandles: TransactionArgument,
+				rekeyProof: TransactionArgument,
 				keyEncryption: TransactionArgument,
 		  ];
 	typeArguments: [string];
@@ -527,18 +525,14 @@ export interface SetPublicKeyOptions {
  */
 export function setPublicKey(options: SetPublicKeyOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, null, null, null, null] satisfies (
-		| string
-		| null
-	)[];
+	const argumentsTypes = [null, null, null, null, null, null, null] satisfies (string | null)[];
 	const parameterNames = [
 		'account',
 		'auth',
 		'ct',
 		'newPk',
-		'newBalance',
-		'newBalanceProof',
-		'handleEqProof',
+		'newHandles',
+		'rekeyProof',
 		'keyEncryption',
 	];
 	return (tx: Transaction) =>
@@ -558,9 +552,8 @@ export interface TrySetPublicKeyAndUnpauseArguments {
 	restatedBalance: TransactionArgument;
 	restatedBalanceProof: TransactionArgument;
 	balanceProof: TransactionArgument;
-	newBalance: TransactionArgument;
-	newBalanceProof: TransactionArgument;
-	handleEqProof: TransactionArgument;
+	newHandles: TransactionArgument;
+	rekeyProof: TransactionArgument;
 	keyEncryption: TransactionArgument;
 }
 export interface TrySetPublicKeyAndUnpauseOptions {
@@ -575,9 +568,8 @@ export interface TrySetPublicKeyAndUnpauseOptions {
 				restatedBalance: TransactionArgument,
 				restatedBalanceProof: TransactionArgument,
 				balanceProof: TransactionArgument,
-				newBalance: TransactionArgument,
-				newBalanceProof: TransactionArgument,
-				handleEqProof: TransactionArgument,
+				newHandles: TransactionArgument,
+				rekeyProof: TransactionArgument,
 				keyEncryption: TransactionArgument,
 		  ];
 	typeArguments: [string];
@@ -590,19 +582,10 @@ export interface TrySetPublicKeyAndUnpauseOptions {
  */
 export function trySetPublicKeyAndUnpause(options: TrySetPublicKeyAndUnpauseOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-	] satisfies (string | null)[];
+	const argumentsTypes = [null, null, null, null, null, null, null, null, null, null] satisfies (
+		| string
+		| null
+	)[];
 	const parameterNames = [
 		'account',
 		'auth',
@@ -611,9 +594,8 @@ export function trySetPublicKeyAndUnpause(options: TrySetPublicKeyAndUnpauseOpti
 		'restatedBalance',
 		'restatedBalanceProof',
 		'balanceProof',
-		'newBalance',
-		'newBalanceProof',
-		'handleEqProof',
+		'newHandles',
+		'rekeyProof',
 		'keyEncryption',
 	];
 	return (tx: Transaction) =>
