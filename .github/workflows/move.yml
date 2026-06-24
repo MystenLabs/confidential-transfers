@@ -18,6 +18,9 @@ jobs:
             - run: curl -sSfL https://raw.githubusercontent.com/Mystenlabs/suiup/main/install.sh | sh
             - run: suiup install sui@devnet -y
             - run: sui --version
+            # `sui move build -e devnet` selects the framework snapshot from the wallet's ACTIVE env
+            # protocol version, not the `-e` target.
+            - run: sui client switch --env devnet
             - run: find . -name "Move.toml" -type f | sed 's|/Move.toml||' | xargs -I {} bash -c "sui move build -e devnet --path '{}'"
             - run: find . -name "Move.toml" -type f | sed 's|/Move.toml||' | xargs -I {} bash -c "sui move test -e devnet --path '{}'"
 
