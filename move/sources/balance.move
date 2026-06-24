@@ -14,7 +14,7 @@ use contra::{
         from_value,
         sum_commitments
     },
-    nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
+    nizk::{DdhProof, BatchedDdhProof, ElGamalProof, verify_elgamal},
     twisted_elgamal::Encryption
 };
 use sui::{
@@ -246,35 +246,23 @@ public(package) fun try_update<T>(
     }
 }
 
-/// On a verifying `eq_proof` that `self` (under `old_pk`) and `new_balance` (under `new_pk`)
-/// encrypt the same plaintext+blinding, overwrite `self` with `new_balance`. Returns whether the
-/// proof verified. Aborts if `new_balance.pk() != new_pk`. The caller is responsible for updating
-/// its own record of the active key.
+/// On a verifying `eq_proof` that `new_handles` re-key `self` (under `old_pk`) to `new_pk` — each
+/// limb's commitment kept, its decryption handle mapped by a shared witness — replace `self`'s
+/// amount with the re-keyed amount, preserving `upper_bound` (the re-keyed limbs encrypt the same
+/// values, so their bounds are unchanged). Returns whether the proof verified. The caller is
+/// responsible for updating its own record of the active key.
 public(package) fun try_set_public_key<T>(
     self: &mut EncryptedBalance<T>,
     old_pk: &Element<G>,
     new_pk: &Element<G>,
-    new_balance: &WellFormedEncryptedAmount,
-    eq_proof: DdhProof,
+    new_handles: vector<Element<G>>,
+    eq_proof: BatchedDdhProof,
     dst: vector<u8>,
 ): bool {
-    assert!(new_balance.pk() == new_pk, EInvalidPublicKey);
-    let new_collapse = new_balance.amount().collapse();
-    let old_collapse = self.collapse();
-    if (
-        new_collapse.ciphertext() == old_collapse.ciphertext() && eq_proof.verify_ddh(
-            dst,
-            old_pk,
-            old_collapse.decryption_handle(),
-            new_pk,
-            new_collapse.decryption_handle(),
-        )
-    ) {
-        self.overwrite(new_balance);
+    self.amount.try_rekey(old_pk, new_pk, new_handles, &eq_proof, dst).is_some_and!(|amount| {
+        self.amount = *amount;
         true
-    } else {
-        false
-    }
+    })
 }
 
 // === Admin functions ===

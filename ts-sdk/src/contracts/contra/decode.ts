@@ -112,6 +112,25 @@ export function ddhProof(options: DdhProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface BatchedDdhProofArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface BatchedDdhProofOptions {
+	package?: string;
+	arguments: BatchedDdhProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+export function batchedDdhProof(options: BatchedDdhProofOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'batched_ddh_proof',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface ElgamalProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }

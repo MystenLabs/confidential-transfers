@@ -37,6 +37,12 @@ public struct DdhProof has drop {
     z: Element<Scalar>,
 }
 
+/// A shared-witness DDH proof: one `w` with `images[k] = w * bases[k]` for all `k` (batched re-keying, Π_rekey).
+public struct BatchedDdhProof has drop {
+    commitments: vector<Element<G>>,
+    z: Element<Scalar>,
+}
+
 /// A non-interactive zero knowledge proof of the following relation:
 /// Prover knows `r` and `m` such that `c = r * g + m * h` and `d = r * pk` where `(c, d)` is a twisted ElGamal ciphertext,
 /// `pk` is a public key, and `g` and `h` are generators of the group.
@@ -65,6 +71,13 @@ public struct KeyConsistencyProof has drop {
 
 public fun new_ddh_proof(a: Element<G>, b: Element<G>, z: Element<Scalar>): DdhProof {
     DdhProof { a, b, z }
+}
+
+public fun new_batched_ddh_proof(
+    commitments: vector<Element<G>>,
+    z: Element<Scalar>,
+): BatchedDdhProof {
+    BatchedDdhProof { commitments, z }
 }
 
 public fun new_elgamal_proof(
@@ -110,6 +123,23 @@ public(package) fun verify_ddh(
         &proof.z,
         &challenge,
     )
+}
+
+/// Verify a `BatchedDdhProof` that a single witness `w` maps every base to its image:
+/// `images[k] == w * bases[k]` for all `k`.
+public(package) fun verify_batched_ddh(
+    proof: &BatchedDdhProof,
+    dst: vector<u8>,
+    bases: &vector<Element<G>>,
+    images: &vector<Element<G>>,
+): bool {
+    let n = bases.length();
+    if (images.length() != n || proof.commitments.length() != n) return false;
+    let c = challenge_batched_ddh(dst, bases, images, &proof.commitments);
+    vector::tabulate!(
+        n,
+        |k| is_valid_relation(&proof.commitments[k], &images[k], &bases[k], &proof.z, &c),
+    ).all!(|b| *b)
 }
 
 /// Verify that the prover knows the message `m` and randomness `r` in a twisted ElGamal
@@ -230,6 +260,21 @@ fun challenge_ddh(
     ])
 }
 
+/// Fiat-Shamir challenge for a `BatchedDdhProof`. Binds, in order, the DST, every base, every
+/// image, and every per-pair Schnorr commitment.
+fun challenge_batched_ddh(
+    dst: vector<u8>,
+    bases: &vector<Element<G>>,
+    images: &vector<Element<G>>,
+    commitments: &vector<Element<G>>,
+): Element<Scalar> {
+    let mut inputs = vector[dst];
+    bases.do_ref!(|b| inputs.push_back(*b.bytes()));
+    images.do_ref!(|i| inputs.push_back(*i.bytes()));
+    commitments.do_ref!(|cm| inputs.push_back(*cm.bytes()));
+    fiat_shamir_challenge(inputs)
+}
+
 fun challenge_elgamal(
     dst: vector<u8>,
     g: &Element<G>,
@@ -341,6 +386,22 @@ fun prove_nizk_round_trip() {
     assert!(verify_ddh(&proof, vector[], &ristretto255::g_generator(), &tuple1, &tuple2, &tuple3));
 }
 
+#[test]
+fun batched_ddh_proof_round_trip() {
+    let g = ristretto255::g_generator();
+    let w = scalar_from_u64(13579);
+    // Five independent bases; images are each `w * base`.
+    let bases = vector::tabulate!(5, |i| g_mul(&scalar_from_u64((i + 1) * 100), &g));
+    let images = bases.map_ref!(|b| g_mul(&w, b));
+    let proof = prove_batched_ddh(vector[], &w, &bases, &images, &scalar_from_u64(24680));
+    assert!(verify_batched_ddh(&proof, vector[], &bases, &images));
+
+    // A wrong image breaks verification.
+    let mut bad_images = images;
+    *bad_images.borrow_mut(2) = g;
+    assert!(!verify_batched_ddh(&proof, vector[], &bases, &bad_images));
+}
+
 #[test_only]
 public fun prove_ddh(
     dst: vector<u8>,
@@ -365,6 +426,11 @@ public fun default_ddh_proof(): DdhProof {
         b: g_identity(),
         z: scalar_from_u64(0),
     }
+}
+
+#[test_only]
+public fun default_batched_ddh_proof(): BatchedDdhProof {
+    BatchedDdhProof { commitments: vector[], z: scalar_from_u64(0) }
 }
 
 #[test_only]
@@ -470,28 +536,21 @@ public fun handle_eq_proof_for_testing(
     )
 }
 
-/// Build a DDH proof for the `try_set_public_key` re-key relation: knowledge of
-/// `w = new_sk · old_sk⁻¹` such that `w · old_pk = new_pk` AND `w · old_handle = new_handle`.
-/// Equivalent to "the new balance has the same collapsed blinding `r` as the old, just transferred
-/// from `old_pk` to `new_pk` via the secret-key bridge `w`."
+/// Build a `BatchedDdhProof` proving a shared witness `w` maps every base to its image
+/// (`images[k] = w * bases[k]`). Used for the batched re-key relation: `w = new_sk · old_sk⁻¹`
+/// re-keys `old_pk` and every limb's decryption handle to the new key.
 #[test_only]
-public fun set_pk_eq_proof_for_testing(
+public fun prove_batched_ddh(
     dst: vector<u8>,
-    old_pk: &Element<G>,
-    old_handle: &Element<G>,
-    new_pk: &Element<G>,
-    new_handle: &Element<G>,
     w: &Element<Scalar>,
-): DdhProof {
-    prove_ddh(
-        dst,
-        w,
-        old_pk,
-        old_handle,
-        new_pk,
-        new_handle,
-        &scalar_from_u64(7654321), // randomness
-    )
+    bases: &vector<Element<G>>,
+    images: &vector<Element<G>>,
+    s: &Element<Scalar>,
+): BatchedDdhProof {
+    let commitments = bases.map_ref!(|b| g_mul(s, b));
+    let c = challenge_batched_ddh(dst, bases, images, &commitments);
+    let z = scalar_add(s, &scalar_mul(&c, w));
+    BatchedDdhProof { commitments, z }
 }
 
 /// Build a DDH proof that `sum` is the homomorphic sum of `a` and `b` under `sk` (where

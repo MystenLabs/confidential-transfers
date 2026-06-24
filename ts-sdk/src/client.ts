@@ -21,6 +21,7 @@ import {
 	TokenAccountDoesNotExistError,
 } from './error.js';
 import {
+	buildBatchedDdhProof,
 	buildDdhProof,
 	buildElGamalProof,
 	buildEncryptedAmount,
@@ -32,6 +33,7 @@ import {
 	getConfidentialTokenId,
 	getTokenAccountId,
 	point,
+	PROTOCOL_BATCH_DDH,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_KEY_CONSISTENCY,
@@ -40,7 +42,7 @@ import {
 	type WellFormedLimb,
 } from './helpers.js';
 import { KeyEncryption } from './key_encryption.js';
-import { DdhTupleNizk, ElGamalNizk } from './nizk.js';
+import { BatchedDdhNizk, DdhTupleNizk, ElGamalNizk } from './nizk.js';
 import { addScalars, mul, pointFromBcs } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import type { DiscreteLogTable, PublicKey } from './twisted_elgamal.js';
@@ -863,25 +865,20 @@ export class ContraClient {
 			.subtract(oldCollapsed)
 			.proveIsZero(ddhDst, oldSk, oldPk);
 
-		// Per-limb encryption under the NEW public key reusing the same `(value, r)`
-		// per limb. This keeps the Pedersen commitments identical so `set_public_key`'s
-		// `has_same_plaintext_and_blinding` check passes; only the decryption handle
-		// changes from `r * oldPk` to `r * newPk`.
-		const newBalanceUnderNewPk = newBalanceUnderOldPk.map((l) => {
-			const ciphertext = new Ciphertext(l.ciphertext.ciphertext, mul(newPk, l.blinding));
-			const proof = ElGamalNizk.prove(elgamalDst, l.blinding, l.value, ciphertext, newPk);
-			return { value: l.value, blinding: l.blinding, ciphertext, proof };
-		});
-
-		// DDH proof for `try_set_public_key`: knowledge of `w = newSk * oldSk^{-1}` such that
-		// `w * oldPk = newPk` AND `w * oldHandle = newHandle`. Combined with the byte-equality check
-		// on ciphertexts that try_set_public_key enforces, this attests the new balance has the same
-		// collapsed blinding `r` as the old. Witness is derived from the user's two secret keys.
-		const rCollapsed = collapseBlindings(newBalanceUnderOldPk);
-		const oldHandle = mul(oldPk, rCollapsed);
-		const newHandle = mul(newPk, rCollapsed);
+		// Batched re-key (Π_rekey): the witness `w = newSk * oldSk^{-1}` maps each old handle to the new
+		// one (`w * D_i = r_i*newPk`) using only the secret keys; commitments are reused, so no proof.
 		const w = ristretto255.Point.Fn.create(newSk * ristretto255.Point.Fn.inv(oldSk));
-		const handleEqProof = DdhTupleNizk.prove(ddhDst, w, oldPk, oldHandle, newPk, newHandle);
+		const newBalanceUnderNewPk = newBalanceUnderOldPk.map((l) => ({
+			ciphertext: new Ciphertext(l.ciphertext.ciphertext, mul(l.ciphertext.decryptionHandle, w)),
+		}));
+		const rekeyBases = [oldPk, ...newBalanceUnderOldPk.map((l) => l.ciphertext.decryptionHandle)];
+		const rekeyImages = [newPk, ...newBalanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle)];
+		const rekeyProof = BatchedDdhNizk.prove(
+			tokenAccount.dst(PROTOCOL_BATCH_DDH),
+			w,
+			rekeyBases,
+			rekeyImages,
+		);
 
 		const { batchRangeProver } = await this.#getBulletproofs();
 		const keyEncryption = useAuditors
@@ -912,14 +909,12 @@ export class ContraClient {
 					pid,
 					newBalanceUnderOldPk,
 				);
-			const { encryptedAmount: newBalance, wellFormedProof: newBalanceProof } =
-				buildEncryptedAmountAndProof(
-					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-					tx,
+			const newHandles = tx.add(
+				buildGVector(
 					pid,
-					newBalanceUnderNewPk,
-				);
+					newBalanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle),
+				),
+			);
 			return tx.add(
 				contraContracts.trySetPublicKeyAndUnpause({
 					package: pid,
@@ -932,9 +927,8 @@ export class ContraClient {
 						restatedBalance,
 						restatedBalanceProof,
 						balanceProof: buildDdhProof(pid, balanceProofUpdate),
-						newBalance,
-						newBalanceProof,
-						handleEqProof: buildDdhProof(pid, handleEqProof),
+						newHandles,
+						rekeyProof: buildBatchedDdhProof(pid, rekeyProof),
 						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
 					},
 				}),
@@ -1364,16 +1358,20 @@ export class ContraClient {
 			.collapse()
 			.subtract(postTransferCollapsed)
 			.proveIsZero(ddhDst, oldSk, oldPk);
-		const balanceUnderNewPk = restateUnderOldPk.map((l) => {
-			const ciphertext = new Ciphertext(l.ciphertext.ciphertext, mul(newPk, l.blinding));
-			const proof = ElGamalNizk.prove(elgamalDst, l.blinding, l.value, ciphertext, newPk);
-			return { value: l.value, blinding: l.blinding, ciphertext, proof };
-		});
-		const rCollapsed = collapseBlindings(restateUnderOldPk);
-		const oldHandle = mul(oldPk, rCollapsed);
-		const newHandle = mul(newPk, rCollapsed);
+		// Batched re-key (Π_rekey): the witness `w = newSk * oldSk^{-1}` maps each old handle to the new
+		// one (`w * D_i = r*newPk`) using only the secret keys; commitments are reused, so no proof.
 		const w = ristretto255.Point.Fn.create(newSk * ristretto255.Point.Fn.inv(oldSk));
-		const handleEqProof = DdhTupleNizk.prove(ddhDst, w, oldPk, oldHandle, newPk, newHandle);
+		const balanceUnderNewPk = restateUnderOldPk.map((l) => ({
+			ciphertext: new Ciphertext(l.ciphertext.ciphertext, mul(l.ciphertext.decryptionHandle, w)),
+		}));
+		const rekeyBases = [oldPk, ...restateUnderOldPk.map((l) => l.ciphertext.decryptionHandle)];
+		const rekeyImages = [newPk, ...balanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle)];
+		const rekeyProof = BatchedDdhNizk.prove(
+			tokenAccount.dst(PROTOCOL_BATCH_DDH),
+			w,
+			rekeyBases,
+			rekeyImages,
+		);
 		const { batchRangeProver } = await this.#getBulletproofs();
 		const keyEncryption = useAuditors
 			? KeyEncryption.prove(
@@ -1474,12 +1472,11 @@ export class ContraClient {
 					pid,
 					restateUnderOldPk,
 				);
-			const { encryptedAmount: newEa, wellFormedProof: newEaProof } = buildEncryptedAmountAndProof(
-				batchRangeProver,
-				tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-				tx,
-				pid,
-				balanceUnderNewPk,
+			const newHandles = tx.add(
+				buildGVector(
+					pid,
+					balanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle),
+				),
 			);
 			return tx.add(
 				contraContracts.trySetPublicKeyAndUnpause({
@@ -1493,9 +1490,8 @@ export class ContraClient {
 						restatedBalance: restatedEa,
 						restatedBalanceProof: restatedEaProof,
 						balanceProof: buildDdhProof(pid, restateProof),
-						newBalance: newEa,
-						newBalanceProof: newEaProof,
-						handleEqProof: buildDdhProof(pid, handleEqProof),
+						newHandles,
+						rekeyProof: buildBatchedDdhProof(pid, rekeyProof),
 						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
 					},
 				}),

@@ -58,6 +58,35 @@ export function newDdhProof(options: NewDdhProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export const BatchedDdhProof = new MoveStruct({
+	name: `${$moduleName}::BatchedDdhProof`,
+	fields: {
+		commitments: bcs.vector(group_ops.Element),
+		z: group_ops.Element,
+	},
+});
+export interface NewBatchedDdhProofArguments {
+	commitments: TransactionArgument;
+	z: TransactionArgument;
+}
+export interface NewBatchedDdhProofOptions {
+	package?: string;
+	arguments:
+		| NewBatchedDdhProofArguments
+		| [commitments: TransactionArgument, z: TransactionArgument];
+}
+export function newBatchedDdhProof(options: NewBatchedDdhProofOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['commitments', 'z'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'nizk',
+			function: 'new_batched_ddh_proof',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface NewElgamalProofArguments {
 	a: TransactionArgument;
 	b: TransactionArgument;
