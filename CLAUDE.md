@@ -64,7 +64,16 @@ pnpm build:wasm         # Build both wasm-pack targets (nodejs/ + web/)
 ```
 `@contra/bulletproofs-wasm` wraps `fastcrypto::bulletproofs` and is consumed by
 `ts-sdk` via a `file:` dependency. Requires the Rust toolchain with the
-`wasm32-unknown-unknown` target plus `wasm-pack`.
+`wasm32-unknown-unknown` target plus `wasm-pack`. The `nodejs/` and `web/`
+outputs are gitignored build artifacts — a fresh checkout must run `build:wasm`
+before building `ts-sdk`.
+
+macOS note: a transitive C dependency (`blst`) is cross-compiled to wasm32, but
+Apple's system `clang` has no wasm backend (`build:wasm` fails with "No available
+targets are compatible with triple wasm32-unknown-unknown"). Install a
+wasm-capable clang (`brew install llvm`) and point cc-rs at it for that target:
+`CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang AR_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/llvm-ar pnpm build:wasm`.
+Linux/CI uses the stock clang, which already targets wasm32 — no extra setup.
 
 ### TypeScript SDK (in `ts-sdk/`)
 ```
@@ -131,7 +140,7 @@ Note on Fiat-Shamir hash functions:
 - **@contra/bulletproofs-wasm**: Standalone package wrapping `fastcrypto::bulletproofs` (Rust crate in `src/lib.rs`, built with `wasm-pack`). Ships two builds selected by `package.json` `exports` conditions: a `nodejs/` build (CommonJS, loads synchronously — its `init` is a no-op) and a `web/` build (needs an async `init`). `ts-sdk` consumes it via `file:` and wraps init in `bp.ts`'s `getBulletproofs()` factory. The package has no `"type": "module"` so the CommonJS `nodejs` build resolves cleanly.
 
 ### Apps (`apps/`)
-- **kaisho/**: Example React/Vite wallet demonstrating the full flow (connect wallet, create account, wrap, transfer, unwrap) plus an issuer setup page that deploys the BU test token and Contra contracts to Sui devnet. Consumes `ts-sdk` from its built `dist/`.
+- **kaisho/**: Example React/Vite wallet demonstrating the full flow (connect wallet, create account, wrap, transfer, unwrap) plus an issuer setup page that deploys the BU test token and Contra contracts to Sui testnet. Consumes `ts-sdk` from its built `dist/`.
 
 ### Key Dependencies
 - `@noble/curves` and `@noble/hashes` for TS cryptography

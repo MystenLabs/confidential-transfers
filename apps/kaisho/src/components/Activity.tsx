@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { DiscreteLogTable, TokenAccount } from 'ts-sdk';
 
 import { useDLogTable } from '../hooks/useDLogTable';
+import { explorerUrl } from '../network';
 import { decryptTransferEventAmount } from '../sdk';
 import type { TokenConfig } from '../sdk';
 
@@ -239,7 +240,7 @@ export function Activity({
 								{row.amount}
 							</p>
 							<a
-								href={`https://suiscan.xyz/devnet/tx/${row.txDigest}`}
+								href={explorerUrl('tx', row.txDigest)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="shrink-0 opacity-40 group-hover:opacity-80 transition-opacity"

@@ -9,9 +9,12 @@ import { Transaction } from '@mysten/sui/transactions';
 import { compileMovePackage } from './node.js';
 import { findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
 
+/** Networks `ContraInitializer` can publish against. */
+export type ContraNetwork = 'devnet' | 'testnet';
+
 /**
- * Protocol initializer: publishes the contra Move package on devnet and
- * stands in as the SUI faucet for test participants. Holds the
+ * Protocol initializer: publishes the contra Move package (on `devnet` by
+ * default) and stands in as the SUI faucet for test participants. Holds the
  * protocol-initializer keypair, the published package id, and the shared
  * registries.
  */
@@ -26,19 +29,23 @@ export class ContraInitializer {
 	) {}
 
 	/**
-	 * One-time protocol setup: fund a fresh keypair from the devnet faucet,
-	 * compile the contra package at `contraMoveDir`, publish it, and locate
-	 * the registries created by `init`.
+	 * One-time protocol setup: fund a fresh keypair from the faucet, compile
+	 * the contra package at `contraMoveDir`, publish it, and locate the
+	 * registries created by `init`. Targets `devnet` unless `network` says
+	 * otherwise.
 	 */
 	static async init(opts: {
 		/** Absolute path to the contra Move package (the dir containing its `Move.toml`). */
 		contraMoveDir: string;
+		/** Network to fund/publish against. Defaults to `devnet`. */
+		network?: ContraNetwork;
 		log?: (msg: string) => void;
 	}): Promise<ContraInitializer> {
 		const log = opts.log ?? console.log;
+		const network = opts.network ?? 'devnet';
 		const client = new SuiJsonRpcClient({
-			url: getJsonRpcFullnodeUrl('devnet'),
-			network: 'devnet',
+			url: getJsonRpcFullnodeUrl(network),
+			network,
 		});
 
 		const keypair = Ed25519Keypair.generate();
@@ -46,7 +53,7 @@ export class ContraInitializer {
 		log(`Protocol initializer address: ${address}`);
 
 		const faucetResp = await requestSuiFromFaucetV2({
-			host: getFaucetHost('devnet'),
+			host: getFaucetHost(network),
 			recipient: address,
 		});
 		if (
@@ -68,7 +75,7 @@ export class ContraInitializer {
 		log('Funded protocol initializer from faucet');
 
 		log('Compiling contra package...');
-		const bytecodes = compileMovePackage(opts.contraMoveDir);
+		const bytecodes = compileMovePackage(opts.contraMoveDir, { env: network });
 		log('Publishing contra package...');
 		const result = await publishBytecodes(bytecodes, keypair, client);
 		const accountRegistryId = findObject(result.createdObjects, 'AccountRegistry');

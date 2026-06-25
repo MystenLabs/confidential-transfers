@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { useTokenConfig } from '../hooks/useTokenConfig';
+import { explorerUrl } from '../network';
 import {
 	buildAddDenyTx,
 	buildAddFreezeAdminTx,
@@ -17,7 +18,7 @@ import {
 	buildRemoveFreezeAdminTx,
 	executeIssuerTx,
 	fetchFreezeAdmins,
-	getDevnetSuiClient,
+	getSuiClient,
 	isAddressDeniedNextEpoch,
 	isGlobalPauseEnabledNextEpoch,
 } from '../sdk';
@@ -105,7 +106,7 @@ export function IssuerMonitor() {
 		if (!buType) return;
 		try {
 			setPauseChecking(true);
-			const client = getDevnetSuiClient();
+			const client = getSuiClient();
 			// We check the next-epoch flag (not current-epoch): `enable_global_pause`
 			// flips the next-epoch state immediately and starts blocking new inputs,
 			// while the current-epoch view doesn't change until the epoch boundary.
@@ -133,7 +134,7 @@ export function IssuerMonitor() {
 		}
 		try {
 			setDenyChecking(true);
-			const client = getDevnetSuiClient();
+			const client = getSuiClient();
 			// next_epoch reflects the issuer's most recent add/remove
 			// immediately; current_epoch only catches up at the epoch boundary.
 			const checks = await Promise.all(
@@ -170,7 +171,7 @@ export function IssuerMonitor() {
 		}
 		try {
 			setFreezeChecking(true);
-			const client = getDevnetSuiClient();
+			const client = getSuiClient();
 			const { admins, isActive } = await fetchFreezeAdmins(client, wallet.confidentialTokenId);
 			setFreezeAdmins(admins);
 			setTokenActive(isActive);
@@ -211,7 +212,7 @@ export function IssuerMonitor() {
 		try {
 			setAction({ kind: 'running', label });
 			const { digest } = await executeIssuerTx({
-				client: getDevnetSuiClient(),
+				client: getSuiClient(),
 				secretKey: wallet.secretKey,
 				transaction: buildTx(),
 			});
@@ -386,7 +387,7 @@ export function IssuerMonitor() {
 					<p className="mt-1.5 text-xs text-zinc-500">
 						Deployed by{' '}
 						<a
-							href={`https://suiscan.xyz/devnet/account/${wallet.address}`}
+							href={explorerUrl('account', wallet.address)}
 							target="_blank"
 							rel="noopener noreferrer"
 							className="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-200"
