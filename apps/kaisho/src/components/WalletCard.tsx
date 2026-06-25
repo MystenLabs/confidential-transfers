@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom';
 import type { TokenBalance } from 'ts-sdk';
 
 import { useContraClient } from '../hooks/useContraClient';
+import { explorerUrl } from '../network';
 import {
 	buildMintTx,
 	buildTransferTx,
@@ -21,7 +22,7 @@ import {
 	fetchConfidentialBalance,
 	makeTokenAccount,
 	recipientHasPrivateAccount,
-	requestDevnetSui,
+	requestSui,
 	totalConfidentialBalanceBu,
 	transactionEmittedEvent,
 } from '../sdk';
@@ -167,7 +168,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 		try {
 			const { totalBalance } = await client.getBalance({ owner: account.address });
 			if (totalBalance === '0') {
-				await requestDevnetSui(account.address);
+				await requestSui(account.address);
 			}
 			const tx = buildMintTx(config);
 			const result = await signAndExecute({ transaction: tx });
@@ -366,7 +367,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<div className="relative flex-1 p-5">
 						{account && (
 							<a
-								href={`https://suiscan.xyz/devnet/account/${account.address}`}
+								href={explorerUrl('account', account.address)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="absolute top-3 right-3 text-zinc-600 hover:text-accent transition-colors"
@@ -457,7 +458,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<div className="relative flex-1 p-5">
 						{tokenAccountId && (
 							<a
-								href={`https://suiscan.xyz/devnet/object/${tokenAccountId}`}
+								href={explorerUrl('object', tokenAccountId)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="absolute top-3 right-3 text-zinc-600 hover:text-accent transition-colors"
@@ -709,7 +710,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<Sparkles count={10} />
 					<p className="text-sm text-white font-medium">10 BU minted</p>
 					<a
-						href={`https://suiscan.xyz/devnet/tx/${mintResult.digest}`}
+						href={explorerUrl('tx', mintResult.digest)}
 						target="_blank"
 						rel="noopener noreferrer"
 						title="View on Suiscan"
@@ -732,7 +733,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 						{wrapResult.amount} BU {wrapResult.action}
 					</p>
 					<a
-						href={`https://suiscan.xyz/devnet/tx/${wrapResult.digest}`}
+						href={explorerUrl('tx', wrapResult.digest)}
 						target="_blank"
 						rel="noopener noreferrer"
 						title="View on Suiscan"
@@ -753,7 +754,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<Sparkles count={10} />
 					<p className="text-sm text-white font-medium">{transferResult.amount} BU sent</p>
 					<a
-						href={`https://suiscan.xyz/devnet/tx/${transferResult.digest}`}
+						href={explorerUrl('tx', transferResult.digest)}
 						target="_blank"
 						rel="noopener noreferrer"
 						title="View on Suiscan"

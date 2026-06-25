@@ -4,6 +4,8 @@
 import { useCurrentAccount, useCurrentWallet } from '@mysten/dapp-kit';
 import { useEffect, useReducer } from 'react';
 
+import { NETWORK, WALLET_CHAIN } from '../network';
+
 export function NetworkBanner() {
 	const account = useCurrentAccount();
 	const { currentWallet } = useCurrentWallet();
@@ -23,14 +25,14 @@ export function NetworkBanner() {
 
 	if (!account) return null;
 	const liveAccount = currentWallet?.accounts.find((a) => a.address === account.address) ?? account;
-	const onDevnet = liveAccount.chains?.some((c) => c === 'sui:devnet') ?? false;
-	if (onDevnet) return null;
+	const onExpectedNetwork = liveAccount.chains?.some((c) => c === WALLET_CHAIN) ?? false;
+	if (onExpectedNetwork) return null;
 	return (
 		<div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] p-3 text-center">
-			<p className="text-xs font-semibold text-amber-300">Wallet is not on Sui devnet</p>
+			<p className="text-xs font-semibold text-amber-300">Wallet is not on Sui {NETWORK}</p>
 			<p className="mt-1 text-[11px] text-amber-200/70">
-				Kaisho is enabled only on devnet. Switch the network in your wallet to{' '}
-				<span className="font-mono">devnet</span> to continue.
+				Kaisho is enabled only on {NETWORK}. Switch the network in your wallet to{' '}
+				<span className="font-mono">{NETWORK}</span> to continue.
 			</p>
 		</div>
 	);

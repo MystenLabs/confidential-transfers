@@ -11,7 +11,7 @@
  *   3. End-user transactions              — mint, register, wrap, unwrap, transfer.
  *   4. Issuer transactions                — deny list, global pause, freeze admins.
  *   5. Auditor flow                       — recover an account and decrypt.
- *   6. Faucet                             — devnet SUI for gas.
+ *   6. Faucet                             — testnet SUI for gas.
  *   7. Deployment                         — publish bytecodes and register BU.
  *   8. Tx helpers                         — execute and check for merge-failure events.
  *
@@ -48,6 +48,8 @@ import type {
 	TokenAuditors,
 	TokenBalance,
 } from 'ts-sdk';
+
+import { NETWORK } from './network';
 
 // ─────────────────────────────────────────────────────────────────────
 // Types
@@ -107,13 +109,13 @@ export interface CreateTokenResult {
 // 1. Client construction
 // ─────────────────────────────────────────────────────────────────────
 
-/** A devnet RPC client. Used in non-React contexts (issuer flows, the
- *  worker, deployment). React components should use `useSuiClient()`
- *  from dapp-kit instead. */
-export function getDevnetSuiClient(): SuiJsonRpcClient {
+/** An RPC client for the active network (see `network.ts`). Used in non-React
+ *  contexts (issuer flows, the worker, deployment). React components should
+ *  use `useSuiClient()` from dapp-kit instead. */
+export function getSuiClient(): SuiJsonRpcClient {
 	return new SuiJsonRpcClient({
-		network: 'devnet',
-		url: getJsonRpcFullnodeUrl('devnet'),
+		network: NETWORK,
+		url: getJsonRpcFullnodeUrl(NETWORK),
 	});
 }
 
@@ -695,9 +697,9 @@ export function auditorPrivateKeyMatchesPublic(
 // 6. Faucet
 // ─────────────────────────────────────────────────────────────────────
 
-export function requestDevnetSui(address: string): Promise<unknown> {
+export function requestSui(address: string): Promise<unknown> {
 	return requestSuiFromFaucetV2({
-		host: getFaucetHost('devnet'),
+		host: getFaucetHost(NETWORK),
 		recipient: address,
 	});
 }
