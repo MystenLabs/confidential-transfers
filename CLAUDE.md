@@ -68,11 +68,12 @@ pnpm build:wasm         # Build both wasm-pack targets (nodejs/ + web/)
 outputs are gitignored build artifacts — a fresh checkout must run `build:wasm`
 before building `ts-sdk`.
 
-On macOS, a transitive C dependency (`blst`) must be cross-compiled to wasm32,
-but Apple's system `clang` has no wasm backend. `build:wasm` runs through
-`build-wasm.sh`, which detects this and points cc-rs at Homebrew LLVM
-(`brew install llvm`) via `CC_wasm32_unknown_unknown` / `AR_wasm32_unknown_unknown`.
-On Linux/CI the stock clang already targets wasm32, so the fallback is skipped.
+macOS note: a transitive C dependency (`blst`) is cross-compiled to wasm32, but
+Apple's system `clang` has no wasm backend (`build:wasm` fails with "No available
+targets are compatible with triple wasm32-unknown-unknown"). Install a
+wasm-capable clang (`brew install llvm`) and point cc-rs at it for that target:
+`CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang AR_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/llvm-ar pnpm build:wasm`.
+Linux/CI uses the stock clang, which already targets wasm32 — no extra setup.
 
 ### TypeScript SDK (in `ts-sdk/`)
 ```
