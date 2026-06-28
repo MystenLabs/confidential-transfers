@@ -6,6 +6,7 @@ import type { SuiEvent } from '@mysten/sui/jsonRpc';
 import { useEffect, useMemo, useState } from 'react';
 import type { DiscreteLogTable, TokenAccount } from 'ts-sdk';
 
+import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { useDLogTable } from '../hooks/useDLogTable';
 import { explorerUrl } from '../network';
 import { decryptTransferEventAmount } from '../sdk';
@@ -145,6 +146,7 @@ export function Activity({
 	tokenAccount?: TokenAccount;
 }) {
 	const account = useCurrentAccount();
+	const network = useActiveNetwork();
 	const effectiveAddress = address ?? account?.address;
 	const table = useDLogTable();
 
@@ -240,7 +242,7 @@ export function Activity({
 								{row.amount}
 							</p>
 							<a
-								href={explorerUrl('tx', row.txDigest)}
+								href={explorerUrl(network, 'tx', row.txDigest)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="shrink-0 opacity-40 group-hover:opacity-80 transition-opacity"

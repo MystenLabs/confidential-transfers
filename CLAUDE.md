@@ -140,7 +140,7 @@ Note on Fiat-Shamir hash functions:
 - **@contra/bulletproofs-wasm**: Standalone package wrapping `fastcrypto::bulletproofs` (Rust crate in `src/lib.rs`, built with `wasm-pack`). Ships two builds selected by `package.json` `exports` conditions: a `nodejs/` build (CommonJS, loads synchronously — its `init` is a no-op) and a `web/` build (needs an async `init`). `ts-sdk` consumes it via `file:` and wraps init in `bp.ts`'s `getBulletproofs()` factory. The package has no `"type": "module"` so the CommonJS `nodejs` build resolves cleanly.
 
 ### Apps (`apps/`)
-- **kaisho/**: Example React/Vite wallet demonstrating the full flow (connect wallet, create account, wrap, transfer, unwrap) plus an issuer setup page that deploys the BU test token and Contra contracts to Sui testnet. Consumes `ts-sdk` from its built `dist/`.
+- **kaisho/**: Example React/Vite wallet demonstrating the full flow (connect wallet, create account, wrap, transfer, unwrap) plus an issuer setup page that deploys the BU test token and Contra contracts to Sui devnet or testnet (the active network is chosen at runtime via the header picker; see `src/network.ts`). Consumes `ts-sdk` from its built `dist/`.
 
 ### Key Dependencies
 - `@noble/curves` and `@noble/hashes` for TS cryptography

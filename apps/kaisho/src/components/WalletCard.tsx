@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TokenBalance } from 'ts-sdk';
 
+import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { useContraClient } from '../hooks/useContraClient';
 import { explorerUrl } from '../network';
 import {
@@ -80,6 +81,7 @@ function InfoDot({ text }: { text: string }) {
 
 export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: string }) {
 	const account = useCurrentAccount();
+	const network = useActiveNetwork();
 	const client = useSuiClient();
 	const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
 
@@ -168,7 +170,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 		try {
 			const { totalBalance } = await client.getBalance({ owner: account.address });
 			if (totalBalance === '0') {
-				await requestSui(account.address);
+				await requestSui(network, account.address);
 			}
 			const tx = buildMintTx(config);
 			const result = await signAndExecute({ transaction: tx });
@@ -367,7 +369,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<div className="relative flex-1 p-5">
 						{account && (
 							<a
-								href={explorerUrl('account', account.address)}
+								href={explorerUrl(network, 'account', account.address)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="absolute top-3 right-3 text-zinc-600 hover:text-accent transition-colors"
@@ -458,7 +460,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<div className="relative flex-1 p-5">
 						{tokenAccountId && (
 							<a
-								href={explorerUrl('object', tokenAccountId)}
+								href={explorerUrl(network, 'object', tokenAccountId)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="absolute top-3 right-3 text-zinc-600 hover:text-accent transition-colors"
@@ -710,7 +712,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<Sparkles count={10} />
 					<p className="text-sm text-white font-medium">10 BU minted</p>
 					<a
-						href={explorerUrl('tx', mintResult.digest)}
+						href={explorerUrl(network, 'tx', mintResult.digest)}
 						target="_blank"
 						rel="noopener noreferrer"
 						title="View on Suiscan"
@@ -733,7 +735,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 						{wrapResult.amount} BU {wrapResult.action}
 					</p>
 					<a
-						href={explorerUrl('tx', wrapResult.digest)}
+						href={explorerUrl(network, 'tx', wrapResult.digest)}
 						target="_blank"
 						rel="noopener noreferrer"
 						title="View on Suiscan"
@@ -754,7 +756,7 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 					<Sparkles count={10} />
 					<p className="text-sm text-white font-medium">{transferResult.amount} BU sent</p>
 					<a
-						href={explorerUrl('tx', transferResult.digest)}
+						href={explorerUrl(network, 'tx', transferResult.digest)}
 						target="_blank"
 						rel="noopener noreferrer"
 						title="View on Suiscan"

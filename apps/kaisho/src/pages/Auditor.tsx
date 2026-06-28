@@ -6,9 +6,11 @@ import { Link, useParams } from 'react-router-dom';
 import type { AuditorVersionEntry } from 'ts-sdk';
 
 import { AuditAccountCard } from '../components/AuditAccountCard';
+import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { useContraAuditor } from '../hooks/useContraAuditor';
 import { useContraClient } from '../hooks/useContraClient';
 import { useTokenConfig } from '../hooks/useTokenConfig';
+import { nsKey, type Network } from '../network';
 import { auditorPrivateKeyMatchesPublic, fetchAuditors } from '../sdk';
 
 type VerifyState = 'input' | 'verifying' | 'verified' | 'error';
@@ -29,9 +31,10 @@ interface KeyRow {
  */
 function loadStoredAuditorKey(
 	configId: string,
+	network: Network,
 ): { version: number; index: number; privateKey: string } | null {
 	try {
-		const raw = localStorage.getItem('kaisho_issuer_wallets');
+		const raw = localStorage.getItem(nsKey('kaisho_issuer_wallets', network));
 		if (!raw) return null;
 		const wallets = JSON.parse(raw) as Record<string, unknown>;
 		const entry = wallets[configId] as
@@ -95,6 +98,7 @@ function parseRows(rows: KeyRow[]): { parsed?: ParsedRow[]; error?: string } {
 
 export function Auditor() {
 	const { configId } = useParams<{ configId: string }>();
+	const network = useActiveNetwork();
 	const { config, isLoading, error: configError } = useTokenConfig(configId!);
 	const contraClient = useContraClient(config);
 	const buTokenType = config ? `${config.buPackage}::bu::BU` : undefined;
@@ -111,7 +115,7 @@ export function Auditor() {
 	// this deployment's keys in localStorage (the issuer's own browser).
 	useEffect(() => {
 		if (!configId) return;
-		const stored = loadStoredAuditorKey(configId);
+		const stored = loadStoredAuditorKey(configId, network);
 		if (!stored) return;
 		const map = new Map<number, AuditorVersionEntry>();
 		map.set(stored.version, {
@@ -120,7 +124,7 @@ export function Auditor() {
 		});
 		setAuditorEntries(map);
 		setVerifyState('verified');
-	}, [configId]);
+	}, [configId, network]);
 
 	const handleVerify = async () => {
 		setVerifyState('verifying');

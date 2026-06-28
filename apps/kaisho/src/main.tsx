@@ -9,7 +9,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 
 import App from './App';
-import { NETWORK } from './network';
+import { loadNetwork } from './network';
 import { networkConfig } from './networkConfig';
 
 import '@radix-ui/themes/styles.css';
@@ -22,7 +22,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 	<React.StrictMode>
 		<Theme appearance="dark" accentColor="blue" radius="large">
 			<QueryClientProvider client={queryClient}>
-				<SuiClientProvider networks={networkConfig} defaultNetwork={NETWORK}>
+				<SuiClientProvider networks={networkConfig} defaultNetwork={loadNetwork()}>
 					<WalletProvider autoConnect>
 						<BrowserRouter>
 							<App />

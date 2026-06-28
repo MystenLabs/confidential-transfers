@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import { Route, Routes } from 'react-router-dom';
 
 import { NetworkBanner } from './components/NetworkBanner';
+import { NetworkPicker } from './components/NetworkPicker';
 import { WalletGuard } from './components/WalletGuard';
 import { Auditor } from './pages/Auditor';
 import { ConfigHub } from './pages/ConfigHub';
@@ -37,27 +38,30 @@ export default function App() {
 			</div>
 			<div className="bg-grid" aria-hidden="true" />
 
-			<header className="flex items-center justify-between px-6 py-5">
-				<div className="flex items-center gap-2.5">
-					<h1 className="text-xl font-bold tracking-tight text-white">
-						Kaisho{' '}
-						<span className="text-sm font-medium text-zinc-500">
-							(
-							<span
-								className="text-lg"
-								style={{
-									fontFamily: "'Cambria Math', 'Latin Modern Math', 'STIX Two Math', serif",
-									fontStyle: 'italic',
-								}}
-							>
-								β
+			<header className="flex items-start justify-between px-6 py-5">
+				<div className="flex flex-col gap-2">
+					<div className="flex items-center gap-2.5">
+						<h1 className="text-xl font-bold tracking-tight text-white">
+							Kaisho{' '}
+							<span className="text-sm font-medium text-zinc-500">
+								(
+								<span
+									className="text-lg"
+									style={{
+										fontFamily: "'Cambria Math', 'Latin Modern Math', 'STIX Two Math', serif",
+										fontStyle: 'italic',
+									}}
+								>
+									β
+								</span>
+								-version)
 							</span>
-							-version)
-						</span>
-					</h1>
-					<img src="/sui-logo.svg" alt="Sui" className="ml-1 h-6 w-6 rounded opacity-60" />
+						</h1>
+						<img src="/sui-logo.svg" alt="Sui" className="ml-1 h-6 w-6 rounded opacity-60" />
+					</div>
+					<NetworkPicker />
 				</div>
-				{account && <ConnectButton />}
+				<ConnectButton />
 			</header>
 
 			<main className="mx-auto max-w-lg px-5 pb-16 pt-2">
