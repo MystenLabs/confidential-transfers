@@ -5,6 +5,8 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useActiveNetwork } from '../hooks/useActiveNetwork';
+import { nsKey } from '../network';
 import { createTokenFromBytecodes, getSuiClient, requestSui } from '../sdk';
 
 const STEPS = [
@@ -12,7 +14,7 @@ const STEPS = [
 		id: 'wallet',
 		label: 'Generating fresh wallet & funding from faucet',
 		detail:
-			'A brand-new Ed25519 burner keypair is created in this browser and funded with testnet SUI for gas. It only exists here — its secret never leaves localStorage.',
+			'A brand-new Ed25519 burner keypair is created in this browser and funded with SUI from the faucet for gas. It only exists here — its secret never leaves localStorage.',
 	},
 	{
 		id: 'publish',
@@ -39,6 +41,7 @@ type StepState = 'pending' | 'active' | 'done';
 
 export function Landing() {
 	const navigate = useNavigate();
+	const network = useActiveNetwork();
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState('');
 	const [logs, setLogs] = useState<string[]>([]);
@@ -95,8 +98,8 @@ export function Landing() {
 			const secretKey = keypair.getSecretKey();
 			log(`Address: ${address}`);
 
-			log('Requesting SUI from testnet faucet...');
-			await requestSui(address);
+			log(`Requesting SUI from ${network} faucet...`);
+			await requestSui(network, address);
 			log('Faucet funded successfully.');
 
 			advanceTo('publish');
@@ -104,14 +107,16 @@ export function Landing() {
 			const bytecodes = await fetch('/bu_token_bytecodes.json').then((r) => r.json());
 			log(`Loaded ${bytecodes.modules.length} modules.`);
 
-			const client = getSuiClient();
+			const client = getSuiClient(network);
 			const tokenResult = await createTokenFromBytecodes(bytecodes, keypair, client, (msg) => {
 				log(msg);
 				if (msg.startsWith('Registering BU')) advanceTo('register');
 				else if (msg.startsWith('Creating on-chain TokenConfig')) advanceTo('config');
 			});
 
-			const wallets = JSON.parse(localStorage.getItem('kaisho_issuer_wallets') || '{}');
+			const wallets = JSON.parse(
+				localStorage.getItem(nsKey('kaisho_issuer_wallets', network)) || '{}',
+			);
 			wallets[tokenResult.tokenConfigId] = {
 				secretKey,
 				address,
@@ -121,7 +126,7 @@ export function Landing() {
 				managementCapId: tokenResult.managementCapId,
 				confidentialTokenId: tokenResult.confidentialTokenId,
 			};
-			localStorage.setItem('kaisho_issuer_wallets', JSON.stringify(wallets));
+			localStorage.setItem(nsKey('kaisho_issuer_wallets', network), JSON.stringify(wallets));
 			log('Deployment complete.');
 
 			finishAll();
@@ -154,8 +159,9 @@ export function Landing() {
 				</p>
 				<p className="mt-3 text-sm text-zinc-400 leading-relaxed">
 					This is a demo wallet that deploys and uses <strong className="text-white">BU</strong>{' '}
-					tokens for confidential transfers. It is enabled only on Sui testnet, where it deploys
-					fresh copies of BU and Contra for you to try it.
+					tokens for confidential transfers. It runs on Sui{' '}
+					<span className="font-mono text-zinc-300">{network}</span> (switch networks in the
+					header), deploying fresh copies of BU and Contra for you to try.
 				</p>
 			</div>
 
@@ -191,7 +197,8 @@ export function Landing() {
 								</span>
 								<span>
 									<strong className="text-white">Burner issuer wallet</strong> — a fresh Sui
-									keypair, funded from the testnet faucet, kept only in this browser's localStorage.
+									keypair, funded from the {network} faucet, kept only in this browser's
+									localStorage.
 								</span>
 							</li>
 						</ul>

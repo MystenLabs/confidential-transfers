@@ -5,8 +5,9 @@ import type { Transaction } from '@mysten/sui/transactions';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { useTokenConfig } from '../hooks/useTokenConfig';
-import { explorerUrl } from '../network';
+import { explorerUrl, nsKey, type Network } from '../network';
 import {
 	buildAddDenyTx,
 	buildAddFreezeAdminTx,
@@ -31,9 +32,9 @@ interface StoredWallet {
 	confidentialTokenId?: string;
 }
 
-function loadStoredWallet(configId: string): StoredWallet | null {
+function loadStoredWallet(configId: string, network: Network): StoredWallet | null {
 	try {
-		const raw = localStorage.getItem('kaisho_issuer_wallets');
+		const raw = localStorage.getItem(nsKey('kaisho_issuer_wallets', network));
 		if (!raw) return null;
 		const wallets = JSON.parse(raw) as Record<string, StoredWallet | undefined>;
 		const entry = wallets[configId];
@@ -46,9 +47,9 @@ function loadStoredWallet(configId: string): StoredWallet | null {
 
 const DENY_TRACKED_KEY = 'kaisho_deny_tracked';
 
-function loadTrackedDeny(configId: string): string[] {
+function loadTrackedDeny(configId: string, network: Network): string[] {
 	try {
-		const raw = localStorage.getItem(DENY_TRACKED_KEY);
+		const raw = localStorage.getItem(nsKey(DENY_TRACKED_KEY, network));
 		if (!raw) return [];
 		const all = JSON.parse(raw) as Record<string, string[] | undefined>;
 		return Array.isArray(all[configId]) ? (all[configId] as string[]) : [];
@@ -57,12 +58,12 @@ function loadTrackedDeny(configId: string): string[] {
 	}
 }
 
-function saveTrackedDeny(configId: string, addrs: string[]) {
+function saveTrackedDeny(configId: string, network: Network, addrs: string[]) {
 	try {
-		const raw = localStorage.getItem(DENY_TRACKED_KEY);
+		const raw = localStorage.getItem(nsKey(DENY_TRACKED_KEY, network));
 		const all = (raw ? JSON.parse(raw) : {}) as Record<string, string[]>;
 		all[configId] = Array.from(new Set(addrs.map((a) => a.toLowerCase())));
-		localStorage.setItem(DENY_TRACKED_KEY, JSON.stringify(all));
+		localStorage.setItem(nsKey(DENY_TRACKED_KEY, network), JSON.stringify(all));
 	} catch {
 		// noop
 	}
@@ -80,6 +81,7 @@ type ActionState =
 
 export function IssuerMonitor() {
 	const { configId } = useParams<{ configId: string }>();
+	const network = useActiveNetwork();
 	const { config, isLoading, error: configError } = useTokenConfig(configId!);
 	const [wallet, setWallet] = useState<StoredWallet | null>(null);
 	const [denyAddr, setDenyAddr] = useState('');
@@ -96,9 +98,9 @@ export function IssuerMonitor() {
 
 	useEffect(() => {
 		if (!configId) return;
-		setWallet(loadStoredWallet(configId));
-		setTrackedDeny(loadTrackedDeny(configId));
-	}, [configId]);
+		setWallet(loadStoredWallet(configId, network));
+		setTrackedDeny(loadTrackedDeny(configId, network));
+	}, [configId, network]);
 
 	const buType = useMemo(() => (config ? `${config.buPackage}::bu::BU` : null), [config]);
 
@@ -106,7 +108,7 @@ export function IssuerMonitor() {
 		if (!buType) return;
 		try {
 			setPauseChecking(true);
-			const client = getSuiClient();
+			const client = getSuiClient(network);
 			// We check the next-epoch flag (not current-epoch): `enable_global_pause`
 			// flips the next-epoch state immediately and starts blocking new inputs,
 			// while the current-epoch view doesn't change until the epoch boundary.
@@ -134,7 +136,7 @@ export function IssuerMonitor() {
 		}
 		try {
 			setDenyChecking(true);
-			const client = getSuiClient();
+			const client = getSuiClient(network);
 			// next_epoch reflects the issuer's most recent add/remove
 			// immediately; current_epoch only catches up at the epoch boundary.
 			const checks = await Promise.all(
@@ -171,7 +173,7 @@ export function IssuerMonitor() {
 		}
 		try {
 			setFreezeChecking(true);
-			const client = getSuiClient();
+			const client = getSuiClient(network);
 			const { admins, isActive } = await fetchFreezeAdmins(client, wallet.confidentialTokenId);
 			setFreezeAdmins(admins);
 			setTokenActive(isActive);
@@ -212,7 +214,7 @@ export function IssuerMonitor() {
 		try {
 			setAction({ kind: 'running', label });
 			const { digest } = await executeIssuerTx({
-				client: getSuiClient(),
+				client: getSuiClient(network),
 				secretKey: wallet.secretKey,
 				transaction: buildTx(),
 			});
@@ -289,7 +291,7 @@ export function IssuerMonitor() {
 		if (!configId) return;
 		const next = Array.from(new Set([...trackedDeny, addr.toLowerCase()]));
 		setTrackedDeny(next);
-		saveTrackedDeny(configId, next);
+		saveTrackedDeny(configId, network, next);
 	};
 
 	const handleAddDeny = async () => {
@@ -387,7 +389,7 @@ export function IssuerMonitor() {
 					<p className="mt-1.5 text-xs text-zinc-500">
 						Deployed by{' '}
 						<a
-							href={explorerUrl('account', wallet.address)}
+							href={explorerUrl(network, 'account', wallet.address)}
 							target="_blank"
 							rel="noopener noreferrer"
 							className="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-200"

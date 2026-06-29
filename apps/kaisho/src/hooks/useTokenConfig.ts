@@ -4,24 +4,26 @@
 import { useSuiClientQuery } from '@mysten/dapp-kit';
 import { useEffect, useMemo, useState } from 'react';
 
+import { nsKey, type Network } from '../network';
 import type { TokenConfig } from '../sdk';
+import { useActiveNetwork } from './useActiveNetwork';
 
 export type { TokenConfig } from '../sdk';
 
 const STORAGE_KEY = 'kaisho_token_configs';
 
-function getCache(): Record<string, TokenConfig> {
+function getCache(network: Network): Record<string, TokenConfig> {
 	try {
-		return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+		return JSON.parse(localStorage.getItem(nsKey(STORAGE_KEY, network)) || '{}');
 	} catch {
 		return {};
 	}
 }
 
-function setCache(id: string, config: TokenConfig) {
-	const cache = getCache();
+function setCache(id: string, config: TokenConfig, network: Network) {
+	const cache = getCache(network);
 	cache[id] = config;
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
+	localStorage.setItem(nsKey(STORAGE_KEY, network), JSON.stringify(cache));
 }
 
 // Sui returns `vector<u8>` from `getObject({ showContent: true })` as either
@@ -69,14 +71,15 @@ function fetchExpectedDigest(): Promise<number[]> {
 }
 
 export function useTokenConfig(configId: string) {
+	const network = useActiveNetwork();
 	// Treat pre-digest cache entries as a miss so we re-fetch and validate.
 	const cached = useMemo(() => {
-		const entry = getCache()[configId];
+		const entry = getCache(network)[configId];
 		if (!entry || !Array.isArray(entry.binaryDigest) || entry.binaryDigest.length === 0) {
 			return undefined;
 		}
 		return entry;
-	}, [configId]);
+	}, [configId, network]);
 
 	const { data, isLoading, error } = useSuiClientQuery(
 		'getObject',
@@ -94,9 +97,9 @@ export function useTokenConfig(configId: string) {
 
 	useEffect(() => {
 		if (config && !cached) {
-			setCache(configId, config);
+			setCache(configId, config, network);
 		}
-	}, [config, cached, configId]);
+	}, [config, cached, configId, network]);
 
 	const [digestError, setDigestError] = useState<Error | undefined>();
 	useEffect(() => {

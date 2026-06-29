@@ -49,7 +49,7 @@ import type {
 	TokenBalance,
 } from 'ts-sdk';
 
-import { NETWORK } from './network';
+import type { Network } from './network';
 
 // ─────────────────────────────────────────────────────────────────────
 // Types
@@ -109,13 +109,14 @@ export interface CreateTokenResult {
 // 1. Client construction
 // ─────────────────────────────────────────────────────────────────────
 
-/** An RPC client for the active network (see `network.ts`). Used in non-React
- *  contexts (issuer flows, the worker, deployment). React components should
- *  use `useSuiClient()` from dapp-kit instead. */
-export function getSuiClient(): SuiJsonRpcClient {
+/** An RPC client for `network`. Used in non-React contexts (issuer flows, the
+ *  worker, deployment); callers pass the active network from
+ *  `useActiveNetwork()`. React components can also use dapp-kit's
+ *  network-aware `useSuiClient()` directly. */
+export function getSuiClient(network: Network): SuiJsonRpcClient {
 	return new SuiJsonRpcClient({
-		network: NETWORK,
-		url: getJsonRpcFullnodeUrl(NETWORK),
+		network,
+		url: getJsonRpcFullnodeUrl(network),
 	});
 }
 
@@ -697,9 +698,9 @@ export function auditorPrivateKeyMatchesPublic(
 // 6. Faucet
 // ─────────────────────────────────────────────────────────────────────
 
-export function requestSui(address: string): Promise<unknown> {
+export function requestSui(network: Network, address: string): Promise<unknown> {
 	return requestSuiFromFaucetV2({
-		host: getFaucetHost(NETWORK),
+		host: getFaucetHost(network),
 		recipient: address,
 	});
 }

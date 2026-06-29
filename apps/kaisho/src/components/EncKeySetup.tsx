@@ -5,6 +5,7 @@ import { useSignAndExecuteTransaction, useSuiClient, useSuiClientQuery } from '@
 import { useEffect, useMemo, useState } from 'react';
 import type { ContraClient } from 'ts-sdk';
 
+import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import {
 	buildRegisterAccountTx,
 	contraPackageConfig,
@@ -106,6 +107,7 @@ export function EncKeySetup({
 	tokenType,
 }: EncKeySetupProps) {
 	const suiClient = useSuiClient();
+	const network = useActiveNetwork();
 	const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
 
 	const [step, setStep] = useState<SetupStep>('checking');
@@ -129,7 +131,7 @@ export function EncKeySetup({
 		setRequestingFaucet(true);
 		setFaucetError('');
 		try {
-			await requestSui(address);
+			await requestSui(network, address);
 			await refetchSuiBalance();
 		} catch (e) {
 			setFaucetError(String(e));
@@ -320,7 +322,7 @@ export function EncKeySetup({
 							className="mt-2 rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-300/80 transition-colors hover:bg-amber-500/25 disabled:opacity-50"
 							onClick={handleRequestFaucet}
 							disabled={requestingFaucet}
-							title="Get free SUI on testnet to pay for gas fees"
+							title={`Get free SUI on ${network} to pay for gas fees`}
 						>
 							{requestingFaucet ? 'Requesting...' : 'Request SUI from Faucet'}
 						</button>
