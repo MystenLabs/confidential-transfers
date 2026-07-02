@@ -100,10 +100,7 @@ const EBatchTooLarge: u64 = 12;
 
 // === Constants ===
 
-/// Maximum receivers in one batched transfer. Each `add_to_batch` records the receiver's
-/// `next_index` (a `u8`) in its `TransferEvent`, so the index of the last receiver must fit a
-/// `u8`; a 256th receiver would overflow the `next_index + 1` increment. Bounded here so an
-/// oversized batch aborts cleanly at `batched_transfer` rather than mid-way through `add_to_batch`.
+/// Maximum receivers in one batched transfer, bounded so the `u8` receiver index (`next_index`) can't overflow.
 const MAX_BATCH_RECIPIENTS: u64 = 255;
 
 /// (Potentially) permissioned operations.
