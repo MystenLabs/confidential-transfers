@@ -690,6 +690,10 @@ describe('core user flows (devnet)', () => {
 			// user2 the batch fans out to 11 recipients.
 			const freshReceivers = await setupFreshUsers(10);
 
+			// Top up user1's gas: the 11-recipient batch is a large PTB and user1's
+			// funding has been drawn down by the earlier sequential tests.
+			await contraInit.fund(user1Address, FUNDING_AMOUNT);
+
 			// user1 sends 1*ONE to user2 and SHARE (= ONE/10) to each fresh receiver,
 			// for a 2*ONE total across 11 recipients. Input order fixes each receiver's
 			// batch index: user2 -> 0, freshReceivers[i] -> i + 1.
