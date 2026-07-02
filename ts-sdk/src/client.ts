@@ -1611,11 +1611,7 @@ interface AccountState {
 	keyEncryptionVersion: number;
 }
 
-/**
- * Max recipients in a single `transferBatch` PTB, bounded by the `u8` receiver index rather than
- * the range proof (which chunks any number of amounts). Mirrors `MAX_BATCH_RECIPIENTS` in
- * `contra.move`; Sui transaction-size and gas limits bind well below this in practice.
- */
+/** Max recipients in a single `transferBatch` PTB. Mirrors `MAX_BATCH_RECIPIENTS` in `contra.move`. */
 const MAX_BATCH_RECIPIENTS = 255;
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */
