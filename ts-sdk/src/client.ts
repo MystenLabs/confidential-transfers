@@ -1612,12 +1612,9 @@ interface AccountState {
 }
 
 /**
- * Max recipients in a single `transferBatch` PTB. The range proof aggregates any number of
- * amounts by partitioning them into power-of-2 chunks (`buildWellFormedProof`), so the ceiling is
- * not cryptographic: each `add_to_batch` records the receiver's index as a `u8` in its
- * `TransferEvent`, so a 256th receiver overflows the on-chain `next_index + 1` increment. Mirrors
- * `MAX_BATCH_RECIPIENTS` in `contra.move`, which aborts an oversized batch with `EBatchTooLarge`.
- * Note that Sui transaction-size and gas limits bind well below this in practice.
+ * Max recipients in a single `transferBatch` PTB, bounded by the `u8` receiver index rather than
+ * the range proof (which chunks any number of amounts). Mirrors `MAX_BATCH_RECIPIENTS` in
+ * `contra.move`; Sui transaction-size and gas limits bind well below this in practice.
  */
 const MAX_BATCH_RECIPIENTS = 255;
 
