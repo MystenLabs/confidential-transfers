@@ -1014,7 +1014,7 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `InvalidArgumentError` — `recipients` is empty, has more than 7 entries, or
+	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries, or
 	 *   contains the sender's own address.
 	 * - `ReceiverDoesNotAcceptDepositsError` — at least one receiver has paused encrypted
 	 *   deposits or has a per-account freeze active.
@@ -1229,7 +1229,7 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `InvalidArgumentError` — `recipients` is empty, has more than 7 entries, or contains the
+	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries, or contains the
 	 *   sender's own address.
 	 * - `ReceiverDoesNotAcceptDepositsError` — at least one receiver has paused encrypted deposits
 	 *   or has a per-account freeze active.
@@ -1612,11 +1612,14 @@ interface AccountState {
 }
 
 /**
- * Max recipients in a single `transferBatch` PTB. Move's bulletproof verifier
- * aggregates at most 8 range proofs in one call; one slot is consumed by the
- * sender's new-balance proof, leaving 7 for recipients.
+ * Max recipients in a single `transferBatch` PTB. The range proof aggregates any number of
+ * amounts by partitioning them into power-of-2 chunks (`buildWellFormedProof`), so the ceiling is
+ * not cryptographic: each `add_to_batch` records the receiver's index as a `u8` in its
+ * `TransferEvent`, so a 256th receiver overflows the on-chain `next_index + 1` increment. Mirrors
+ * `MAX_BATCH_RECIPIENTS` in `contra.move`, which aborts an oversized batch with `EBatchTooLarge`.
+ * Note that Sui transaction-size and gas limits bind well below this in practice.
  */
-const MAX_BATCH_RECIPIENTS = 7;
+const MAX_BATCH_RECIPIENTS = 255;
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */
 function memoBytes(memo?: string): number[] {
