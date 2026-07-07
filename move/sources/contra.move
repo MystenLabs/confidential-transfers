@@ -96,8 +96,12 @@ const ETooManyReceivers: u64 = 9;
 /// Recovery: transfer or update active balance.
 const EBalancesFull: u64 = 10;
 const EIdentityPublicKey: u64 = 11;
+const EBatchTooLarge: u64 = 12;
 
 // === Constants ===
+
+/// Maximum receivers in one batched transfer, bounded so the `u8` receiver index (`next_index`) can't overflow.
+const MAX_BATCH_RECIPIENTS: u64 = 255;
 
 /// (Potentially) permissioned operations.
 const PERMISSIONED_REGISTER: u8 = 0;
@@ -571,6 +575,7 @@ public fun batched_transfer<T>(
         ETransferDenied,
     );
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
+    assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
     assert!(receiver_amounts.length() == receiver_pks.length(), EEmptyTransferBatch);
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];

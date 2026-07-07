@@ -33,7 +33,7 @@ import type { RistrettoPoint } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
 import { EncryptedAmount, MultiRecipientEncryption } from '../../src/twisted_elgamal.js';
 import { createHarness, FUNDING_AMOUNT, ONE } from './harness.js';
-import type { Harness } from './harness.js';
+import type { ExpectedBalance, Harness } from './harness.js';
 
 describe('core user flows (devnet)', () => {
 	let contraInit: Harness['contraInit'];
@@ -48,6 +48,7 @@ describe('core user flows (devnet)', () => {
 	let unwrap: Harness['unwrap'];
 	let expectBalance: Harness['expectBalance'];
 	let expectBalances: Harness['expectBalances'];
+	let setupFreshUsers: Harness['setupFreshUsers'];
 
 	let user1: Ed25519Keypair;
 	let user1Address: string;
@@ -71,6 +72,7 @@ describe('core user flows (devnet)', () => {
 			unwrap,
 			expectBalance,
 			expectBalances,
+			setupFreshUsers,
 		} = await createHarness());
 
 		// Create user keypairs.
@@ -674,51 +676,33 @@ describe('core user flows (devnet)', () => {
 
 	it(
 		'transferBatch: split a single send across multiple receivers',
-		{ timeout: 300_000 },
+		{ timeout: 600_000 },
 		async () => {
 			// Carry-over state from previous test:
 			//   user1: bal=3*ONE, pendBal=0, pendPub=0, balance.ub=1
 			//   user2: bal=0,     pendBal=2*ONE, pendPub=0, balance.ub=1
 			//
-			// Exercises `transferBatch` with two distinct receivers in one PTB:
-			// user1 sends 1*ONE to user2 and 1*ONE to a fresh user3 in a single
-			// batched_transfer + add_to_batch + add_to_batch + try_finalize call.
+			// Exercises `transferBatch` with 11 receivers in one PTB — above the old
+			// 7-recipient cap — so the emitted batch indices run past 7 and the
+			// aggregate range proof spans more than one Bulletproof chunk.
 
-			// Register a fresh user3 under the current on-chain auditor pks.
-			const user3 = Ed25519Keypair.generate();
-			const user3Address = user3.getPublicKey().toSuiAddress();
-			const user3TokenAccount = new TokenAccount(
-				user3Address,
-				tokenIssuer.tokenType,
-				packageConfig,
-			);
-			const auditorPks = (await client.contra.getAuditors(tokenIssuer.tokenType)).pks;
+			// Register 10 fresh receivers under the current auditor set. Together with
+			// user2 the batch fans out to 11 recipients.
+			const freshReceivers = await setupFreshUsers(10);
 
-			const setupTx = new Transaction();
-			const [coin] = setupTx.splitCoins(setupTx.gas, [FUNDING_AMOUNT]);
-			setupTx.transferObjects([coin], user3Address);
-			const account = setupTx.add(client.contra.newAccount({ owner: user3Address }));
-			setupTx.add(client.contra.shareAccount({ account }));
-			setupTx.setSender(contraInit.address);
-			await exec(setupTx, contraInit.keypair);
+			// Top up user1's gas: the 11-recipient batch is a large PTB and user1's
+			// funding has been drawn down by the earlier sequential tests.
+			await contraInit.fund(user1Address, FUNDING_AMOUNT);
 
-			const regTx = new Transaction();
-			regTx.add(
-				await client.contra.register({
-					tokenAccount: user3TokenAccount,
-					auditorPublicKeys: auditorPks,
-				}),
-			);
-			regTx.setSender(user3Address);
-			await exec(regTx, user3);
-
-			// Two-recipient batch in input order: recipients[0] -> user2,
-			// recipients[1] -> user3.
+			// user1 sends 1*ONE to user2 and SHARE (= ONE/10) to each fresh receiver,
+			// for a 2*ONE total across 11 recipients. Input order fixes each receiver's
+			// batch index: user2 -> 0, freshReceivers[i] -> i + 1.
+			const SHARE = ONE / 10n;
 			const fn = await client.contra.transferBatch({
 				tokenAccount: user1TokenAccount,
 				recipients: [
 					{ receiverAddress: user2Address, amount: 1n * ONE, memo: 'memo-a' },
-					{ receiverAddress: user3Address, amount: 1n * ONE },
+					...freshReceivers.map((r) => ({ receiverAddress: r.address, amount: SHARE })),
 				],
 			});
 			const tx = new Transaction();
@@ -726,22 +710,26 @@ describe('core user flows (devnet)', () => {
 			tx.setSender(user1Address);
 			const result = await exec(tx, user1);
 
-			// Two TransferEvents should be emitted in input order, one per recipient.
+			// One TransferEvent per recipient in input order, each carrying its
+			// sequential `batch_index` — the u8 index the widened cap relies on.
 			const transferEventType = `${packageConfig.packageId}::events::TransferEvent<${tokenIssuer.tokenType}>`;
 			const transferEvents = result.Transaction!.events!.filter(
 				(e) => e.eventType === transferEventType,
 			);
-			expect(transferEvents.length).toBe(2);
+			expect(transferEvents.length).toBe(11);
 			const decoded = transferEvents.map((e) => TransferEventBcs.parse(e.bcs));
-			expect(decoded[0].sender).toBe(user1Address);
-			expect(decoded[1].sender).toBe(user1Address);
-			expect(decoded[0].receiver).toBe(user2Address);
-			expect(decoded[1].receiver).toBe(user3Address);
+			const expectedReceivers = [user2Address, ...freshReceivers.map((r) => r.address)];
+			decoded.forEach((event, i) => {
+				expect(event.sender).toBe(user1Address);
+				expect(event.receiver).toBe(expectedReceivers[i]);
+				expect(event.batch_index).toBe(i);
+			});
 
-			// `add_to_batch` only mutates each receiver's `pending_deposits`,
-			// never `balance`, so user2 keeps its carry-over balance.upperBound
-			// (1) and user3's freshly-registered balance.upperBound stays 0.
-			// user1's balance is set via `try_update_balance` -> upperBound = 1.
+			// `add_to_batch` only mutates each receiver's `pending_deposits`, never
+			// `balance`: user2 keeps its carry-over balance.upperBound (1) and each
+			// freshly-registered receiver stays at upperBound 1. user1's balance is set
+			// via `try_update_balance` -> upperBound = 1, ending at
+			// 3*ONE - 1*ONE - 10*SHARE = 1*ONE.
 			await expectBalances([
 				[
 					user1TokenAccount,
@@ -749,22 +737,12 @@ describe('core user flows (devnet)', () => {
 				],
 				[
 					user2TokenAccount,
-					{
-						balance: 0n,
-						pending: 3n * ONE,
-						pendingPublicBalance: 0n,
-						balanceUpperBound: 1,
-					},
+					{ balance: 0n, pending: 3n * ONE, pendingPublicBalance: 0n, balanceUpperBound: 1 },
 				],
-				[
-					user3TokenAccount,
-					{
-						balance: 0n,
-						pending: 1n * ONE,
-						pendingPublicBalance: 0n,
-						balanceUpperBound: 1,
-					},
-				],
+				...freshReceivers.map((r): [TokenAccount, ExpectedBalance] => [
+					r.tokenAccount,
+					{ balance: 0n, pending: SHARE, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+				]),
 			]);
 		},
 	);

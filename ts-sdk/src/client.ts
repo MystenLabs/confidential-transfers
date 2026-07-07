@@ -1014,7 +1014,7 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `InvalidArgumentError` — `recipients` is empty, has more than 7 entries, or
+	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries, or
 	 *   contains the sender's own address.
 	 * - `ReceiverDoesNotAcceptDepositsError` — at least one receiver has paused encrypted
 	 *   deposits or has a per-account freeze active.
@@ -1229,7 +1229,7 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `InvalidArgumentError` — `recipients` is empty, has more than 7 entries, or contains the
+	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries, or contains the
 	 *   sender's own address.
 	 * - `ReceiverDoesNotAcceptDepositsError` — at least one receiver has paused encrypted deposits
 	 *   or has a per-account freeze active.
@@ -1611,12 +1611,8 @@ interface AccountState {
 	keyEncryptionVersion: number;
 }
 
-/**
- * Max recipients in a single `transferBatch` PTB. Move's bulletproof verifier
- * aggregates at most 8 range proofs in one call; one slot is consumed by the
- * sender's new-balance proof, leaving 7 for recipients.
- */
-const MAX_BATCH_RECIPIENTS = 7;
+/** Max recipients in a single `transferBatch` PTB. Mirrors `MAX_BATCH_RECIPIENTS` in `contra.move`. */
+const MAX_BATCH_RECIPIENTS = 255;
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */
 function memoBytes(memo?: string): number[] {
