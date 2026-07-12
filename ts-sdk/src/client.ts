@@ -21,7 +21,6 @@ import {
 	TokenAccountDoesNotExistError,
 } from './error.js';
 import {
-	buildBatchedDdhProof,
 	buildDdhProof,
 	buildElGamalProof,
 	buildEncryptedAmount,
@@ -42,7 +41,7 @@ import {
 	type WellFormedLimb,
 } from './helpers.js';
 import { KeyEncryption } from './key_encryption.js';
-import { BatchedDdhNizk, DdhTupleNizk, ElGamalNizk } from './nizk.js';
+import { DdhNizk, ElGamalNizk } from './nizk.js';
 import { addScalars, mul, pointFromBcs, randomScalar } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import { sampleTransferRandomness } from './transfer_randomness.js';
@@ -518,7 +517,7 @@ export class ContraClient {
 	): Promise<{
 		shouldMerge: boolean;
 		newBalance: WellFormedLimb[];
-		balanceProof: DdhTupleNizk;
+		balanceProof: DdhNizk;
 	}> {
 		// TODO: consider exposing a function that receives the object from the caller,
 		// so that the caller could fetch it differently.
@@ -543,11 +542,10 @@ export class ContraClient {
 			: balance.ciphertext.collapse();
 
 		const pk = tokenAccount.publicKey;
-		const elgamalDst = tokenAccount.dst(PROTOCOL_ELGAMAL);
 		const ddhDst = tokenAccount.dst(PROTOCOL_DDH);
 		const newBalance = intoLimbs(spendable - amount).map((v) => ({
 			value: v,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, pk, v, randomScalar()),
+			...Ciphertext.encryptWithBlinding(pk, v, randomScalar()),
 		}));
 
 		const balanceProof = new EncryptedAmount(
@@ -650,16 +648,17 @@ export class ContraClient {
 		tx: Transaction,
 		tokenAccount: TokenAccount,
 		newBalance: WellFormedLimb[],
-		balanceProof: DdhTupleNizk,
+		balanceProof: DdhNizk,
 		auth: TransactionObjectArgument,
 	): TransactionResult {
 		const pid = this.#packageConfig.packageId;
 		const { encryptedAmount, wellFormedProof } = buildEncryptedAmountAndProof(
 			batchRangeProver,
 			tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+			tokenAccount.dst(PROTOCOL_ELGAMAL),
 			tx,
 			pid,
-			newBalance,
+			{ limbs: newBalance, pk: tokenAccount.publicKey },
 		);
 		return tx.add(
 			contraContracts.updateActiveBalance({
@@ -844,7 +843,6 @@ export class ContraClient {
 					.add(Ciphertext.trivial(pendingPublicBalance))
 			: balance.ciphertext.collapse();
 
-		const elgamalDst = tokenAccount.dst(PROTOCOL_ELGAMAL);
 		const ddhDst = tokenAccount.dst(PROTOCOL_DDH);
 
 		// Per-limb encryption of the spendable amount under the OLD public key with
@@ -852,7 +850,7 @@ export class ContraClient {
 		// on-chain commitments and decryption handles.
 		const newBalanceUnderOldPk = intoLimbs(totalSpendable).map((value) => ({
 			value,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value, randomScalar()),
+			...Ciphertext.encryptWithBlinding(oldPk, value, randomScalar()),
 		}));
 
 		// Balance proof for `update_active_balance`: collapsed(new) - collapsed(old) == 0.
@@ -874,7 +872,7 @@ export class ContraClient {
 		}));
 		const rekeyBases = [oldPk, ...newBalanceUnderOldPk.map((l) => l.ciphertext.decryptionHandle)];
 		const rekeyImages = [newPk, ...newBalanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle)];
-		const rekeyProof = BatchedDdhNizk.prove(
+		const rekeyProof = DdhNizk.prove(
 			tokenAccount.dst(PROTOCOL_BATCH_DDH),
 			w,
 			rekeyBases,
@@ -906,9 +904,10 @@ export class ContraClient {
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tokenAccount.dst(PROTOCOL_ELGAMAL),
 					tx,
 					pid,
-					newBalanceUnderOldPk,
+					{ limbs: newBalanceUnderOldPk, pk: oldPk },
 				);
 			const newHandles = tx.add(
 				buildGVector(
@@ -929,7 +928,7 @@ export class ContraClient {
 						restatedBalanceProof,
 						balanceProof: buildDdhProof(pid, balanceProofUpdate),
 						newHandles,
-						rekeyProof: buildBatchedDdhProof(pid, rekeyProof),
+						rekeyProof: buildDdhProof(pid, rekeyProof),
 						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
 					},
 				}),
@@ -1081,12 +1080,7 @@ export class ContraClient {
 			const receiverPk = receiverStates[i].pk;
 			const encAmountReceiver = intoLimbs(recipient.amount).map((value, j) => ({
 				value,
-				...Ciphertext.encryptWithConsistencyProof(
-					elgamalDst,
-					receiverPk,
-					value,
-					randomness.blinding(i, j),
-				),
+				...Ciphertext.encryptWithBlinding(receiverPk, value, randomness.blinding(i, j)),
 			}));
 			return { recipient, receiverPk, encAmountReceiver };
 		});
@@ -1103,13 +1097,9 @@ export class ContraClient {
 			totalAmount,
 			totalBlinding,
 		);
-		const consistencyProof = ElGamalNizk.prove(
-			elgamalDst,
-			totalBlinding,
-			totalAmount,
-			totalSenderEnc,
-			senderPk,
-		);
+		const consistencyProof = ElGamalNizk.prove(elgamalDst, senderPk, [
+			{ ciphertext: totalSenderEnc, value: totalAmount, blinding: totalBlinding },
+		]);
 
 		const { shouldMerge, newBalance, balanceProof } = await this.#createBalanceUpdate(
 			tokenAccount,
@@ -1162,8 +1152,12 @@ export class ContraClient {
 						wellFormedProofs: buildWellFormedProof(
 							batchRangeProver,
 							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+							elgamalDst,
 							pid,
-							[...prepared.map((p) => p.encAmountReceiver), newBalance],
+							[
+								...prepared.map((p) => ({ limbs: p.encAmountReceiver, pk: p.receiverPk })),
+								{ limbs: newBalance, pk: senderPk },
+							],
 						),
 						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
 						consistencyProof: buildElGamalProof(pid, consistencyProof),
@@ -1301,12 +1295,7 @@ export class ContraClient {
 			const receiverPk = receiverStates[i].pk;
 			const encAmountReceiver = intoLimbs(recipient.amount).map((value, j) => ({
 				value,
-				...Ciphertext.encryptWithConsistencyProof(
-					elgamalDst,
-					receiverPk,
-					value,
-					randomness.blinding(i, j),
-				),
+				...Ciphertext.encryptWithBlinding(receiverPk, value, randomness.blinding(i, j)),
 			}));
 			return { recipient, receiverPk, encAmountReceiver };
 		});
@@ -1320,17 +1309,13 @@ export class ContraClient {
 			totalAmount,
 			totalBlinding,
 		);
-		const consistencyProof = ElGamalNizk.prove(
-			elgamalDst,
-			totalBlinding,
-			totalAmount,
-			totalSenderEnc,
-			oldPk,
-		);
+		const consistencyProof = ElGamalNizk.prove(elgamalDst, oldPk, [
+			{ ciphertext: totalSenderEnc, value: totalAmount, blinding: totalBlinding },
+		]);
 		// Sender's post-transfer balance under the old key: `total - totalAmount`.
 		const transferNewBalance = intoLimbs(total - totalAmount).map((value) => ({
 			value,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value, randomScalar()),
+			...Ciphertext.encryptWithBlinding(oldPk, value, randomScalar()),
 		}));
 		const transferNewBalanceEnc = new EncryptedAmount(
 			transferNewBalance[0].ciphertext,
@@ -1349,7 +1334,7 @@ export class ContraClient {
 		const postTransferCollapsed = transferNewBalanceEnc.collapse();
 		const restateUnderOldPk = intoLimbs(total - totalAmount).map((value) => ({
 			value,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, oldPk, value, randomScalar()),
+			...Ciphertext.encryptWithBlinding(oldPk, value, randomScalar()),
 		}));
 		const restateProof = new EncryptedAmount(
 			restateUnderOldPk[0].ciphertext,
@@ -1368,7 +1353,7 @@ export class ContraClient {
 		}));
 		const rekeyBases = [oldPk, ...restateUnderOldPk.map((l) => l.ciphertext.decryptionHandle)];
 		const rekeyImages = [newPk, ...balanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle)];
-		const rekeyProof = BatchedDdhNizk.prove(
+		const rekeyProof = DdhNizk.prove(
 			tokenAccount.dst(PROTOCOL_BATCH_DDH),
 			w,
 			rekeyBases,
@@ -1421,8 +1406,12 @@ export class ContraClient {
 						wellFormedProofs: buildWellFormedProof(
 							batchRangeProver,
 							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+							elgamalDst,
 							pid,
-							[...prepared.map((p) => p.encAmountReceiver), transferNewBalance],
+							[
+								...prepared.map((p) => ({ limbs: p.encAmountReceiver, pk: p.receiverPk })),
+								{ limbs: transferNewBalance, pk: oldPk },
+							],
 						),
 						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
 						consistencyProof: buildElGamalProof(pid, consistencyProof),
@@ -1463,9 +1452,10 @@ export class ContraClient {
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tokenAccount.dst(PROTOCOL_ELGAMAL),
 					tx,
 					pid,
-					restateUnderOldPk,
+					{ limbs: restateUnderOldPk, pk: oldPk },
 				);
 			const newHandles = tx.add(
 				buildGVector(
@@ -1486,7 +1476,7 @@ export class ContraClient {
 						restatedBalanceProof: restatedEaProof,
 						balanceProof: buildDdhProof(pid, restateProof),
 						newHandles,
-						rekeyProof: buildBatchedDdhProof(pid, rekeyProof),
+						rekeyProof: buildDdhProof(pid, rekeyProof),
 						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
 					},
 				}),
@@ -1560,9 +1550,10 @@ export class ContraClient {
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
 					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					tokenAccount.dst(PROTOCOL_ELGAMAL),
 					tx,
 					pid,
-					newBalance,
+					{ limbs: newBalance, pk: tokenAccount.publicKey },
 				);
 			return tx.add(
 				contraContracts.tryUnwrap({

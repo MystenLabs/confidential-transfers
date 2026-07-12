@@ -30,52 +30,19 @@ export const ElGamalProof = new MoveStruct({
 export const DdhProof = new MoveStruct({
 	name: `${$moduleName}::DdhProof`,
 	fields: {
-		a: group_ops.Element,
-		b: group_ops.Element,
-		z: group_ops.Element,
-	},
-});
-export interface NewDdhProofArguments {
-	a: TransactionArgument;
-	b: TransactionArgument;
-	z: TransactionArgument;
-}
-export interface NewDdhProofOptions {
-	package?: string;
-	arguments:
-		| NewDdhProofArguments
-		| [a: TransactionArgument, b: TransactionArgument, z: TransactionArgument];
-}
-export function newDdhProof(options: NewDdhProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['a', 'b', 'z'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'nizk',
-			function: 'new_ddh_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export const BatchedDdhProof = new MoveStruct({
-	name: `${$moduleName}::BatchedDdhProof`,
-	fields: {
 		commitments: bcs.vector(group_ops.Element),
 		z: group_ops.Element,
 	},
 });
-export interface NewBatchedDdhProofArguments {
+export interface NewDdhProofArguments {
 	commitments: TransactionArgument;
 	z: TransactionArgument;
 }
-export interface NewBatchedDdhProofOptions {
+export interface NewDdhProofOptions {
 	package?: string;
-	arguments:
-		| NewBatchedDdhProofArguments
-		| [commitments: TransactionArgument, z: TransactionArgument];
+	arguments: NewDdhProofArguments | [commitments: TransactionArgument, z: TransactionArgument];
 }
-export function newBatchedDdhProof(options: NewBatchedDdhProofOptions) {
+export function newDdhProof(options: NewDdhProofOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<null>', null] satisfies (string | null)[];
 	const parameterNames = ['commitments', 'z'];
@@ -83,7 +50,7 @@ export function newBatchedDdhProof(options: NewBatchedDdhProofOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'nizk',
-			function: 'new_batched_ddh_proof',
+			function: 'new_ddh_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

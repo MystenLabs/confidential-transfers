@@ -13,6 +13,7 @@ use sui::{
         G,
         Scalar,
         g_add,
+        g_identity,
         g_mul,
         scalar_add,
         scalar_from_bytes,
@@ -29,23 +30,15 @@ const KEY_CONSISTENCY_LIMBS: u64 = 8;
 /// constants (`KEY_CONSISTENCY_LIMBS` limbs, `recipient_encryption_keys.length()` recipients).
 const EMalformedKeyConsistencyProof: u64 = 0;
 
-/// A non-interactive zero knowledge proof of the following relation:
-/// Prover knows `x` such that `x_g = x * g` and `x_h = x * h`, where `g` and `h` are generators of the group.
+/// A shared-witness DDH proof of knowledge: one `w` with `images[k] = w * bases[k]` for all `k`.
 public struct DdhProof has drop {
-    a: Element<G>,
-    b: Element<G>,
-    z: Element<Scalar>,
-}
-
-/// A shared-witness DDH proof: one `w` with `images[k] = w * bases[k]` for all `k` (batched re-keying, Π_rekey).
-public struct BatchedDdhProof has drop {
     commitments: vector<Element<G>>,
     z: Element<Scalar>,
 }
 
-/// A non-interactive zero knowledge proof of the following relation:
-/// Prover knows `r` and `m` such that `c = r * g + m * h` and `d = r * pk` where `(c, d)` is a twisted ElGamal ciphertext,
-/// `pk` is a public key, and `g` and `h` are generators of the group.
+/// A witness-folded batch of ElGamal proofs over ciphertexts sharing one public key `pk`.
+/// Proves that for every ciphertext `(C_j, D_j)` the prover knows `(r_j, m_j)` with
+/// `C_j = r_j*g + m_j*h` and `D_j = r_j*pk`.
 public struct ElGamalProof has drop {
     a: Element<G>,
     b: Element<G>,
@@ -69,15 +62,8 @@ public struct KeyConsistencyProof has drop {
     z2: vector<Element<Scalar>>, // 8 scalars: b_i + c * u_i
 }
 
-public fun new_ddh_proof(a: Element<G>, b: Element<G>, z: Element<Scalar>): DdhProof {
-    DdhProof { a, b, z }
-}
-
-public fun new_batched_ddh_proof(
-    commitments: vector<Element<G>>,
-    z: Element<Scalar>,
-): BatchedDdhProof {
-    BatchedDdhProof { commitments, z }
+public fun new_ddh_proof(commitments: vector<Element<G>>, z: Element<Scalar>): DdhProof {
+    DdhProof { commitments, z }
 }
 
 public fun new_elgamal_proof(
@@ -99,67 +85,49 @@ public fun new_key_consistency_proof(
     KeyConsistencyProof { a1, a2, a3, z1, z2 }
 }
 
-/// Verify a DDH proof that the prover knows `x` such that `x_g = x * g` and `x_h = x * h`.
+/// Verify a `DdhProof`: a single witness `w` maps every base to its image,
+/// `images[k] == w * bases[k]` for all `k`.
 public(package) fun verify_ddh(
     proof: &DdhProof,
-    dst: vector<u8>,
-    g: &Element<G>,
-    h: &Element<G>,
-    x_g: &Element<G>,
-    x_h: &Element<G>,
-): bool {
-    // TODO: check for degenerate case where g or h is the identity element.
-    let challenge = challenge_ddh(dst, g, h, x_g, x_h, &proof.a, &proof.b);
-    is_valid_relation(
-        &proof.a,
-        x_g,
-        g,
-        &proof.z,
-        &challenge,
-    ) && is_valid_relation(
-        &proof.b,
-        x_h,
-        h,
-        &proof.z,
-        &challenge,
-    )
-}
-
-/// Verify a `BatchedDdhProof` that a single witness `w` maps every base to its image:
-/// `images[k] == w * bases[k]` for all `k`.
-public(package) fun verify_batched_ddh(
-    proof: &BatchedDdhProof,
     dst: vector<u8>,
     bases: &vector<Element<G>>,
     images: &vector<Element<G>>,
 ): bool {
+    // TODO: check for degenerate case where a base is the identity element.
     let n = bases.length();
     if (images.length() != n || proof.commitments.length() != n) return false;
-    let c = challenge_batched_ddh(dst, bases, images, &proof.commitments);
+    let c = challenge_ddh(dst, bases, images, &proof.commitments);
     vector::tabulate!(
         n,
         |k| is_valid_relation(&proof.commitments[k], &images[k], &bases[k], &proof.z, &c),
     ).all!(|b| *b)
 }
 
-/// Verify that the prover knows the message `m` and randomness `r` in a twisted ElGamal
-/// encryption `(e1 = r*g + m*h, e2 = r*pk)`.
+/// Verify that the prover knows `(r_j, m_j)` for every ciphertext `(C_j, D_j)` in the batch.
 public(package) fun verify_elgamal(
     proof: &ElGamalProof,
     dst: vector<u8>,
     pk: &Element<G>,
-    e: &Encryption,
+    encryptions: &vector<Encryption>,
 ): bool {
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
     // TODO: can skip fixed g, h (left as a defense in depth)
-    let e1 = e.ciphertext();
-    let e2 = e.decryption_handle();
-    let challenge = challenge_elgamal(dst, &g, &h, pk, e1, e2, &proof.a, &proof.b);
-    // Equation 1: z1 * pk == ch * e2 + a
-    // Equation 2: ch * e1 + b == z1 * g + z2 * h
-    return g_mul(&proof.z1, pk) == g_add(&g_mul(&challenge, e2), &proof.a)
-    && g_add(&g_mul(&challenge, e1), &proof.b) == g_add(&g_mul(&proof.z1, &g), &g_mul(&proof.z2, &h))
+    let c = challenge_elgamal(dst, &g, &h, pk, encryptions, &proof.a, &proof.b);
+
+    let mut agg_c = g_identity();
+    let mut agg_d = g_identity();
+    let mut power = scalar_from_u64(1);
+    encryptions.do_ref!(|e| {
+        agg_c = g_add(&agg_c, &g_mul(&power, e.ciphertext()));
+        agg_d = g_add(&agg_d, &g_mul(&power, e.decryption_handle()));
+        power = scalar_mul(&power, &c);
+    });
+
+    // Equation 1 (handles): a + c * agg_d == z1 * pk
+    // Equation 2 (ciphertexts): b + c * agg_c == z1 * g + z2 * h
+    is_valid_relation(&proof.a, &agg_d, pk, &proof.z1, &c) &&
+    is_valid_relation2(&proof.b, &agg_c, &g, &h, &proof.z1, &proof.z2, &c)
 }
 
 /// Verify a `KeyConsistencyProof` against the recipient public keys and `encryptions[i]`, the
@@ -209,9 +177,9 @@ public(package) fun verify_key_consistency(
         let mut j = 0;
         while (j < m) {
             let a1ij = &proof.a1[i * m + j];
-            let dij = &dhs[j];
-            let pkj = &recipient_encryption_keys[j];
-            if (g_add(a1ij, &g_mul(&c, dij)) != g_mul(z1i, pkj)) return false;
+            if (!is_valid_relation(a1ij, &dhs[j], &recipient_encryption_keys[j], z1i, &c)) {
+                return false
+            };
             j = j + 1;
         };
         i = i + 1;
@@ -220,15 +188,13 @@ public(package) fun verify_key_consistency(
     // Check 2: A2_i + c * C_i == z1_i * g + z2_i * h for all i
     let mut i = 0;
     while (i < n) {
-        let z1i = &proof.z1[i];
-        let z2i = &proof.z2[i];
         let a2i = &proof.a2[i];
         let ci = encryptions[i].multi_recipient_ciphertext();
-        if (g_add(a2i, &g_mul(&c, ci)) != g_add(&g_mul(z1i, &g), &g_mul(z2i, &h))) return false;
+        if (!is_valid_relation2(a2i, ci, &g, &h, &proof.z1[i], &proof.z2[i], &c)) return false;
         i = i + 1;
     };
 
-    // Check 3: (\sum_i z2_i * 2^{32i}) * g == A3 + c * sender_public_key
+    // Check 3: A3 + c * sender_public_key == (\sum_i z2_i * 2^{32i}) * g
     let base = scalar_from_u64(1u64 << 32);
     let mut exp = scalar_from_u64(1u64);
     let mut z_sum = scalar_from_u64(0u64);
@@ -237,32 +203,12 @@ public(package) fun verify_key_consistency(
         z_sum = scalar_add(&z_sum, &scalar_mul(z2i, &exp));
         exp = scalar_mul(&exp, &base);
     });
-    g_mul(&z_sum, &g) == g_add(&proof.a3, &g_mul(&c, sender_public_key))
+    is_valid_relation(&proof.a3, sender_public_key, &g, &z_sum, &c)
 }
 
+/// Fiat-Shamir challenge for a `DdhProof`. Binds, in order, the DST, every base, every image, and
+/// every per-pair Schnorr commitment.
 fun challenge_ddh(
-    dst: vector<u8>,
-    g: &Element<G>,
-    h: &Element<G>,
-    x_g: &Element<G>,
-    x_h: &Element<G>,
-    a: &Element<G>,
-    b: &Element<G>,
-): Element<Scalar> {
-    fiat_shamir_challenge(vector[
-        dst,
-        *g.bytes(),
-        *h.bytes(),
-        *x_g.bytes(),
-        *x_h.bytes(),
-        *a.bytes(),
-        *b.bytes(),
-    ])
-}
-
-/// Fiat-Shamir challenge for a `BatchedDdhProof`. Binds, in order, the DST, every base, every
-/// image, and every per-pair Schnorr commitment.
-fun challenge_batched_ddh(
     dst: vector<u8>,
     bases: &vector<Element<G>>,
     images: &vector<Element<G>>,
@@ -275,26 +221,27 @@ fun challenge_batched_ddh(
     fiat_shamir_challenge(inputs)
 }
 
+/// Fiat-Shamir challenge for an `ElGamalProof`. Binds, in order, the DST, the bases `g, h`, the
+/// shared public key, every ciphertext `(C_j, D_j)`, and the two mask commitments `(a, b)`.
+/// Drawing `c` after committing to the whole statement is what stops the prover from choosing a
+/// batch the aggregate would mask.
 fun challenge_elgamal(
     dst: vector<u8>,
     g: &Element<G>,
     h: &Element<G>,
     pk: &Element<G>,
-    e1: &Element<G>,
-    e2: &Element<G>,
+    encryptions: &vector<Encryption>,
     a: &Element<G>,
     b: &Element<G>,
 ): Element<Scalar> {
-    fiat_shamir_challenge(vector[
-        dst,
-        *g.bytes(),
-        *h.bytes(),
-        *pk.bytes(),
-        *e1.bytes(),
-        *e2.bytes(),
-        *a.bytes(),
-        *b.bytes(),
-    ])
+    let mut inputs = vector[dst, *g.bytes(), *h.bytes(), *pk.bytes()];
+    encryptions.do_ref!(|e| {
+        inputs.push_back(*e.ciphertext().bytes());
+        inputs.push_back(*e.decryption_handle().bytes());
+    });
+    inputs.push_back(*a.bytes());
+    inputs.push_back(*b.bytes());
+    fiat_shamir_challenge(inputs)
 }
 
 /// Compute the Fiat-Shamir challenge for a `KeyConsistencyProof`. The transcript binds the bases
@@ -334,7 +281,7 @@ fun fiat_shamir_challenge(random_oracle_inputs: vector<vector<u8>>): Element<Sca
     scalar_from_bytes(&hash)
 }
 
-/// Checks the linear relation: `e1 + c * e2 == z * e3`.
+/// Checks the one-response Schnorr row: `e1 + c * e2 == z * e3`.
 fun is_valid_relation(
     e1: &Element<G>,
     e2: &Element<G>,
@@ -345,10 +292,20 @@ fun is_valid_relation(
     g_add(e1, &g_mul(c, e2)) == g_mul(z, e3)
 }
 
-// === Test Helpers ===
+/// Checks the two-response Schnorr row: `e1 + c * e2 == z1 * b1 + z2 * b2`.
+fun is_valid_relation2(
+    e1: &Element<G>,
+    e2: &Element<G>,
+    b1: &Element<G>,
+    b2: &Element<G>,
+    z1: &Element<Scalar>,
+    z2: &Element<Scalar>,
+    c: &Element<Scalar>,
+): bool {
+    g_add(e1, &g_mul(c, e2)) == g_add(&g_mul(z1, b1), &g_mul(z2, b2))
+}
 
-#[test_only]
-use sui::ristretto255::g_identity;
+// === Test Helpers ===
 
 #[test]
 fun fiat_shamir_challenge_regression() {
@@ -358,114 +315,61 @@ fun fiat_shamir_challenge_regression() {
     assert!(*c.bytes() == x"af00c4976049ed81805c76d3c5ba7cfaeb1550e44f5978cffb12b285a5e25a00");
 }
 
-#[test]
-fun prove_nizk_round_trip() {
-    let tuple1 = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(3),
-        &ristretto255::g_generator(),
-    );
-    let tuple2 = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(4),
-        &ristretto255::g_generator(),
-    );
-    let tuple3 = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(12),
-        &ristretto255::g_generator(),
-    );
-
-    let proof = prove_ddh(
-        vector[],
-        &ristretto255::scalar_from_u64(4),
-        &ristretto255::g_generator(),
-        &tuple1,
-        &tuple2,
-        &tuple3,
-        &ristretto255::scalar_from_u64(91011), // randomness
-    );
-
-    assert!(verify_ddh(&proof, vector[], &ristretto255::g_generator(), &tuple1, &tuple2, &tuple3));
-}
-
-#[test]
-fun batched_ddh_proof_round_trip() {
-    let g = ristretto255::g_generator();
-    let w = scalar_from_u64(13579);
-    // Five independent bases; images are each `w * base`.
-    let bases = vector::tabulate!(5, |i| g_mul(&scalar_from_u64((i + 1) * 100), &g));
-    let images = bases.map_ref!(|b| g_mul(&w, b));
-    let proof = prove_batched_ddh(vector[], &w, &bases, &images, &scalar_from_u64(24680));
-    assert!(verify_batched_ddh(&proof, vector[], &bases, &images));
-
-    // A wrong image breaks verification.
-    let mut bad_images = images;
-    *bad_images.borrow_mut(2) = g;
-    assert!(!verify_batched_ddh(&proof, vector[], &bases, &bad_images));
-}
-
 #[test_only]
 public fun prove_ddh(
     dst: vector<u8>,
-    x: &Element<Scalar>,
-    g: &Element<G>,
-    h: &Element<G>,
-    x_g: &Element<G>,
-    x_h: &Element<G>,
-    r: &Element<Scalar>,
+    w: &Element<Scalar>,
+    bases: &vector<Element<G>>,
+    images: &vector<Element<G>>,
+    s: &Element<Scalar>,
 ): DdhProof {
-    let a = g_mul(r, g);
-    let b = g_mul(r, h);
-    let c = challenge_ddh(dst, g, h, x_g, x_h, &a, &b);
-    let z = scalar_add(r, &scalar_mul(&c, x));
-    DdhProof { a, b, z }
+    let commitments = bases.map_ref!(|b| g_mul(s, b));
+    let c = challenge_ddh(dst, bases, images, &commitments);
+    let z = scalar_add(s, &scalar_mul(&c, w));
+    DdhProof { commitments, z }
 }
 
 #[test_only]
 public fun default_ddh_proof(): DdhProof {
-    DdhProof {
-        a: g_identity(),
-        b: g_identity(),
-        z: scalar_from_u64(0),
-    }
-}
-
-#[test_only]
-public fun default_batched_ddh_proof(): BatchedDdhProof {
-    BatchedDdhProof { commitments: vector[], z: scalar_from_u64(0) }
+    DdhProof { commitments: vector[], z: scalar_from_u64(0) }
 }
 
 #[test_only]
 public fun prove_elgamal(
     dst: vector<u8>,
     pk: &Element<G>,
-    e: &Encryption,
-    amount: u64,
-    blinding: u64,
+    encryptions: &vector<Encryption>,
+    messages: &vector<u64>,
+    blindings: &vector<u64>,
+    ma: &Element<Scalar>,
+    mb: &Element<Scalar>,
 ): ElGamalProof {
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
-    let r1 = scalar_from_u64(1234);
-    let r2 = scalar_from_u64(5678);
-    let a = g_mul(&r1, pk);
-    let b = g_add(&g_mul(&r1, &g), &g_mul(&r2, &h));
-    let challenge = challenge_elgamal(
-        dst,
-        &g,
-        &h,
-        pk,
-        e.ciphertext(),
-        e.decryption_handle(),
-        &a,
-        &b,
-    );
-    let z1 = scalar_add(
-        &r1,
-        &scalar_mul(&challenge, &scalar_from_u64(blinding)),
-    );
-    let z2 = scalar_add(
-        &r2,
-        &scalar_mul(&challenge, &scalar_from_u64(amount)),
-    );
+    // a = ma*pk (handle side); b = ma*g + mb*h (ciphertext side).
+    let a = g_mul(ma, pk);
+    let b = g_add(&g_mul(ma, &g), &g_mul(mb, &h));
+    let c = challenge_elgamal(dst, &g, &h, pk, encryptions, &a, &b);
+    // z1 = ma + sum_j c^j r_j ; z2 = mb + sum_j c^j m_j, with c^j starting at c^1.
+    let mut z1 = *ma;
+    let mut z2 = *mb;
+    let mut power = c;
+    encryptions.length().do!(|j| {
+        z1 = scalar_add(&z1, &scalar_mul(&power, &scalar_from_u64(blindings[j])));
+        z2 = scalar_add(&z2, &scalar_mul(&power, &scalar_from_u64(messages[j])));
+        power = scalar_mul(&power, &c);
+    });
     ElGamalProof { a, b, z1, z2 }
+}
+
+#[test_only]
+public fun default_elgamal_proof(): ElGamalProof {
+    ElGamalProof {
+        a: g_identity(),
+        b: g_identity(),
+        z1: scalar_from_u64(0),
+        z2: scalar_from_u64(0),
+    }
 }
 
 /// Build a DDH proof of knowledge of `sk` such that `ea.ciphertext - amount*h = sk*g` and
@@ -478,17 +382,17 @@ public fun value_proof_for_testing(
     ea: &Encryption,
     sk: &Element<Scalar>,
 ): DdhProof {
-    let pk = g_mul(sk, &twisted_elgamal::g());
+    let g = twisted_elgamal::g();
+    let pk = g_mul(sk, &g);
+    let commitment_to_zero = ristretto255::g_sub(
+        ea.ciphertext(),
+        &g_mul(&scalar_from_u64(amount), &twisted_elgamal::h()),
+    );
     prove_ddh(
         dst,
         sk,
-        &twisted_elgamal::g(),
-        &ristretto255::g_sub(
-            ea.ciphertext(),
-            &g_mul(&scalar_from_u64(amount), &twisted_elgamal::h()),
-        ),
-        &pk,
-        ea.decryption_handle(),
+        &vector[g, commitment_to_zero],
+        &vector[pk, *ea.decryption_handle()],
         &scalar_from_u64(1234), // randomness
     )
 }
@@ -501,14 +405,13 @@ public fun zero_proof_for_testing(
     ea: &Encryption,
     sk: &Element<Scalar>,
 ): DdhProof {
-    let pk = g_mul(sk, &twisted_elgamal::g());
+    let g = twisted_elgamal::g();
+    let pk = g_mul(sk, &g);
     prove_ddh(
         dst,
         sk,
-        &twisted_elgamal::g(),
-        ea.ciphertext(),
-        &pk,
-        ea.decryption_handle(),
+        &vector[g, *ea.ciphertext()],
+        &vector[pk, *ea.decryption_handle()],
         &scalar_from_u64(12345), // randomness
     )
 }
@@ -528,29 +431,10 @@ public fun handle_eq_proof_for_testing(
     prove_ddh(
         dst,
         r,
-        pk_1,
-        pk_2,
-        d_1,
-        d_2,
+        &vector[*pk_1, *pk_2],
+        &vector[*d_1, *d_2],
         &scalar_from_u64(123456), // randomness
     )
-}
-
-/// Build a `BatchedDdhProof` proving a shared witness `w` maps every base to its image
-/// (`images[k] = w * bases[k]`). Used for the batched re-key relation: `w = new_sk · old_sk⁻¹`
-/// re-keys `old_pk` and every limb's decryption handle to the new key.
-#[test_only]
-public fun prove_batched_ddh(
-    dst: vector<u8>,
-    w: &Element<Scalar>,
-    bases: &vector<Element<G>>,
-    images: &vector<Element<G>>,
-    s: &Element<Scalar>,
-): BatchedDdhProof {
-    let commitments = bases.map_ref!(|b| g_mul(s, b));
-    let c = challenge_batched_ddh(dst, bases, images, &commitments);
-    let z = scalar_add(s, &scalar_mul(&c, w));
-    BatchedDdhProof { commitments, z }
 }
 
 /// Build a DDH proof that `sum` is the homomorphic sum of `a` and `b` under `sk` (where
@@ -563,15 +447,14 @@ public fun sum_proof_for_testing(
     b: &Encryption,
     sk: &Element<Scalar>,
 ): DdhProof {
-    let pk = g_mul(sk, &twisted_elgamal::g());
+    let g = twisted_elgamal::g();
+    let pk = g_mul(sk, &g);
     let zero_encryption = a.add(b).sub(sum);
     prove_ddh(
         dst,
         sk,
-        &twisted_elgamal::g(),
-        zero_encryption.ciphertext(),
-        &pk,
-        zero_encryption.decryption_handle(),
+        &vector[g, *zero_encryption.ciphertext()],
+        &vector[pk, *zero_encryption.decryption_handle()],
         &scalar_from_u64(1234567), // randomness
     )
 }
@@ -662,6 +545,50 @@ public fun prove_key_consistency(
 }
 
 #[test]
+fun ddh_proof_round_trip() {
+    let g = ristretto255::g_generator();
+    let tuple1 = g_mul(&scalar_from_u64(3), &g);
+    let tuple2 = g_mul(&scalar_from_u64(4), &g);
+    let tuple3 = g_mul(&scalar_from_u64(12), &g);
+
+    let bases = vector[g, tuple1];
+    let images = vector[tuple2, tuple3];
+    let proof = prove_ddh(
+        vector[],
+        &scalar_from_u64(4),
+        &bases,
+        &images,
+        &scalar_from_u64(91011), // randomness
+    );
+
+    assert!(verify_ddh(&proof, vector[], &bases, &images));
+}
+
+#[test]
+fun ddh_proof_batch_round_trip() {
+    let g = ristretto255::g_generator();
+    let w = scalar_from_u64(13579);
+    // Five independent bases; images are each `w * base`.
+    let bases = vector::tabulate!(5, |i| g_mul(&scalar_from_u64((i + 1) * 100), &g));
+    let images = bases.map_ref!(|b| g_mul(&w, b));
+    let proof = prove_ddh(vector[], &w, &bases, &images, &scalar_from_u64(24680));
+    assert!(verify_ddh(&proof, vector[], &bases, &images));
+
+    // A wrong image breaks verification.
+    let mut bad_images = images;
+    *bad_images.borrow_mut(2) = g;
+    assert!(!verify_ddh(&proof, vector[], &bases, &bad_images));
+
+    // A statement shorter than the proof's commitment vector fails the length check (returns
+    // false, no abort).
+    let mut short_bases = bases;
+    short_bases.pop_back();
+    let mut short_images = images;
+    short_images.pop_back();
+    assert!(!verify_ddh(&proof, vector[], &short_bases, &short_images));
+}
+
+#[test]
 fun key_consistency_proof_round_trip() {
     let sk = scalar_from_u64(1234567890);
     let g = twisted_elgamal::g();
@@ -725,8 +652,119 @@ fun key_consistency_proof_round_trip() {
 
 #[test]
 fun elgamal_proof_round_trip() {
+    // Batch-of-1: the classic single-ciphertext well-formedness proof.
     let pk = g_mul(&scalar_from_u64(12345), &twisted_elgamal::g());
-    let encryption = twisted_elgamal::encrypt_trivial_for_testing(42, &pk, 67890);
-    let proof = prove_elgamal(vector[], &pk, &encryption, 42, 67890);
-    assert!(verify_elgamal(&proof, vector[], &pk, &encryption));
+    let encryptions = vector[twisted_elgamal::encrypt_trivial_for_testing(42, &pk, 67890)];
+    let proof = prove_elgamal(
+        vector[],
+        &pk,
+        &encryptions,
+        &vector[42],
+        &vector[67890],
+        &scalar_from_u64(1234),
+        &scalar_from_u64(5678),
+    );
+    assert!(verify_elgamal(&proof, vector[], &pk, &encryptions));
+}
+
+#[test]
+fun elgamal_proof_batch_round_trip() {
+    let pk = g_mul(&scalar_from_u64(12345), &twisted_elgamal::g());
+    // Five same-key ciphertexts (C_j, D_j) = (r_j*g + m_j*h, r_j*pk).
+    let messages = vector[7u64, 0, 65535, 42, 1];
+    let blindings = vector[111u64, 222, 333, 444, 555];
+    let encryptions = messages.zip_map_ref!(
+        &blindings,
+        |m, r| twisted_elgamal::encrypt_trivial_for_testing(*m, &pk, *r),
+    );
+
+    let proof = prove_elgamal(
+        vector[],
+        &pk,
+        &encryptions,
+        &messages,
+        &blindings,
+        &scalar_from_u64(24680),
+        &scalar_from_u64(13579),
+    );
+    assert!(verify_elgamal(&proof, vector[], &pk, &encryptions));
+
+    // Tampering with any ciphertext breaks verification.
+    let mut bad = encryptions;
+    *bad.borrow_mut(2) = twisted_elgamal::encrypt_trivial_for_testing(1, &pk, 333);
+    assert!(!verify_elgamal(&proof, vector[], &pk, &bad));
+
+    // A different key breaks verification.
+    let other_pk = g_mul(&scalar_from_u64(99999), &twisted_elgamal::g());
+    assert!(!verify_elgamal(&proof, vector[], &other_pk, &encryptions));
+}
+
+/// The challenge binds the whole batch, so a proof cannot be replayed against any other statement
+/// built from the same ciphertexts — shorter, longer, or reordered.
+#[test]
+fun elgamal_proof_statement_substitution_fails() {
+    let pk = g_mul(&scalar_from_u64(12345), &twisted_elgamal::g());
+    let messages = vector[7u64, 0, 65535, 42, 1];
+    let blindings = vector[111u64, 222, 333, 444, 555];
+    let encryptions = messages.zip_map_ref!(
+        &blindings,
+        |m, r| twisted_elgamal::encrypt_trivial_for_testing(*m, &pk, *r),
+    );
+    let proof = prove_elgamal(
+        vector[],
+        &pk,
+        &encryptions,
+        &messages,
+        &blindings,
+        &scalar_from_u64(24680),
+        &scalar_from_u64(13579),
+    );
+
+    // A prefix of the proven batch.
+    let mut prefix = encryptions;
+    prefix.pop_back();
+    assert!(!verify_elgamal(&proof, vector[], &pk, &prefix));
+
+    // The proven batch extended by one more valid ciphertext.
+    let mut extended = encryptions;
+    extended.push_back(twisted_elgamal::encrypt_trivial_for_testing(9, &pk, 666));
+    assert!(!verify_elgamal(&proof, vector[], &pk, &extended));
+
+    // The proven ciphertexts in a different order.
+    let mut swapped = encryptions;
+    swapped.swap(0, 1);
+    assert!(!verify_elgamal(&proof, vector[], &pk, &swapped));
+}
+
+/// Pin the Fiat-Shamir transcript layout of both proof types (not just the hash primitive, which
+/// `fiat_shamir_challenge_regression` covers). Round-trip tests can't catch the prover and
+/// verifier drifting together; this locks the byte layout client-side provers must reproduce.
+#[test]
+fun challenge_transcript_regression() {
+    let dst = vector::tabulate!(21, |i| i as u8);
+    let g = ristretto255::g_generator();
+    let points = vector::tabulate!(6, |i| g_mul(&scalar_from_u64((i + 1) * 11), &g));
+
+    let c_ddh = challenge_ddh(
+        dst,
+        &vector[points[0], points[1]],
+        &vector[points[2], points[3]],
+        &vector[points[4], points[5]],
+    );
+    assert!(*c_ddh.bytes() == x"b5baa7c858c0eb740d9c38cc273f2062998dad57a798fa00e78cc33b4ba54200");
+
+    let encryptions = vector[
+        twisted_elgamal::new(points[0], points[1]),
+        twisted_elgamal::new(points[2], points[3]),
+    ];
+    let c_eg = challenge_elgamal(
+        dst,
+        &twisted_elgamal::g(),
+        &twisted_elgamal::h(),
+        &points[4], // pk
+        &encryptions,
+        &points[5], // a
+        &points[0], // b
+    );
+    assert!(*c_eg.bytes() == x"bfc70a5eb7a3d6ff45c7f259078b46d3d1a1cd1c8f9affe06b3d37bb40548900");
 }

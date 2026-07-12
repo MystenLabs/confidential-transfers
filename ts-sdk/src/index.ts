@@ -19,13 +19,7 @@ export { G, randomScalar, scalarToBytes, pointFromBcs } from './ristretto255.js'
 export type { RistrettoPoint } from './ristretto255.js';
 export { point } from './helpers.js';
 export { KeyEncryption } from './key_encryption.js';
-export {
-	DdhTupleNizk,
-	ElGamalNizk,
-	KeyConsistencyProof,
-	limbsToScalar,
-	scalarToLimbs,
-} from './nizk.js';
+export { DdhNizk, ElGamalNizk, KeyConsistencyProof, limbsToScalar, scalarToLimbs } from './nizk.js';
 export type {
 	AccountStatus,
 	AuditorVersionEntry,

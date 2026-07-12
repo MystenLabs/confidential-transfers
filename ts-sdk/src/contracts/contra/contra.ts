@@ -59,11 +59,10 @@
  *
  * ## Authentication:
  *
- * Some functions require authorization via an `&Auth<T>` argument. The `Auth<T>`
- * is passed by reference, so a single one can authorize multiple calls in the same
- * PTB (e.g. `merge` then `unwrap`). Under the default permissionless policy any
- * `Auth<T>` is accepted; permissioning narrows which constructors produce a valid
- * `Auth<T>`. The caller constructs the `Auth<T>` via one of three constructors:
+ * Some functions require authorization via an `&Auth<T>` argument. Under the
+ * default permissionless policy any `Auth<T>` is accepted; permissioning narrows
+ * which constructors produce a valid `Auth<T>`. The caller constructs the
+ * `Auth<T>` via one of three constructors:
  *
  * - `authorize_as_sender`: authenticates `ctx.sender()`. The standard path for
  *   end-user wallets and permissionless operations.
@@ -176,12 +175,12 @@ export const TransferBatch = new MoveEnum({
 		/**
 		 * The balance proof succeeded. Holds the receiver-keyed `EncryptedCoin`s split off
 		 * the sender's balance, one per transfer. `add_to_batch` pops one per receiver and
-		 * credits it to their pending deposits. `seed_point` (= `P`) and
-		 * `next_index` are carried only for the events: each `add_to_batch` emits `P` and the
-		 * receiver's batch index so the sender can later re-derive that transfer's blinding
-		 * (`seed = HKDF(sk * P)`) and recover the amount from the on-chain commitment, without
-		 * any sender-keyed decryption handle. `sender_pk` is likewise carried only for the
-		 * event.
+		 * credits it to their pending deposits. `seed_point` (= `P`) and `next_index` are
+		 * carried only for the events: each `add_to_batch` emits `P` and the receiver's
+		 * batch index so the sender can later re-derive that transfer's blinding
+		 * (`seed = HKDF(sk * P)`) and recover the amount from the on-chain commitment,
+		 * without any sender-keyed decryption handle. `sender_pk` is likewise carried only
+		 * for the event.
 		 */
 		Ok: new MoveStruct({
 			name: `TransferBatch.Ok`,
@@ -526,7 +525,10 @@ export interface SetPublicKeyOptions {
  */
 export function setPublicKey(options: SetPublicKeyOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, null, null, null] satisfies (string | null)[];
+	const argumentsTypes = [null, null, null, null, 'vector<null>', null, null] satisfies (
+		| string
+		| null
+	)[];
 	const parameterNames = [
 		'account',
 		'auth',
@@ -583,10 +585,18 @@ export interface TrySetPublicKeyAndUnpauseOptions {
  */
 export function trySetPublicKeyAndUnpause(options: TrySetPublicKeyAndUnpauseOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, null, null, null, null, null, null] satisfies (
-		| string
-		| null
-	)[];
+	const argumentsTypes = [
+		null,
+		null,
+		null,
+		null,
+		null,
+		null,
+		null,
+		'vector<null>',
+		null,
+		null,
+	] satisfies (string | null)[];
 	const parameterNames = [
 		'account',
 		'auth',
@@ -692,13 +702,13 @@ export interface BatchedTransferOptions {
  * Start a batched transfer from `sender`. `receiver_amounts[i]` is the transferred
  * value re-encrypted under `receiver_pks[i]`. `well_formed_proofs` is a single
  * batched `WellFormedProof` covering `receiver_amounts ++ [new_balance]` under
- * `receiver_pks ++ [sender_pk]` — one aggregate Bulletproof for the whole transfer.
- * `total_sender_handle` is the single sender-keyed decryption handle for the transfer
- * total; `consistency_proof` proves it well-formed and `balance_proof` proves the
- * sender's balance drops by exactly that total (see `balance::try_split_batch`).
- * `seed_point` (= `P`) is forwarded to the events so the sender can
- * re-derive each transfer's blinding and recover its outgoing amounts; it is not
- * otherwise verified on chain.
+ * `receiver_pks ++ [sender_pk]` — one aggregate Bulletproof for the whole
+ * transfer. `total_sender_handle` is the single sender-keyed decryption handle for
+ * the transfer total; `consistency_proof` proves it well-formed and
+ * `balance_proof` proves the sender's balance drops by exactly that total (see
+ * `balance::try_split_batch`). `seed_point` (= `P`) is forwarded to the events so
+ * the sender can re-derive each transfer's blinding and recover its outgoing
+ * amounts; it is not otherwise verified on chain.
  *
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
  * `BalanceProofFailed`. Aborts if `well_formed_proofs` does not verify or

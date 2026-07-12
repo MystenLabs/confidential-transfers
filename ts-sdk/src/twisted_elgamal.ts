@@ -5,7 +5,7 @@ import { Field } from '@noble/curves/abstract/modular.js';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 
 import { DecryptionFailedError, InvalidArgumentError } from './error.js';
-import { DdhTupleNizk, ElGamalNizk } from './nizk.js';
+import { DdhNizk } from './nizk.js';
 import { PedersenCommitment } from './pedersen.js';
 import {
 	G,
@@ -293,35 +293,20 @@ export class Ciphertext {
 	}
 
 	/**
-	 * Encrypt a value under `pk` with the given `blinding` and generate an ElGamal
-	 * consistency proof.
-	 */
-	static encryptWithConsistencyProof(
-		dst: Uint8Array,
-		pk: PublicKey,
-		value: bigint,
-		blinding: bigint,
-	): { ciphertext: Ciphertext; blinding: bigint; proof: ElGamalNizk } {
-		const { ciphertext } = Ciphertext.encryptWithBlinding(pk, value, blinding);
-		const proof = ElGamalNizk.prove(dst, blinding, value, ciphertext, pk);
-		return { ciphertext, blinding, proof };
-	}
-
-	/**
 	 * Prove that this ciphertext encrypts zero under the given key pair.
-	 * Returns a `DdhTupleNizk` proving `decryptionHandle = sk * ciphertext`.
+	 * Returns a `DdhNizk` proving `decryptionHandle = sk * ciphertext`.
 	 */
-	proveIsZero(dst: Uint8Array, sk: PrivateKey, pk: PublicKey): DdhTupleNizk {
-		return DdhTupleNizk.prove(dst, sk, G, this.ciphertext, pk, this.decryptionHandle);
+	proveIsZero(dst: Uint8Array, sk: PrivateKey, pk: PublicKey): DdhNizk {
+		return DdhNizk.prove(dst, sk, [G, this.ciphertext], [pk, this.decryptionHandle]);
 	}
 
 	/**
 	 * Prove that this ciphertext decrypts to `value` under the key pair
 	 * `(sk, pk)`, without revealing `sk`.
 	 */
-	proveDecryption(dst: Uint8Array, sk: PrivateKey, pk: PublicKey, value: bigint): DdhTupleNizk {
+	proveDecryption(dst: Uint8Array, sk: PrivateKey, pk: PublicKey, value: bigint): DdhNizk {
 		const commitmentToZero = this.ciphertext.subtract(mul(H, value));
-		return DdhTupleNizk.prove(dst, sk, G, commitmentToZero, pk, this.decryptionHandle);
+		return DdhNizk.prove(dst, sk, [G, commitmentToZero], [pk, this.decryptionHandle]);
 	}
 
 	/**
@@ -329,9 +314,9 @@ export class Ciphertext {
 	 * demonstrates that this ciphertext decrypts to `value` under the
 	 * secret key corresponding to `pk`.
 	 */
-	verifyDecryption(dst: Uint8Array, pk: PublicKey, value: bigint, proof: DdhTupleNizk): boolean {
+	verifyDecryption(dst: Uint8Array, pk: PublicKey, value: bigint, proof: DdhNizk): boolean {
 		const commitmentToZero = this.ciphertext.subtract(mul(H, value));
-		return proof.verify(dst, G, commitmentToZero, pk, this.decryptionHandle);
+		return proof.verify(dst, [G, commitmentToZero], [pk, this.decryptionHandle]);
 	}
 
 	/**

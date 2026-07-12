@@ -5,29 +5,30 @@ import { bytesToHex, numberToBytesLE } from '@noble/curves/utils.js';
 import { describe, expect, it } from 'vitest';
 
 import { fiatShamirChallenge } from '../../src/helpers.js';
-import { BatchedDdhNizk, DdhTupleNizk } from '../../src/nizk.js';
+import { challengeDdh, challengeElgamal, DdhNizk } from '../../src/nizk.js';
 import { G, H, mul, randomScalar } from '../../src/ristretto255.js';
+import { Ciphertext } from '../../src/twisted_elgamal.js';
 
 const dst = new Uint8Array(38);
 
 describe('nizk', () => {
-	it('ddh nizk round trip', () => {
+	it('ddh nizk round trip (two-pair Chaum-Pedersen)', () => {
 		const x = 12345n;
 
 		const xG = G.multiply(x);
 		const xH = H.multiply(x);
 
-		const nizk = DdhTupleNizk.prove(dst, x, G, H, xG, xH);
-		expect(nizk.verify(dst, G, H, xG, xH)).toBeTruthy();
+		const nizk = DdhNizk.prove(dst, x, [G, H], [xG, xH]);
+		expect(nizk.verify(dst, [G, H], [xG, xH])).toBeTruthy();
 	});
 
-	it('batched ddh nizk round trip', () => {
+	it('ddh nizk batch round trip (five-pair re-key relation)', () => {
 		const w = randomScalar();
 		// Five independent bases; each image is `w * base` (the re-key relation).
 		const bases = Array.from({ length: 5 }, (_, i) => mul(G, BigInt(i + 1) * 100n));
 		const images = bases.map((b) => mul(b, w));
 
-		const proof = BatchedDdhNizk.prove(dst, w, bases, images);
+		const proof = DdhNizk.prove(dst, w, bases, images);
 		expect(proof.verify(dst, bases, images)).toBeTruthy();
 
 		// A single wrong image breaks verification.
@@ -44,6 +45,32 @@ describe('nizk', () => {
 		const c = fiatShamirChallenge([part0, part1]);
 		expect(bytesToHex(numberToBytesLE(c, 32))).toBe(
 			'af00c4976049ed81805c76d3c5ba7cfaeb1550e44f5978cffb12b285a5e25a00',
+		);
+	});
+
+	// Pinned to the same constants as Move's `nizk::challenge_transcript_regression`, locking the
+	// full per-proof transcript layout (not just the hash primitive) across the two languages.
+	it('challenge transcripts match the on-chain pinned constants', () => {
+		const dst21 = Uint8Array.from({ length: 21 }, (_, i) => i);
+		const points = Array.from({ length: 6 }, (_, i) => mul(G, BigInt((i + 1) * 11)));
+
+		const cDdh = challengeDdh(
+			dst21,
+			[points[0], points[1]],
+			[points[2], points[3]],
+			[points[4], points[5]],
+		);
+		expect(bytesToHex(numberToBytesLE(cDdh, 32))).toBe(
+			'b5baa7c858c0eb740d9c38cc273f2062998dad57a798fa00e78cc33b4ba54200',
+		);
+
+		const encryptions = [
+			new Ciphertext(points[0], points[1]),
+			new Ciphertext(points[2], points[3]),
+		];
+		const cEg = challengeElgamal(dst21, points[4], encryptions, points[5], points[0]);
+		expect(bytesToHex(numberToBytesLE(cEg, 32))).toBe(
+			'bfc70a5eb7a3d6ff45c7f259078b46d3d1a1cd1c8f9affe06b3d37bb40548900',
 		);
 	});
 });

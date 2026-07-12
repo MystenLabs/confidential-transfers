@@ -20,7 +20,8 @@ import * as decodeContracts from './contracts/contra/decode.js';
 import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
 import { InvalidArgumentError } from './error.js';
 import type { KeyEncryption } from './key_encryption.js';
-import type { BatchedDdhNizk, DdhTupleNizk, ElGamalNizk, KeyConsistencyProof } from './nizk.js';
+import type { DdhNizk, KeyConsistencyProof } from './nizk.js';
+import { ElGamalNizk } from './nizk.js';
 import { type RistrettoPoint } from './ristretto255.js';
 import type { Ciphertext, MultiRecipientEncryption } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
@@ -112,14 +113,18 @@ export function dst(sessionId: Uint8Array, protocolId: number): Uint8Array {
 	return result;
 }
 
-/** A limb of an `EncryptedAmount` plus the per-limb material a `WellFormedProof`
- *  needs: plaintext, blinding, encryption, and the ElGamal consistency proof for
- *  that ciphertext. */
+/** A limb of an `EncryptedAmount`: plaintext, blinding, and encryption. */
 export type WellFormedLimb = {
 	value: bigint;
 	blinding: bigint;
 	ciphertext: Ciphertext;
-	proof: ElGamalNizk;
+};
+
+/** An amount's four limbs plus the public key they're encrypted under. `buildWellFormedProof`
+ *  folds each amount's limbs into a single `ElGamalNizk` consistency proof under its `pk`. */
+export type WellFormedAmount = {
+	limbs: WellFormedLimb[];
+	pk: RistrettoPoint;
 };
 
 /** Derive the per-owner shared account object ID. */
@@ -196,22 +201,12 @@ export function buildEncryption(packageId: string, ct: Ciphertext) {
 	});
 }
 
-/** Serialize a `DdhTupleNizk` into an on-chain `DdhProof`. */
-export function buildDdhProof(packageId: string, proof: DdhTupleNizk) {
-	return decodeContracts.ddhProof({
-		package: packageId,
-		arguments: {
-			parts: elemParts([proof.a.toBytes(), proof.b.toBytes(), numberToBytesLE(proof.z, 32)]),
-		},
-	});
-}
-
 /**
- * Serialize a `BatchedDdhNizk` into an on-chain `BatchedDdhProof`. The byte layout is the per-pair
- * Schnorr commitments followed by the trailing scalar response `z`, matching `decode::batched_ddh_proof`.
+ * Serialize a `DdhNizk` into an on-chain `DdhProof`. The byte layout is the per-pair Schnorr
+ * commitments followed by the trailing scalar response `z`, matching `decode::ddh_proof`.
  */
-export function buildBatchedDdhProof(packageId: string, proof: BatchedDdhNizk) {
-	return decodeContracts.batchedDdhProof({
+export function buildDdhProof(packageId: string, proof: DdhNizk) {
+	return decodeContracts.ddhProof({
 		package: packageId,
 		arguments: {
 			parts: elemParts([
@@ -271,18 +266,21 @@ const MAX_BATCH_SIZE = 8;
  * committed values to be a power of 2 and at most `MAX_BATCH_SIZE` amounts (= 32 commitments) per
  * proof; we partition N amounts into power-of-2 chunks largest-first, capped at `MAX_BATCH_SIZE`
  * (e.g. N=7 → [4, 2, 1]; N=20 → [8, 8, 4]). The on-chain verifier reconstructs the same partition
- * from N, so no explicit sizes vector needs to be carried. The pk isn't stored in the proof; the
- * consumer supplies a parallel `vector<Element<G>>` to `verify`, so callers must hand pks
- * separately to whichever Move entry verifies the proof. `rangeDst` is the domain-separation tag
- * bound into the Bulletproof transcript; it must equal the `range_dst` the Move entry passes to
- * `encrypted_amount::verify` (the `DST_RANGE_PROOF` tag) — distinct from the `DST_ELGAMAL` tag the
- * per-limb consistency proofs in `batch` were generated under.
+ * from N, so no explicit sizes vector needs to be carried. Each amount's four limbs are folded
+ * into a single `ElGamalNizk` consistency proof under that amount's `pk` and the `elgamalDst` tag
+ * (the `DST_ELGAMAL` the Move entry passes to `encrypted_amount::verify`). The pk isn't stored in
+ * the proof; the consumer supplies a parallel `vector<Element<G>>` to `verify`, so callers must
+ * hand pks separately to whichever Move entry verifies the proof. `rangeDst` is the
+ * domain-separation tag bound into the Bulletproof transcript; it must equal the entry's
+ * `range_dst` (the `DST_RANGE_PROOF` tag) — distinct from `elgamalDst` so a range proof can't be
+ * replayed as a consistency proof.
  */
 export function buildWellFormedProof(
 	batchRangeProver: BatchRangeProver,
 	rangeDst: Uint8Array,
+	elgamalDst: Uint8Array,
 	packageId: string,
-	batch: WellFormedLimb[][],
+	batch: WellFormedAmount[],
 ) {
 	// Greedily take as many MAX_BATCH_SIZE chunks as fit, then halve the chunk size and repeat
 	// until the batch is exhausted — the same canonical partition `batch_sizes` reconstructs on
@@ -299,8 +297,8 @@ export function buildWellFormedProof(
 			rangeProofs.push(
 				Array.from(
 					batchRangeProver(
-						chunk.flatMap((amount) => amount.map((l) => l.value)),
-						chunk.flatMap((amount) => amount.map((l) => l.blinding)),
+						chunk.flatMap((amount) => amount.limbs.map((l) => l.value)),
+						chunk.flatMap((amount) => amount.limbs.map((l) => l.blinding)),
 						16,
 						rangeDst,
 					).proof,
@@ -311,6 +309,10 @@ export function buildWellFormedProof(
 		}
 		chunkSize = Math.floor(chunkSize / 2);
 	}
+	// One witness-folded `ElGamalNizk` per amount, covering its four same-key limbs.
+	const consistencyProofs = batch.map((amount) =>
+		ElGamalNizk.prove(elgamalDst, amount.pk, amount.limbs),
+	);
 	return (tx: Transaction) =>
 		encryptedAmountContracts.newWellFormedProof({
 			package: packageId,
@@ -318,20 +320,16 @@ export function buildWellFormedProof(
 				rangeProofs,
 				consistencyProofs: tx.makeMoveVec({
 					type: `${packageId}::encrypted_amount::ConsistencyProof`,
-					// Each `ConsistencyProof` is four `ElGamalProof`s (one per limb); flatten the 4×4
-					// elements and decode them in one call instead of 4 nested proof constructions.
-					elements: batch.map((amount) =>
+					elements: consistencyProofs.map((proof) =>
 						decodeContracts.consistencyProof({
 							package: packageId,
 							arguments: {
-								parts: elemParts(
-									amount.flatMap((l) => [
-										l.proof.a.toBytes(),
-										l.proof.b.toBytes(),
-										numberToBytesLE(l.proof.z1, 32),
-										numberToBytesLE(l.proof.z2, 32),
-									]),
-								),
+								parts: elemParts([
+									proof.a.toBytes(),
+									proof.b.toBytes(),
+									numberToBytesLE(proof.z1, 32),
+									numberToBytesLE(proof.z2, 32),
+								]),
 							},
 						})(tx),
 					),
@@ -351,18 +349,21 @@ export function buildWellFormedProof(
 export function buildEncryptedAmountAndProof(
 	batchRangeProver: BatchRangeProver,
 	rangeDst: Uint8Array,
+	elgamalDst: Uint8Array,
 	tx: Transaction,
 	packageId: string,
-	limbs: WellFormedLimb[],
+	amount: WellFormedAmount,
 ) {
 	return {
 		encryptedAmount: tx.add(
 			buildEncryptedAmount(
 				packageId,
-				limbs.map((l) => l.ciphertext),
+				amount.limbs.map((l) => l.ciphertext),
 			),
 		),
-		wellFormedProof: tx.add(buildWellFormedProof(batchRangeProver, rangeDst, packageId, [limbs])),
+		wellFormedProof: tx.add(
+			buildWellFormedProof(batchRangeProver, rangeDst, elgamalDst, packageId, [amount]),
+		),
 	};
 }
 

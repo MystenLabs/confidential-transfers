@@ -29,10 +29,7 @@ export const WellFormedEncryptedAmount = new MoveStruct({
 export const ConsistencyProof = new MoveStruct({
 	name: `${$moduleName}::ConsistencyProof`,
 	fields: {
-		p0: nizk.ElGamalProof,
-		p1: nizk.ElGamalProof,
-		p2: nizk.ElGamalProof,
-		p3: nizk.ElGamalProof,
+		proof: nizk.ElGamalProof,
 	},
 });
 export const WellFormedProof = new MoveStruct({
@@ -72,26 +69,16 @@ export function newEncryptedAmount(options: NewEncryptedAmountOptions) {
 		});
 }
 export interface NewConsistencyProofArguments {
-	p0: TransactionArgument;
-	p1: TransactionArgument;
-	p2: TransactionArgument;
-	p3: TransactionArgument;
+	proof: TransactionArgument;
 }
 export interface NewConsistencyProofOptions {
 	package?: string;
-	arguments:
-		| NewConsistencyProofArguments
-		| [
-				p0: TransactionArgument,
-				p1: TransactionArgument,
-				p2: TransactionArgument,
-				p3: TransactionArgument,
-		  ];
+	arguments: NewConsistencyProofArguments | [proof: TransactionArgument];
 }
 export function newConsistencyProof(options: NewConsistencyProofOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null] satisfies (string | null)[];
-	const parameterNames = ['p0', 'p1', 'p2', 'p3'];
+	const argumentsTypes = [null] satisfies (string | null)[];
+	const parameterNames = ['proof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

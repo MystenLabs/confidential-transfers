@@ -14,7 +14,7 @@ use contra::{
         from_value,
         sum_commitments
     },
-    nizk::{DdhProof, BatchedDdhProof, ElGamalProof, verify_elgamal},
+    nizk::{DdhProof, ElGamalProof, verify_elgamal},
     twisted_elgamal::{Self, Encryption}
 };
 use sui::{
@@ -187,6 +187,10 @@ public(package) fun try_split_to_public<T>(
 ///
 /// The transferred total's commitment is reconstructed from `receiver_amounts` (sender and receiver
 /// commitments match). Only its handle `total_sender_handle` is sent, proven by `consistency_proof`.
+///
+/// TODO: fold `consistency_proof` and the sender's new-balance limb consistency (both under
+/// `sender_pk`) into one 5-ciphertext `ElGamalProof`, saving a constant `2G+2F`
+/// + 5 muls + 1 FS hash per transfer.
 public(package) fun try_split_batch<T>(
     self: &mut EncryptedBalance<T>,
     sender_pk: &Element<G>,
@@ -209,7 +213,7 @@ public(package) fun try_split_batch<T>(
         consistency_proof.verify_elgamal(
             consistency_dst,
             sender_pk,
-            &total_sender,
+            &vector[total_sender],
         ),
         EConsistencyProofFailed,
     );
@@ -252,7 +256,7 @@ public(package) fun try_set_public_key<T>(
     old_pk: &Element<G>,
     new_pk: &Element<G>,
     new_handles: vector<Element<G>>,
-    eq_proof: BatchedDdhProof,
+    eq_proof: DdhProof,
     dst: vector<u8>,
 ): bool {
     self.amount.try_rekey(old_pk, new_pk, new_handles, &eq_proof, dst).is_some_and!(|amount| {
