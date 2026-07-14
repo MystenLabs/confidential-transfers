@@ -68,7 +68,7 @@ use contra::{
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedProof},
     events,
-    nizk::{DdhProof, BatchedDdhProof, ElGamalProof},
+    nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy}
 };
 use sui::{
@@ -399,7 +399,7 @@ public fun set_public_key<T>(
     ct: &ConfidentialToken<T>,
     new_pk: Element<G>,
     new_handles: vector<Element<G>>,
-    rekey_proof: BatchedDdhProof,
+    rekey_proof: DdhProof,
     key_encryption: Option<KeyEncryption>,
 ) {
     let sid = account[TokenAccountKey<T>()].session_id;
@@ -434,7 +434,7 @@ public fun try_set_public_key_and_unpause<T>(
     restated_balance_proof: WellFormedProof,
     balance_proof: DdhProof,
     new_handles: vector<Element<G>>,
-    rekey_proof: BatchedDdhProof,
+    rekey_proof: DdhProof,
     key_encryption: Option<KeyEncryption>,
 ) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
@@ -481,7 +481,7 @@ public(package) fun set_public_key_internal<T>(
     auth: &Auth<T>,
     new_pk: Element<G>,
     new_handles: vector<Element<G>>,
-    rekey_proof: BatchedDdhProof,
+    rekey_proof: DdhProof,
     new_verified_key_encryption: VerifiedKeyEncryption,
     dst: vector<u8>,
 ) {

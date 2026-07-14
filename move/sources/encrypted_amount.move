@@ -4,7 +4,7 @@
 module contra::encrypted_amount;
 
 use contra::{
-    nizk::{DdhProof, BatchedDdhProof, ElGamalProof, verify_ddh, verify_batched_ddh, verify_elgamal},
+    nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
     twisted_elgamal::{Self, Encryption, g, encrypt_trivial, encrypt_zero}
 };
 use sui::{
@@ -51,13 +51,10 @@ public struct WellFormedEncryptedAmount has copy, drop {
     pk: Element<G>,
 }
 
-/// Per-amount ElGamal consistency: one sigma protocol per u16 limb. The public key isn't stored
+/// Per-amount ElGamal consistency. The public key isn't stored
 /// here — the verifier supplies it at `verify` time.
 public struct ConsistencyProof has drop {
-    p0: ElGamalProof,
-    p1: ElGamalProof,
-    p2: ElGamalProof,
-    p3: ElGamalProof,
+    proof: ElGamalProof,
 }
 
 /// Well-formedness proof: one Bulletproof per chunk of the canonical partition of
@@ -78,13 +75,8 @@ public fun new_encrypted_amount(
     EncryptedAmount { l0, l1, l2, l3 }
 }
 
-public fun new_consistency_proof(
-    p0: ElGamalProof,
-    p1: ElGamalProof,
-    p2: ElGamalProof,
-    p3: ElGamalProof,
-): ConsistencyProof {
-    ConsistencyProof { p0, p1, p2, p3 }
+public fun new_consistency_proof(proof: ElGamalProof): ConsistencyProof {
+    ConsistencyProof { proof }
 }
 
 /// Bundle range proofs and consistency proofs into a `WellFormedProof`. Pass one consistency
@@ -213,10 +205,8 @@ public(package) fun verify_equal(
     let encryption = ea1.amount.collapse().sub(ea2);
     proof.verify_ddh(
         dst,
-        &g(),
-        encryption.ciphertext(),
-        &ea1.pk,
-        encryption.decryption_handle(),
+        &vector[g(), *encryption.ciphertext()],
+        &vector[ea1.pk, *encryption.decryption_handle()],
     )
 }
 
@@ -231,7 +221,7 @@ public(package) fun try_rekey(
     old_pk: &Element<G>,
     new_pk: &Element<G>,
     new_handles: vector<Element<G>>,
-    proof: &BatchedDdhProof,
+    proof: &DdhProof,
     dst: vector<u8>,
 ): Option<EncryptedAmount> {
     assert!(new_handles.length() == 4, EMismatchedBatchLength);
@@ -242,7 +232,7 @@ public(package) fun try_rekey(
         bases.push_back(*old_amount[i].decryption_handle());
         images.push_back(new_handles[i]);
     });
-    if (proof.verify_batched_ddh(dst, &bases, &images)) {
+    if (proof.verify_ddh(dst, &bases, &images)) {
         option::some(EncryptedAmount {
             l0: twisted_elgamal::new(*old_amount[0].ciphertext(), new_handles[0]),
             l1: twisted_elgamal::new(*old_amount[1].ciphertext(), new_handles[1]),
@@ -369,12 +359,8 @@ fun verify_well_formed_knowledge(
     let mut i = 0;
     while (i < n) {
         let ea = &amounts[i];
-        let proof = &proofs[i];
-        let pk = &pks[i];
-        if (!proof.p0.verify_elgamal(dst, pk, &ea[0])) return false;
-        if (!proof.p1.verify_elgamal(dst, pk, &ea[1])) return false;
-        if (!proof.p2.verify_elgamal(dst, pk, &ea[2])) return false;
-        if (!proof.p3.verify_elgamal(dst, pk, &ea[3])) return false;
+        let limbs = vector[ea[0], ea[1], ea[2], ea[3]];
+        if (!proofs[i].proof.verify_elgamal(dst, &pks[i], &limbs)) return false;
         i = i + 1;
     };
     true
@@ -393,7 +379,15 @@ public fun total_consistency_proof_for_testing(
     pk: &Element<G>,
 ): ElGamalProof {
     let enc = encrypt_trivial_for_testing(value, pk, r);
-    prove_elgamal(dst, pk, &enc, value, r)
+    prove_elgamal(
+        dst,
+        pk,
+        &vector[enc],
+        &vector[value],
+        &vector[r],
+        &scalar_from_u64(1234),
+        &scalar_from_u64(5678),
+    )
 }
 
 /// Test-only `WellFormedProof` with no range proofs — an empty `range_proofs` vector is the
@@ -450,10 +444,16 @@ public fun consistency_proof_for_testing(
     let b1 = if (*e1.decryption_handle() == g_identity()) 0 else blinding;
     let b2 = if (*e2.decryption_handle() == g_identity()) 0 else blinding;
     let b3 = if (*e3.decryption_handle() == g_identity()) 0 else blinding;
+    // Limb messages are (amount, 0, 0, 0); the four share `pk`, so fold them into one proof.
     new_consistency_proof(
-        prove_elgamal(dst, pk, &e0, amount as u64, blinding),
-        prove_elgamal(dst, pk, &e1, 0, b1),
-        prove_elgamal(dst, pk, &e2, 0, b2),
-        prove_elgamal(dst, pk, &e3, 0, b3),
+        prove_elgamal(
+            dst,
+            pk,
+            &vector[e0, e1, e2, e3],
+            &vector[amount as u64, 0, 0, 0],
+            &vector[blinding, b1, b2, b3],
+            &scalar_from_u64(1111),
+            &scalar_from_u64(2222),
+        ),
     )
 }

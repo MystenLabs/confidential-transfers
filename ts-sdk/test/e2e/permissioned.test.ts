@@ -31,7 +31,7 @@ import {
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_RANGE_PROOF_16,
 } from '../../src/helpers.js';
-import { DdhTupleNizk, ElGamalNizk } from '../../src/nizk.js';
+import { DdhNizk, ElGamalNizk } from '../../src/nizk.js';
 import { G, randomScalar } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from '../../src/twisted_elgamal.js';
@@ -111,7 +111,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		// reconstructed on chain from it; only the single sender-keyed handle is sent.
 		const encAmountReceiver = intoLimbs(amount).map((v) => ({
 			value: v,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, receiverPk, v, randomScalar()),
+			...Ciphertext.encryptWithBlinding(receiverPk, v, randomScalar()),
 		}));
 
 		// Consistency proof on the collapsed sender total (value=amount,
@@ -122,24 +122,19 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			amount,
 			totalBlinding,
 		);
-		const consistencyProof = ElGamalNizk.prove(
-			elgamalDst,
-			totalBlinding,
-			amount,
-			totalSenderEnc,
-			senderPk,
-		);
+		const consistencyProof = ElGamalNizk.prove(elgamalDst, senderPk, [
+			{ ciphertext: totalSenderEnc, value: amount, blinding: totalBlinding },
+		]);
 
 		// A well-formed (but arbitrary) new balance paired with a deliberately
 		// invalid balance proof, so the balance proof inside `try_split_batch`
 		// rejects it.
 		const newBalanceLimbs = intoLimbs(0n).map((v) => ({
 			value: v,
-			...Ciphertext.encryptWithConsistencyProof(elgamalDst, senderPk, v, randomScalar()),
+			...Ciphertext.encryptWithBlinding(senderPk, v, randomScalar()),
 		}));
-		const fakeBalanceProof = new DdhTupleNizk(
-			G.multiply(randomScalar()),
-			G.multiply(randomScalar()),
+		const fakeBalanceProof = new DdhNizk(
+			[G.multiply(randomScalar()), G.multiply(randomScalar())],
 			randomScalar(),
 		);
 
@@ -177,8 +172,12 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					wellFormedProofs: buildWellFormedProof(
 						batchRangeProver,
 						sender.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+						elgamalDst,
 						pid,
-						[encAmountReceiver, newBalanceLimbs],
+						[
+							{ limbs: encAmountReceiver, pk: receiverPk },
+							{ limbs: newBalanceLimbs, pk: senderPk },
+						],
 					),
 					totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
 					consistencyProof: buildElGamalProof(pid, consistencyProof),
@@ -318,7 +317,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			const oldBalanceCt = balBefore.balance.ciphertext.collapse();
 			const newBalanceLimbs = intoLimbs(balBefore.balance.amount - proofAmount).map((v) => ({
 				value: v,
-				...Ciphertext.encryptWithConsistencyProof(elgamalDst, pk, v, randomScalar()),
+				...Ciphertext.encryptWithBlinding(pk, v, randomScalar()),
 			}));
 			const balanceProof = new EncryptedAmount(
 				newBalanceLimbs[0].ciphertext,
@@ -351,9 +350,10 @@ describe('permissioned & uncovered flows (devnet)', () => {
 				buildEncryptedAmountAndProof(
 					batchRangeProver,
 					user.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+					elgamalDst,
 					tx,
 					pid,
-					newBalanceLimbs,
+					{ limbs: newBalanceLimbs, pk },
 				);
 			const coin = tx.add(
 				contraContracts.tryUnwrap({

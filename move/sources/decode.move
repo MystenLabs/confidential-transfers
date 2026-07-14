@@ -12,7 +12,7 @@ use contra::{
         ConsistencyProof,
         EncryptedAmount
     },
-    nizk::{Self, DdhProof, BatchedDdhProof, ElGamalProof, KeyConsistencyProof},
+    nizk::{Self, DdhProof, ElGamalProof, KeyConsistencyProof},
     twisted_elgamal::{Self, Encryption, MultiRecipientEncryption}
 };
 use sui::{group_ops::Element, ristretto255::{G, Scalar, g_from_bytes, scalar_from_bytes}};
@@ -44,18 +44,8 @@ public fun multi_recipient_encryption(parts: vector<vector<u8>>, m: u64): MultiR
 }
 
 public fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
-    nizk::new_ddh_proof(
-        g_from_bytes(parts.borrow(0)),
-        g_from_bytes(parts.borrow(1)),
-        scalar_from_bytes(parts.borrow(2)),
-    )
-}
-
-/// Decode a `BatchedDdhProof` from `[commitment_0, ..., commitment_{n-1}, z]`: the trailing part is
-/// the scalar response `z`, the rest are the per-pair Schnorr commitments.
-public fun batched_ddh_proof(parts: vector<vector<u8>>): BatchedDdhProof {
     let n = parts.length() - 1;
-    nizk::new_batched_ddh_proof(g_range(&parts, 0, n), scalar_from_bytes(parts.borrow(n)))
+    nizk::new_ddh_proof(g_range(&parts, 0, n), scalar_from_bytes(parts.borrow(n)))
 }
 
 public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
@@ -63,12 +53,7 @@ public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
 }
 
 public fun consistency_proof(parts: vector<vector<u8>>): ConsistencyProof {
-    new_consistency_proof(
-        elgamal_proof_at(&parts, 0),
-        elgamal_proof_at(&parts, 4),
-        elgamal_proof_at(&parts, 8),
-        elgamal_proof_at(&parts, 12),
-    )
+    new_consistency_proof(elgamal_proof_at(&parts, 0))
 }
 
 public fun key_consistency_proof(parts: vector<vector<u8>>, m: u64): KeyConsistencyProof {

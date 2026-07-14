@@ -307,7 +307,7 @@ fun set_public_key_requires_whitelist() {
         &mut alice_account,
         new_pk,
         new_handles,
-        nizk::default_batched_ddh_proof(),
+        nizk::default_ddh_proof(),
         scenario.ctx(),
     );
 

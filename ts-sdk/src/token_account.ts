@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dst, newSessionId, PROTOCOL_VERIFIED_DEC } from './helpers.js';
-import type { DdhTupleNizk } from './nizk.js';
+import type { DdhNizk } from './nizk.js';
 import { assertNonZeroScalar, G, mul, randomScalar, type RistrettoPoint } from './ristretto255.js';
 import { recoverTransferRandomness } from './transfer_randomness.js';
 import type {
@@ -82,7 +82,7 @@ export class TokenAccount {
 	decryptWithProof(
 		ciphertext: Ciphertext,
 		table: DiscreteLogTable,
-	): { value: bigint; proof: DdhTupleNizk } {
+	): { value: bigint; proof: DdhNizk } {
 		const value = ciphertext.decrypt(this.privateKey, table);
 		const verifiedDecDst = this.dst(PROTOCOL_VERIFIED_DEC);
 		const proof = ciphertext.proveDecryption(
