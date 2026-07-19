@@ -97,11 +97,10 @@ public(package) fun with_witness<T, W: drop>(
     _witness: W,
 ): Auth<T> {
     assert!(operation <= MAX_OPERATION_INDEX, EInvalidOperation);
-    assert!(
-        policy.is_some_and!(|p| p.witness_type == type_name::with_defining_ids<W>()),
-        EAuthorizationError,
-    );
-    // TODO: consider limiting it to permissioned operations only (defense in depth)
+    assert!(policy.is_some_and!(|p| {
+        p.witness_type == type_name::with_defining_ids<W>()
+                && p.permissioned_operations_bitmap & (1 << operation) != 0
+    }), EAuthorizationError);
     Auth { operations: 1u32 << operation, owner }
 }
 
