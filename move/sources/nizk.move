@@ -18,7 +18,7 @@ use sui::{
         scalar_add,
         scalar_from_bytes,
         scalar_from_u64,
-        scalar_mul
+        scalar_mul,
     }
 };
 
@@ -112,7 +112,7 @@ public(package) fun verify_elgamal(
 ): bool {
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
-    // TODO: can skip fixed g, h (left as a defense in depth)
+    // Can skip hashing fixed g, h (left as a defense in depth)
     let c = challenge_elgamal(dst, &g, &h, pk, encryptions, &proof.a, &proof.b);
 
     let mut agg_c = g_identity();
@@ -156,7 +156,7 @@ public(package) fun verify_key_consistency(
 
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
-    // TODO: can skip fixed g, h (left as a defense in depth)
+    // Can skip hashing fixed g, h (left as a defense in depth)
     let c = challenge_key_consistency(
         dst,
         &g,

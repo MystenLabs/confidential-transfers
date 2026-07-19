@@ -1013,8 +1013,10 @@ fun has_deposit_slot<T>(self: &TokenAccount<T>): bool {
 
 /// 20-byte session_id for `account`'s `TokenAccount<T>`.
 public(package) fun session_id<T>(account: &Account): vector<u8> {
-    // TODO: Switch to a simple hash of the account ID and token type.
-    // TODO: Must be unique across different chains.
+    // `derive_address` hashes the account ID together with the full `TokenAccountKey<T>` type
+    // tag. The account ID is itself derived from the `AccountRegistry`, which is unique per
+    // standalone deployment of contra.
+    // TODO: Once contra is added to the framework, verify session ids stay chain-unique.
     derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>()).to_bytes().take(20)
 }
 
