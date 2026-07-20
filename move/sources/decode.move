@@ -10,7 +10,7 @@ use contra::{
         new_consistency_proof,
         new_encrypted_amount,
         ConsistencyProof,
-        EncryptedAmount
+        EncryptedAmount,
     },
     nizk::{Self, DdhProof, ElGamalProof, KeyConsistencyProof},
     twisted_elgamal::{Self, Encryption, MultiRecipientEncryption}

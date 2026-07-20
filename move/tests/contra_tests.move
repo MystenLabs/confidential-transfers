@@ -9,6 +9,7 @@ use contra::{
     contra,
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
+    policy,
     twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero}
 };
 use std::unit_test::{Self, assert_eq};
@@ -1843,4 +1844,33 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
             &vector[pk],
         ),
     );
+}
+
+// === Policy tests ===
+
+#[test]
+fun with_witness_grants_only_the_permissioned_operation() {
+    let owner = @0x100;
+    let mut policy = policy::permissionless();
+    policy::set<Witness>(&mut policy, vector[0u8, 3u8]);
+
+    let auth = policy::with_witness<TestCurrency, Witness>(&policy, 3u8, owner, Witness {});
+    assert!(auth.is_allowed(3u8));
+    assert!(!auth.is_allowed(0u8));
+    assert!(auth.is_authenticated(owner));
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
+fun with_witness_rejects_permissionless_operation() {
+    let mut policy = policy::permissionless();
+    policy::set<Witness>(&mut policy, vector[0u8, 3u8]);
+
+    // Operation 1 is not in the policy's permissioned set; the witness cannot mint an auth for it.
+    let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 1u8, @0x100, Witness {});
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
+fun with_witness_rejects_empty_policy() {
+    let policy = policy::permissionless();
+    let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 0u8, @0x100, Witness {});
 }
