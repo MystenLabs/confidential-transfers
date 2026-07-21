@@ -2,7 +2,7 @@
 
 > **Disclaimer:** The code in this repository is still a work in progress and is not final. It has not been audited and should not be used in production.
 
-Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances and transfer amounts stay hidden using **Twisted ElGamal** homomorphic encryption and **zero-knowledge proofs**, while the network still validates that every transaction is correct.
+Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances and transfer amounts stay hidden using **Twisted ElGamal** homomorphic encryption and **zero-knowledge proofs**, while the network still validates that every transaction is correct. The full protocol is described in the [draft specification (v0.1)](docs/SuiConfTx.v0.1.pdf), including the formal security model and proofs.
 
 - **Privacy** -- token balances and transfer amounts are encrypted on-chain; only the account holder can decrypt them.
 - **Correctness without trust** -- zero-knowledge proofs guarantee that encrypted operations are valid (no overdrafts, no inflation) without revealing the underlying values.
