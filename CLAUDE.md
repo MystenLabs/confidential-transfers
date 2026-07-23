@@ -144,5 +144,5 @@ Note on Fiat-Shamir hash functions:
 
 ### Key Dependencies
 - `@noble/curves` and `@noble/hashes` for TS cryptography
-- `@mysten/sui` for Sui SDK integration
+- `@mysten/sui` for Sui SDK integration — fullnode access is **gRPC only** (`SuiGrpcClient` / the transport-agnostic `core` API). The JSON-RPC client is deprecated upstream and must not be reintroduced. Event queries use `LedgerService.ListEvents` via a hand-written protobuf-ts stub in `apps/kaisho/src/grpc/listEvents.ts` (the fullnodes serve the method but the TS SDK doesn't generate a client for it yet; replace it with the SDK client once available).
 - Sui Move 2024 edition standard library

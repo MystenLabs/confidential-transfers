@@ -2,15 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 
+import { grpcClientFor, type ContraNetwork } from './grpc.js';
 import { compileMovePackage } from './node.js';
 import { findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
-
-/** Networks `ContraInitializer` can publish against. */
-export type ContraNetwork = 'devnet' | 'testnet';
 
 /**
  * Protocol initializer: publishes the contra Move package (on `devnet` by
@@ -20,7 +18,7 @@ export type ContraNetwork = 'devnet' | 'testnet';
  */
 export class ContraInitializer {
 	private constructor(
-		readonly client: SuiJsonRpcClient,
+		readonly client: SuiGrpcClient,
 		readonly keypair: Ed25519Keypair,
 		readonly address: string,
 		readonly contraPackageId: string,
@@ -43,10 +41,7 @@ export class ContraInitializer {
 	}): Promise<ContraInitializer> {
 		const log = opts.log ?? console.log;
 		const network = opts.network ?? 'devnet';
-		const client = new SuiJsonRpcClient({
-			url: getJsonRpcFullnodeUrl(network),
-			network,
-		});
+		const client = grpcClientFor(network);
 
 		const keypair = Ed25519Keypair.generate();
 		const address = keypair.getPublicKey().toSuiAddress();
@@ -69,7 +64,7 @@ export class ContraInitializer {
 		// "No valid gas coins found for the transaction."
 		await Promise.all(
 			faucetResp.coins_sent.map((coin) =>
-				client.waitForTransaction({ digest: coin.transferTxDigest }),
+				client.core.waitForTransaction({ digest: coin.transferTxDigest }),
 			),
 		);
 		log('Funded protocol initializer from faucet');

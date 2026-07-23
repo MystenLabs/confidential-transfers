@@ -1,9 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { fromBase64 } from '@mysten/sui/utils';
 import { DiscreteLogTable, EncryptedAmount, TokenAccount, TransferEventBcs } from 'ts-sdk';
 
 import { type SignedTransfer } from './sender.ts';
@@ -24,7 +23,7 @@ export class Receiver {
 
 	constructor(
 		private readonly opts: {
-			suiClient: SuiJsonRpcClient;
+			suiClient: ClientWithCoreApi;
 			walletKeypair: Ed25519Keypair;
 			/** Receiver's contra TokenAccount (carries `sk_r`/`pk_r`). */
 			contraTokenAccount: TokenAccount;
@@ -65,24 +64,27 @@ export class Receiver {
 			);
 		}
 
-		const dry = await this.opts.suiClient.dryRunTransactionBlock({
-			transactionBlock: signedTransfer.txBytes,
+		const dry = await this.opts.suiClient.core.simulateTransaction({
+			transaction: signedTransfer.txBytes,
+			include: { events: true },
 		});
-		if (dry.effects.status.status !== 'success') {
-			throw new Error(`dry-run failed: ${dry.effects.status.error ?? 'unknown'}`);
+		if (dry.FailedTransaction) {
+			throw new Error(
+				`dry-run failed: ${dry.FailedTransaction.status.error?.message ?? 'unknown'}`,
+			);
 		}
 
 		// A settlement PTB emits exactly one contra TransferEvent; any other
 		// shape is suspicious and we refuse to sign as gas sponsor.
 		const myAddress = this.opts.contraTokenAccount.address;
 		const transferEventType = `${this.opts.contraPackageId}::events::TransferEvent<${this.opts.tokenType}>`;
-		const transferEvents = dry.events.filter((ev) => ev.type === transferEventType);
+		const transferEvents = dry.Transaction.events.filter(
+			(ev) => ev.eventType === transferEventType,
+		);
 		if (transferEvents.length !== 1) {
 			throw new Error(`expected 1 TransferEvent, found ${transferEvents.length}`);
 		}
-		const ev = transferEvents[0];
-		const raw = typeof ev.bcs === 'string' ? fromBase64(ev.bcs) : (ev.bcs as Uint8Array);
-		const parsed = TransferEventBcs.parse(raw);
+		const parsed = TransferEventBcs.parse(transferEvents[0].bcs);
 		if (parsed.sender !== this.opts.channelAddress) {
 			throw new Error(
 				`TransferEvent sender ${parsed.sender} != channel ${this.opts.channelAddress}`,
@@ -112,10 +114,10 @@ export class Receiver {
 		const { signature: sponsorSignature } = await this.opts.walletKeypair.signTransaction(
 			this.latest.txBytes,
 		);
-		return await this.opts.suiClient.executeTransactionBlock({
-			transactionBlock: this.latest.txBytes,
-			signature: [this.latest.senderSignature, sponsorSignature],
-			options: { showEffects: true, showEvents: true, showObjectChanges: true },
+		return await this.opts.suiClient.core.executeTransaction({
+			transaction: this.latest.txBytes,
+			signatures: [this.latest.senderSignature, sponsorSignature],
+			include: { effects: true, events: true },
 		});
 	}
 }

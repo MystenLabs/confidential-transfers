@@ -11,9 +11,13 @@
  * `hooks/useActiveNetwork.ts`.
  */
 
+import { grpcClientFor } from 'contra-utils';
+
 export type Network = 'devnet' | 'testnet';
 
-export const SUPPORTED_NETWORKS: readonly Network[] = ['devnet', 'testnet'] as const;
+// Kept as a tuple (not `readonly Network[]`) so dapp-kit can infer the
+// network union for its hooks from `createDAppKit({ networks })`.
+export const SUPPORTED_NETWORKS = ['devnet', 'testnet'] as const satisfies readonly Network[];
 
 /** Network used before the user picks one (and the public-demo default). */
 export const DEFAULT_NETWORK: Network = 'devnet';
@@ -41,6 +45,10 @@ export function saveNetwork(network: Network): void {
 		// best-effort; selection just won't persist across reloads
 	}
 }
+
+/** gRPC client for the public Sui fullnode on `network`. Used by dapp-kit's
+ *  `createClient` and by non-React contexts (issuer flows, deployment). */
+export const createGrpcClient = grpcClientFor;
 
 /** The `sui:<network>` chain identifier wallets report (e.g. `sui:testnet`). */
 export function walletChain(network: Network): string {

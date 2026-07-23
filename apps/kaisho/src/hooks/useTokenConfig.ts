@@ -1,10 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useSuiClientQuery } from '@mysten/dapp-kit';
+import { useCurrentClient } from '@mysten/dapp-kit-react';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
 import { nsKey, type Network } from '../network';
+import { fetchTokenConfig } from '../sdk';
 import type { TokenConfig } from '../sdk';
 import { useActiveNetwork } from './useActiveNetwork';
 
@@ -24,29 +26,6 @@ function setCache(id: string, config: TokenConfig, network: Network) {
 	const cache = getCache(network);
 	cache[id] = config;
 	localStorage.setItem(nsKey(STORAGE_KEY, network), JSON.stringify(cache));
-}
-
-// Sui returns `vector<u8>` from `getObject({ showContent: true })` as either
-// a number[] or a base64 string depending on field shape. Normalize.
-function parseByteVector(value: unknown): number[] {
-	if (Array.isArray(value)) return value.map((v) => Number(v));
-	if (typeof value === 'string') {
-		const bin = atob(value);
-		return Array.from(bin, (c) => c.charCodeAt(0));
-	}
-	return [];
-}
-
-function parseConfig(id: string, fields: Record<string, unknown>): TokenConfig {
-	return {
-		id,
-		buPackage: fields.bu_package as string,
-		buTreasury: fields.bu_treasury as string,
-		contraPackage: fields.contra_package as string,
-		tokenRegistry: fields.token_registry as string,
-		accountRegistry: fields.account_registry as string,
-		binaryDigest: parseByteVector(fields.binary_digest),
-	};
 }
 
 function digestsEqual(a: number[], b: number[]): boolean {
@@ -81,19 +60,14 @@ export function useTokenConfig(configId: string) {
 		return entry;
 	}, [configId, network]);
 
-	const { data, isLoading, error } = useSuiClientQuery(
-		'getObject',
-		{ id: configId, options: { showContent: true } },
-		{ enabled: !cached },
-	);
+	const suiClient = useCurrentClient();
+	const { data, isLoading, error } = useQuery({
+		queryKey: ['token-config', network, configId],
+		enabled: !cached,
+		queryFn: () => fetchTokenConfig(suiClient, configId),
+	});
 
-	const config = useMemo(() => {
-		if (cached) return cached;
-		if (!data?.data?.content) return undefined;
-		const content = data.data.content;
-		if (content.dataType !== 'moveObject') return undefined;
-		return parseConfig(configId, content.fields as Record<string, unknown>);
-	}, [cached, data, configId]);
+	const config = cached ?? data ?? undefined;
 
 	useEffect(() => {
 		if (config && !cached) {

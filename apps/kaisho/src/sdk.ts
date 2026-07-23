@@ -15,19 +15,19 @@
  *   7. Deployment                         — publish bytecodes and register BU.
  *   8. Tx helpers                         — execute and check for merge-failure events.
  *
- * Hooks (e.g. `useSuiClient`, `useSignAndExecuteTransaction`) stay where
- * they are — they're React-bound. Components pull values out of those
- * hooks and pass them as plain arguments to the functions here.
+ * Hooks (e.g. `useCurrentClient`, `useSignAndExecute`) stay where they
+ * are — they're React-bound. Components pull values out of those hooks
+ * and pass them as plain arguments to the functions here.
  */
 
+import { bcs } from '@mysten/sui/bcs';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-import type { SuiEvent } from '@mysten/sui/jsonRpc';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import type { TransactionResult } from '@mysten/sui/transactions';
 import { SUI_DENY_LIST_OBJECT_ID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
-import { publishBytecodes } from 'contra-utils';
+import { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from 'contra-utils';
 import {
 	ContraAuditor,
 	ContraClient,
@@ -49,7 +49,7 @@ import type {
 	TokenBalance,
 } from 'ts-sdk';
 
-import type { Network } from './network';
+import { createGrpcClient, type Network } from './network';
 
 // ─────────────────────────────────────────────────────────────────────
 // Types
@@ -109,15 +109,12 @@ export interface CreateTokenResult {
 // 1. Client construction
 // ─────────────────────────────────────────────────────────────────────
 
-/** An RPC client for `network`. Used in non-React contexts (issuer flows, the
+/** A gRPC client for `network`. Used in non-React contexts (issuer flows, the
  *  worker, deployment); callers pass the active network from
  *  `useActiveNetwork()`. React components can also use dapp-kit's
- *  network-aware `useSuiClient()` directly. */
-export function getSuiClient(network: Network): SuiJsonRpcClient {
-	return new SuiJsonRpcClient({
-		network,
-		url: getJsonRpcFullnodeUrl(network),
-	});
+ *  network-aware `useCurrentClient()` directly. */
+export function getSuiClient(network: Network): SuiGrpcClient {
+	return createGrpcClient(network);
 }
 
 /** Build a `ContraClient` for a given deployment. The client carries
@@ -192,18 +189,19 @@ export function generateTokenAccount(
  *  TokenAccount objects required to send/receive private BU. */
 export async function fetchAccountStatus(
 	contraClient: ContraClient,
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	address: string,
 	tokenType: string,
 ): Promise<Exclude<AccountStatus, 'loading' | 'error'>> {
 	const accountId = contraClient.getAccountId(address);
 	const tokenAccountId = contraClient.getTokenAccountId(address, tokenType);
-	const [accountRes, tokenAccountRes] = await Promise.all([
-		suiClient.getObject({ id: accountId }),
-		suiClient.getObject({ id: tokenAccountId }),
-	]);
-	if (accountRes.data && tokenAccountRes.data) return 'registered';
-	if (accountRes.data) return 'needs-token-account';
+	const {
+		objects: [accountRes, tokenAccountRes],
+	} = await suiClient.core.getObjects({ objectIds: [accountId, tokenAccountId] });
+	const hasAccount = !(accountRes instanceof Error);
+	const hasTokenAccount = !(tokenAccountRes instanceof Error);
+	if (hasAccount && hasTokenAccount) return 'registered';
+	if (hasAccount) return 'needs-token-account';
 	return 'needs-account';
 }
 
@@ -230,61 +228,64 @@ export function fetchAuditors(
 	return contraClient.getAuditors(tokenType);
 }
 
+/** BCS layout of the `bu_token::token_config::TokenConfig` Move struct.
+ *  Parsed from the object's raw content so the shape is identical across
+ *  RPC implementations. */
+const TokenConfigBcs = bcs.struct('TokenConfig', {
+	id: bcs.Address,
+	bu_package: bcs.Address,
+	bu_treasury: bcs.Address,
+	contra_package: bcs.Address,
+	token_registry: bcs.Address,
+	account_registry: bcs.Address,
+	binary_digest: bcs.vector(bcs.u8()),
+});
+
 /** Read a `TokenConfig` Move object. Returns the fields needed to
  *  construct a `ContraClient`. The `binaryDigest` lets the caller check
  *  the on-chain bytecode matches the bundle the app was built against. */
 export async function fetchTokenConfig(
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	configId: string,
 ): Promise<TokenConfig | undefined> {
-	const result = await suiClient.getObject({
-		id: configId,
-		options: { showContent: true },
+	const {
+		objects: [object],
+	} = await suiClient.core.getObjects({
+		objectIds: [configId],
+		include: { content: true },
 	});
-	const content = result.data?.content;
-	if (!content || content.dataType !== 'moveObject') return undefined;
-	const fields = content.fields as Record<string, unknown>;
+	if (object instanceof Error) return undefined;
+	const fields = TokenConfigBcs.parse(object.content);
 	return {
 		id: configId,
-		buPackage: fields.bu_package as string,
-		buTreasury: fields.bu_treasury as string,
-		contraPackage: fields.contra_package as string,
-		tokenRegistry: fields.token_registry as string,
-		accountRegistry: fields.account_registry as string,
-		binaryDigest: parseByteVector(fields.binary_digest),
+		buPackage: fields.bu_package,
+		buTreasury: fields.bu_treasury,
+		contraPackage: fields.contra_package,
+		tokenRegistry: fields.token_registry,
+		accountRegistry: fields.account_registry,
+		binaryDigest: Array.from(fields.binary_digest),
 	};
-}
-
-function parseByteVector(value: unknown): number[] {
-	if (Array.isArray(value)) return value.map((v) => Number(v));
-	if (typeof value === 'string') {
-		const bin = atob(value);
-		return Array.from(bin, (c) => c.charCodeAt(0));
-	}
-	return [];
 }
 
 /** Read the on-chain `ConfidentialToken` object and extract its freeze
  *  admin set and active flag. */
 export async function fetchFreezeAdmins(
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	confidentialTokenId: string,
 ): Promise<{ admins: string[]; isActive: boolean | null }> {
-	const obj = await suiClient.getObject({
-		id: confidentialTokenId,
-		options: { showContent: true },
+	const {
+		objects: [object],
+	} = await suiClient.core.getObjects({
+		objectIds: [confidentialTokenId],
+		include: { content: true },
 	});
-	const content = obj.data?.content;
-	if (!content || content.dataType !== 'moveObject') {
+	if (object instanceof Error) {
 		return { admins: [], isActive: null };
 	}
-	const fields = content.fields as Record<string, unknown>;
-	// VecSet<address> serializes as { fields: { contents: ["0x..."] } }.
-	const admins = fields.freeze_admins as { fields?: { contents?: unknown } } | undefined;
-	const list = admins?.fields?.contents;
+	const fields = contraContracts.ConfidentialToken.parse(object.content);
 	return {
-		admins: Array.isArray(list) ? list.map((a) => String(a).toLowerCase()) : [],
-		isActive: typeof fields.is_active === 'boolean' ? fields.is_active : null,
+		admins: fields.freeze_admins.contents.map((a) => a.toLowerCase()),
+		isActive: fields.is_active,
 	};
 }
 
@@ -292,7 +293,7 @@ export async function fetchFreezeAdmins(
  *  next epoch. We check the next-epoch flag (not current-epoch) so the
  *  UI reflects the issuer's most recent intent immediately. */
 export async function isGlobalPauseEnabledNextEpoch(
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	sender: string,
 	coinType: string,
 ): Promise<boolean | null> {
@@ -302,19 +303,23 @@ export async function isGlobalPauseEnabledNextEpoch(
 		typeArguments: [coinType],
 		arguments: [tx.object(SUI_DENY_LIST_OBJECT_ID)],
 	});
-	const res = await suiClient.devInspectTransactionBlock({
-		sender,
-		transactionBlock: tx,
+	tx.setSender(sender);
+	// checksEnabled: false is the devInspect analogue — it lets the
+	// simulation call a non-entry view function without gas payment.
+	const res = await suiClient.core.simulateTransaction({
+		transaction: tx,
+		checksEnabled: false,
+		include: { commandResults: true },
 	});
-	const ret = res.results?.[0]?.returnValues?.[0]?.[0];
-	if (Array.isArray(ret) && ret.length === 1) return ret[0] === 1;
+	const ret = res.commandResults?.[0]?.returnValues?.[0]?.bcs;
+	if (ret && ret.length === 1) return ret[0] === 1;
 	return null;
 }
 
 /** Returns true if `address` is on the deny list for `coinType` at the
  *  next epoch. */
 export async function isAddressDeniedNextEpoch(
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	sender: string,
 	coinType: string,
 	address: string,
@@ -325,12 +330,14 @@ export async function isAddressDeniedNextEpoch(
 		typeArguments: [coinType],
 		arguments: [tx.object(SUI_DENY_LIST_OBJECT_ID), tx.pure.address(address)],
 	});
-	const res = await suiClient.devInspectTransactionBlock({
-		sender,
-		transactionBlock: tx,
+	tx.setSender(sender);
+	const res = await suiClient.core.simulateTransaction({
+		transaction: tx,
+		checksEnabled: false,
+		include: { commandResults: true },
 	});
-	const ret = res.results?.[0]?.returnValues?.[0]?.[0];
-	return Array.isArray(ret) && ret.length === 1 && ret[0] === 1;
+	const ret = res.commandResults?.[0]?.returnValues?.[0]?.bcs;
+	return !!ret && ret.length === 1 && ret[0] === 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -387,7 +394,7 @@ export async function buildRegisterAccountTx(opts: {
  *  Splits a coin off the sender's largest BU coin object and feeds it
  *  to `contraClient.wrap`. */
 export async function buildWrapTx(opts: {
-	suiClient: SuiJsonRpcClient;
+	suiClient: ContraCompatibleClient;
 	contraClient: ContraClient;
 	sender: string;
 	receiver: string;
@@ -395,14 +402,14 @@ export async function buildWrapTx(opts: {
 	amountRaw: bigint;
 	memo?: string;
 }): Promise<Transaction> {
-	const { data: coins } = await opts.suiClient.getCoins({
+	const { objects: coins } = await opts.suiClient.core.listCoins({
 		owner: opts.sender,
 		coinType: opts.tokenType,
 	});
 	if (!coins.length) throw new Error('No BU coins found');
 
 	const tx = new Transaction();
-	const [payment] = tx.splitCoins(tx.object(coins[0].coinObjectId), [opts.amountRaw]);
+	const [payment] = tx.splitCoins(tx.object(coins[0].objectId), [opts.amountRaw]);
 	tx.add(
 		opts.contraClient.wrap({
 			coin: payment,
@@ -464,13 +471,15 @@ export async function buildTransferTx(opts: {
  *  account exists. */
 export async function recipientHasPrivateAccount(
 	contraClient: ContraClient,
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	address: string,
 ): Promise<boolean> {
 	try {
 		const id = contraClient.getAccountId(address);
-		const res = await suiClient.getObject({ id });
-		return !!res.data;
+		const {
+			objects: [object],
+		} = await suiClient.core.getObjects({ objectIds: [id] });
+		return !(object instanceof Error);
 	} catch {
 		return false;
 	}
@@ -617,22 +626,13 @@ export function buildGlobalUnfreezeTx(opts: {
  *  (i.e. without a connected wallet). Used by the issuer monitor for
  *  deny-list, pause, and freeze-admin operations. */
 export async function executeIssuerTx(opts: {
-	client: SuiJsonRpcClient;
+	client: ContraCompatibleClient;
 	secretKey: string;
 	transaction: Transaction;
 }): Promise<{ digest: string }> {
 	const keypair = Ed25519Keypair.fromSecretKey(opts.secretKey);
-	const res = await opts.client.signAndExecuteTransaction({
-		transaction: opts.transaction,
-		signer: keypair,
-		options: { showEffects: true },
-	});
-	await opts.client.waitForTransaction({ digest: res.digest });
-	const status = res.effects?.status;
-	if (status && status.status !== 'success') {
-		throw new Error(status.error ?? 'Transaction failed');
-	}
-	return { digest: res.digest };
+	const executed = await executeOrThrow(opts.client, opts.transaction, keypair, 'issuer tx');
+	return { digest: executed.digest };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -657,13 +657,14 @@ export async function auditAccount(
  *  if the event isn't a valid `TransferEvent` BCS payload or the local
  *  viewing key can't decrypt it. */
 export function decryptTransferEventAmount(opts: {
-	event: SuiEvent;
+	/** Raw BCS bytes of the event struct (`Event.bcs` from the RPC). */
+	eventBcs: Uint8Array;
 	side: 'sender' | 'receiver';
 	tokenAccount: TokenAccount;
 	table: DiscreteLogTable;
 }): bigint | null {
 	try {
-		const decoded = TransferEventBcs.fromBase64(opts.event.bcs);
+		const decoded = TransferEventBcs.parse(opts.eventBcs);
 		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
 		if (opts.side === 'receiver') {
 			return opts.tokenAccount.decryptAmount(encryptedAmount, opts.table);
@@ -715,17 +716,6 @@ function bytesToHex(bytes: Uint8Array): string {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function findObjectByType(
-	objects: Array<{ objectId: string; objectType: string }>,
-	typeSubstring: string,
-): string {
-	const obj = objects.find((o) => o.objectType.includes(typeSubstring));
-	if (!obj) {
-		throw new Error(`No object found matching type "${typeSubstring}"`);
-	}
-	return obj.objectId;
-}
-
 /** Deploy the BU token and Contra packages, register BU as a
  *  confidential token, and create an on-chain TokenConfig. Returns
  *  every object id the kaisho UI needs to drive the deployment plus a
@@ -733,19 +723,18 @@ function findObjectByType(
 export async function createTokenFromBytecodes(
 	bytecodes: Bytecodes,
 	keypair: Ed25519Keypair,
-	client: SuiJsonRpcClient,
+	client: ContraCompatibleClient,
 	log: (msg: string) => void = () => {},
 ): Promise<CreateTokenResult> {
 	log('Publishing packages on chain...');
 	const result = await publishBytecodes(bytecodes, keypair, client);
 	const packageId = result.packageId;
-	await client.waitForTransaction({ digest: result.digest });
 	log(`Published package: ${packageId}`);
 
-	const buTreasuryId = findObjectByType(result.createdObjects, 'BuTreasury');
-	const tokenRegistryId = findObjectByType(result.createdObjects, 'TokenRegistry');
-	const accountRegistryId = findObjectByType(result.createdObjects, 'AccountRegistry');
-	const denyCapId = findObjectByType(result.createdObjects, 'DenyCapV2');
+	const buTreasuryId = findObject(result.createdObjects, 'BuTreasury');
+	const tokenRegistryId = findObject(result.createdObjects, 'TokenRegistry');
+	const accountRegistryId = findObject(result.createdObjects, 'AccountRegistry');
+	const denyCapId = findObject(result.createdObjects, 'DenyCapV2');
 	log(`BuTreasury: ${buTreasuryId}`);
 	log(`TokenRegistry: ${tokenRegistryId}`);
 	log(`AccountRegistry: ${accountRegistryId}`);
@@ -775,29 +764,10 @@ export async function createTokenFromBytecodes(
 			}),
 		],
 	});
-	const regResult = await client.signAndExecuteTransaction({
-		transaction: regTx,
-		signer: keypair,
-		options: { showObjectChanges: true },
-	});
-	await client.waitForTransaction({ digest: regResult.digest });
-
-	const confidentialTokenObj = (regResult.objectChanges ?? []).find(
-		(c) => c.type === 'created' && c.objectType.includes('ConfidentialToken'),
-	);
-	if (!confidentialTokenObj || confidentialTokenObj.type !== 'created') {
-		throw new Error('Failed to find created ConfidentialToken object');
-	}
-	const confidentialTokenId = confidentialTokenObj.objectId;
+	const regCreated = await signExecuteAndWait(regTx, keypair, client);
+	const confidentialTokenId = findObject(regCreated, 'ConfidentialToken');
 	log(`ConfidentialToken: ${confidentialTokenId}`);
-
-	const managementCapObj = (regResult.objectChanges ?? []).find(
-		(c) => c.type === 'created' && c.objectType.includes('ManagementCap'),
-	);
-	if (!managementCapObj || managementCapObj.type !== 'created') {
-		throw new Error('Failed to find created ManagementCap object');
-	}
-	const managementCapId = managementCapObj.objectId;
+	const managementCapId = findObject(regCreated, 'ManagementCap');
 	log(`ManagementCap: ${managementCapId}`);
 
 	log('Creating on-chain TokenConfig...');
@@ -813,18 +783,8 @@ export async function createTokenFromBytecodes(
 			tx.pure.vector('u8', bytecodes.digest),
 		],
 	});
-	const configResult = await client.signAndExecuteTransaction({
-		transaction: tx,
-		signer: keypair,
-		options: { showObjectChanges: true },
-	});
-	const configObj = (configResult.objectChanges ?? []).find(
-		(c) => c.type === 'created' && c.objectType.includes('TokenConfig'),
-	);
-	if (!configObj || configObj.type !== 'created') {
-		throw new Error('Failed to find created TokenConfig object');
-	}
-	const tokenConfigId = configObj.objectId;
+	const configCreated = await signExecuteAndWait(tx, keypair, client);
+	const tokenConfigId = findObject(configCreated, 'TokenConfig');
 	log(`TokenConfig: ${tokenConfigId}`);
 
 	return {
@@ -850,13 +810,14 @@ export async function createTokenFromBytecodes(
  *  (e.g. `TryTransferFailedEvent`, `TryUnwrapFailedEvent`). Wait for
  *  the transaction with events, then return whether the sentinel fired. */
 export async function transactionEmittedEvent(
-	suiClient: SuiJsonRpcClient,
+	suiClient: ContraCompatibleClient,
 	digest: string,
 	eventTypeSubstring: string,
 ): Promise<boolean> {
-	const txResponse = await suiClient.waitForTransaction({
+	const result = await suiClient.core.waitForTransaction({
 		digest,
-		options: { showEvents: true },
+		include: { events: true },
 	});
-	return !!txResponse.events?.some((e: SuiEvent) => e.type.includes(eventTypeSubstring));
+	const txResponse = result.Transaction ?? result.FailedTransaction;
+	return !!txResponse?.events?.some((e) => e.eventType.includes(eventTypeSubstring));
 }

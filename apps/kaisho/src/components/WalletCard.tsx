@@ -1,18 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-	useCurrentAccount,
-	useSignAndExecuteTransaction,
-	useSuiClient,
-	useSuiClientQuery,
-} from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
+import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TokenBalance } from 'ts-sdk';
 
 import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { useContraClient } from '../hooks/useContraClient';
+import { useSignAndExecute } from '../hooks/useSignAndExecute';
 import { explorerUrl } from '../network';
 import {
 	buildMintTx,
@@ -82,20 +79,22 @@ function InfoDot({ text }: { text: string }) {
 export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: string }) {
 	const account = useCurrentAccount();
 	const network = useActiveNetwork();
-	const client = useSuiClient();
-	const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+	const client = useCurrentClient();
+	const signAndExecute = useSignAndExecute();
 
 	// --- Token account link ---
 	const contraClient = useContraClient(config);
 	const coinType = `${config.buPackage}::bu::BU`;
 	const tokenAccountId =
 		contraClient && account ? contraClient.getTokenAccountId(account.address, coinType) : undefined;
-	const { data: balanceData } = useSuiClientQuery(
-		'getBalance',
-		{ owner: account?.address ?? '', coinType },
-		{ enabled: !!account, refetchInterval: 4_000 },
-	);
-	const publicBalance = balanceData ? Number(balanceData.totalBalance) / 1e9 : 0;
+	const { data: balanceData } = useQuery({
+		queryKey: ['bu-balance', network, account?.address, coinType],
+		enabled: !!account,
+		refetchInterval: 4_000,
+		queryFn: async () =>
+			(await client.core.getBalance({ owner: account!.address, coinType })).balance,
+	});
+	const publicBalance = balanceData ? Number(balanceData.balance) / 1e9 : 0;
 
 	// --- Confidential balance ---
 	const tokenAccount = useMemo(
@@ -168,8 +167,8 @@ export function WalletCard({ config, encKey }: { config: TokenConfig; encKey: st
 		setMinting(true);
 		setMintError(undefined);
 		try {
-			const { totalBalance } = await client.getBalance({ owner: account.address });
-			if (totalBalance === '0') {
+			const { balance } = await client.core.getBalance({ owner: account.address });
+			if (balance.balance === '0') {
 				await requestSui(network, account.address);
 			}
 			const tx = buildMintTx(config);

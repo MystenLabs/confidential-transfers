@@ -170,11 +170,11 @@ export class Gated {
 	 */
 	async vaultWrap(vault: string, amount: bigint, signer: Signer): Promise<void> {
 		const pid = this.tokenIssuer.contraPackageId;
-		const coins = await this.client.getCoins({
+		const coins = await this.client.core.listCoins({
 			owner: signer.address,
 			coinType: this.tokenIssuer.tokenType,
 		});
-		if (coins.data.length === 0) throw new Error('no coins to wrap');
+		if (coins.objects.length === 0) throw new Error('no coins to wrap');
 
 		const poolId = deriveObjectID(
 			this.tokenIssuer.confidentialTokenId,
@@ -183,7 +183,7 @@ export class Gated {
 		);
 
 		const tx = new Transaction();
-		const [coin] = tx.splitCoins(tx.object(coins.data[0].coinObjectId), [amount]);
+		const [coin] = tx.splitCoins(tx.object(coins.objects[0].objectId), [amount]);
 		tx.moveCall({
 			target: `${this.packageId}::gated::vault_wrap`,
 			typeArguments: [this.tokenIssuer.tokenType],
@@ -209,11 +209,11 @@ export class Gated {
 	 */
 	async wrap(receiver: FreshUser, amount: bigint): Promise<void> {
 		const pid = this.tokenIssuer.contraPackageId;
-		const coins = await this.client.getCoins({
+		const coins = await this.client.core.listCoins({
 			owner: receiver.address,
 			coinType: this.tokenIssuer.tokenType,
 		});
-		if (coins.data.length === 0) throw new Error('no coins to wrap');
+		if (coins.objects.length === 0) throw new Error('no coins to wrap');
 
 		const poolId = deriveObjectID(
 			this.tokenIssuer.confidentialTokenId,
@@ -222,7 +222,7 @@ export class Gated {
 		);
 
 		const tx = new Transaction();
-		const [coin] = tx.splitCoins(tx.object(coins.data[0].coinObjectId), [amount]);
+		const [coin] = tx.splitCoins(tx.object(coins.objects[0].objectId), [amount]);
 		tx.moveCall({
 			target: `${this.packageId}::gated::gated_wrap`,
 			typeArguments: [this.tokenIssuer.tokenType],

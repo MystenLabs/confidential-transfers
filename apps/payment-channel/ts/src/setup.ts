@@ -1,9 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
+import { executeOrThrow } from 'contra-utils';
 import { ContraClient, contraContracts, TokenAccount } from 'ts-sdk';
 
 import { PaymentChannelClient } from './client.ts';
@@ -11,16 +12,16 @@ import { type Deployment } from './deploy.ts';
 
 /** Pick the first SUI coin owned by `owner` to use as gas payment. */
 export async function pickSuiGasCoin(
-	suiClient: SuiJsonRpcClient,
+	suiClient: ClientWithCoreApi,
 	owner: string,
 ): Promise<{ objectId: string; version: string; digest: string }> {
-	const { data } = await suiClient.getCoins({
+	const { objects } = await suiClient.core.listCoins({
 		owner,
 		coinType: '0x2::sui::SUI',
 	});
-	if (data.length === 0) throw new Error(`no SUI coins owned by ${owner}`);
-	const c = data[0];
-	return { objectId: c.coinObjectId, version: c.version, digest: c.digest };
+	if (objects.length === 0) throw new Error(`no SUI coins owned by ${owner}`);
+	const c = objects[0];
+	return { objectId: c.objectId, version: c.version, digest: c.digest };
 }
 
 /**
@@ -29,7 +30,7 @@ export async function pickSuiGasCoin(
  * `channelObjectId` is also the contra-account owner address.
  */
 export async function createChannel(opts: {
-	suiClient: SuiJsonRpcClient;
+	suiClient: ClientWithCoreApi;
 	paymentChannelClient: PaymentChannelClient;
 	tokenType: string;
 	senderKp: Ed25519Keypair;
@@ -37,20 +38,14 @@ export async function createChannel(opts: {
 	const { suiClient, paymentChannelClient, tokenType, senderKp } = opts;
 	const tx = new Transaction();
 	tx.add(paymentChannelClient.newChannel({ tokenType }));
-	const res = await suiClient.signAndExecuteTransaction({
-		transaction: tx,
-		signer: senderKp,
-		options: { showEffects: true, showObjectChanges: true },
-	});
-	if (res.effects?.status?.status !== 'success') {
-		throw new Error(`createChannel failed: ${JSON.stringify(res.effects?.status)}`);
-	}
-	await suiClient.waitForTransaction({ digest: res.digest });
+	const executed = await executeOrThrow(suiClient, tx, senderKp, 'createChannel');
 
-	const created = (res.objectChanges ?? []).find(
-		(c) => c.type === 'created' && c.objectType.includes('::payment_channel::Channel<'),
+	const created = executed.effects.changedObjects.find(
+		(c) =>
+			c.idOperation === 'Created' &&
+			executed.objectTypes[c.objectId]?.includes('::payment_channel::Channel<'),
 	);
-	if (!created || created.type !== 'created') throw new Error('no Channel created');
+	if (!created) throw new Error('no Channel created');
 	return { channelObjectId: created.objectId };
 }
 
@@ -64,7 +59,7 @@ export async function createChannel(opts: {
  * Returns the freshly registered `TokenAccount` for the channel.
  */
 export async function setupChannelContraAccount(opts: {
-	suiClient: SuiJsonRpcClient;
+	suiClient: ClientWithCoreApi;
 	contraClient: ContraClient;
 	paymentChannelClient: PaymentChannelClient;
 	deployment: Deployment;
@@ -108,15 +103,7 @@ export async function setupChannelContraAccount(opts: {
 		}),
 	);
 
-	const res = await suiClient.signAndExecuteTransaction({
-		transaction: tx,
-		signer: senderKp,
-		options: { showEffects: true },
-	});
-	if (res.effects?.status?.status !== 'success') {
-		throw new Error(`setupChannelContraAccount failed: ${JSON.stringify(res.effects?.status)}`);
-	}
-	await suiClient.waitForTransaction({ digest: res.digest });
+	await executeOrThrow(suiClient, tx, senderKp, 'setupChannelContraAccount');
 	return channelTokenAccount;
 }
 
@@ -134,7 +121,7 @@ export async function setupChannelContraAccount(opts: {
  * only the channel sender deposits, and they stop after activate.
  */
 export async function fundAndActivateChannel(opts: {
-	suiClient: SuiJsonRpcClient;
+	suiClient: ClientWithCoreApi;
 	contraClient: ContraClient;
 	paymentChannelClient: PaymentChannelClient;
 	deployment: Deployment;
@@ -166,25 +153,17 @@ export async function fundAndActivateChannel(opts: {
 		target: `${deployment.packageId}::bu::mint_10`,
 		arguments: [mintTx.object(deployment.buTreasuryId)],
 	});
-	const mintRes = await suiClient.signAndExecuteTransaction({
-		transaction: mintTx,
-		signer: senderKp,
-		options: { showEffects: true },
-	});
-	if (mintRes.effects?.status?.status !== 'success') {
-		throw new Error(`mint_10 failed: ${JSON.stringify(mintRes.effects?.status)}`);
-	}
-	await suiClient.waitForTransaction({ digest: mintRes.digest });
+	await executeOrThrow(suiClient, mintTx, senderKp, 'mint_10');
 
-	const { data } = await suiClient.getCoins({
+	const { objects } = await suiClient.core.listCoins({
 		owner: senderKp.toSuiAddress(),
 		coinType: deployment.buType,
 	});
-	if (data.length === 0) throw new Error('no BU coin found after mint_10');
+	if (objects.length === 0) throw new Error('no BU coin found after mint_10');
 
 	// 2. Split + wrap into channel, then activate.
 	const tx = new Transaction();
-	const [split] = tx.splitCoins(tx.object(data[0].coinObjectId), [tx.pure.u64(fundAmount)]);
+	const [split] = tx.splitCoins(tx.object(objects[0].objectId), [tx.pure.u64(fundAmount)]);
 	tx.add(
 		contraClient.wrap({
 			coin: split,
@@ -200,13 +179,5 @@ export async function fundAndActivateChannel(opts: {
 			tokenType: deployment.buType,
 		}),
 	);
-	const res = await suiClient.signAndExecuteTransaction({
-		transaction: tx,
-		signer: senderKp,
-		options: { showEffects: true },
-	});
-	if (res.effects?.status?.status !== 'success') {
-		throw new Error(`fundAndActivate failed: ${JSON.stringify(res.effects?.status)}`);
-	}
-	await suiClient.waitForTransaction({ digest: res.digest });
+	await executeOrThrow(suiClient, tx, senderKp, 'fundAndActivate');
 }

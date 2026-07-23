@@ -1,7 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useSuiClientQuery } from '@mysten/dapp-kit';
+import { useCurrentClient } from '@mysten/dapp-kit-react';
+import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { ContraAuditor, ContraClient, TokenAccount, TokenBalance } from 'ts-sdk';
 
@@ -32,12 +33,15 @@ export function AuditAccountCard({
 	const [status, setStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
 	const [error, setError] = useState<string>('');
 
-	const { data: publicBalanceData } = useSuiClientQuery(
-		'getBalance',
-		{ owner: auditedAddress ?? '', coinType: tokenType },
-		{ enabled: !!auditedAddress, refetchInterval: 4_000 },
-	);
-	const publicBalance = publicBalanceData ? Number(publicBalanceData.totalBalance) / 1e9 : 0;
+	const suiClient = useCurrentClient();
+	const { data: publicBalanceData } = useQuery({
+		queryKey: ['audited-balance', auditedAddress, tokenType],
+		enabled: !!auditedAddress,
+		refetchInterval: 4_000,
+		queryFn: async () =>
+			(await suiClient.core.getBalance({ owner: auditedAddress!, coinType: tokenType })).balance,
+	});
+	const publicBalance = publicBalanceData ? Number(publicBalanceData.balance) / 1e9 : 0;
 
 	const handleAudit = async () => {
 		const address = addressInput.trim();
