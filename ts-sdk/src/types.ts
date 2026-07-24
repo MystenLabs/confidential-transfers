@@ -79,7 +79,7 @@ export interface TokenBalance {
 
 /**
  * A Sui client that has been extended with the `core` API. Any client
- * returned by `new SuiClient(...)` satisfies this constraint.
+ * returned by `new SuiGrpcClient(...)` satisfies this constraint.
  */
 export type ContraCompatibleClient = ClientWithCoreApi;
 

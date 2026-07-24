@@ -13,15 +13,29 @@ import { join } from 'node:path';
 import type { Bytecodes } from './publish.js';
 
 // Re-export the browser-safe surface so Node callers only need one import.
-export { filterCreated, findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
-export type { Bytecodes, CreatedObject, ObjectChange, PublishResult } from './publish.js';
-export { createContraAccount, mintAndWrapBu, waitForSui } from './setup.js';
+export { grpcClientFor, grpcUrlFor } from './grpc.js';
+export type { ContraNetwork } from './grpc.js';
+export { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
+export type { Bytecodes, CreatedObject, ExecutedTransaction, PublishResult } from './publish.js';
+export { createContraAccount, waitForSui } from './setup.js';
 
 export { ContraInitializer } from './contra_initializer.js';
 
-/** Get the current chain identifier from the active Sui CLI environment. */
+/**
+ * Get the current chain identifier from the active Sui CLI environment.
+ * Newer CLIs print decorated multi-line output (`Base58: <digest>` plus
+ * extra lines) while older ones print a bare id (e.g. the 8-hex-char short
+ * form); raw multi-line output written into a toml string breaks parsing,
+ * so extract a single clean token either way.
+ */
 function getChainId(): string {
-	return execSync('sui client chain-identifier', { encoding: 'utf-8' }).trim();
+	const output = execSync('sui client chain-identifier', { encoding: 'utf-8' });
+	// A full chain-id digest is 32 bytes, i.e. 43-44 base58 characters.
+	const base58 = output.match(/Base58:\s*([1-9A-HJ-NP-Za-km-z]{40,50})/);
+	if (base58) return base58[1];
+	const bare = output.trim().split('\n')[0].trim();
+	if (/^[0-9a-zA-Z]{4,64}$/.test(bare)) return bare;
+	throw new Error(`unexpected 'sui client chain-identifier' output: ${output.trim()}`);
 }
 
 /**

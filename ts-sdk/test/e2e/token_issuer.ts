@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { join } from 'node:path';
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import {
 	compileMovePackage,
 	ContraInitializer,
-	filterCreated,
 	findObject,
 	patchMoveToml,
 	publishBytecodes,
@@ -41,7 +40,7 @@ export class TokenIssuer {
 	#auditorKeysByVersion = new Map<number, AuditorKeys>();
 
 	private constructor(
-		readonly client: SuiJsonRpcClient,
+		readonly client: SuiGrpcClient,
 		readonly keypair: Ed25519Keypair,
 		readonly address: string,
 		readonly tokenType: string,
@@ -128,8 +127,7 @@ export class TokenIssuer {
 			}),
 		);
 		regTx.transferObjects([managementCap], address);
-		const objectChanges = await signExecuteAndWait(regTx, keypair, client);
-		const created = filterCreated(objectChanges);
+		const created = await signExecuteAndWait(regTx, keypair, client);
 		const confidentialTokenId = findObject(created, 'ConfidentialToken');
 		const managementCapId = findObject(created, 'ManagementCap');
 		log('Confidential token registered');

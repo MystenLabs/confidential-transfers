@@ -1,11 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useSignAndExecuteTransaction, useSuiClient, useSuiClientQuery } from '@mysten/dapp-kit';
+import { useCurrentClient } from '@mysten/dapp-kit-react';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import type { ContraClient } from 'ts-sdk';
 
 import { useActiveNetwork } from '../hooks/useActiveNetwork';
+import { useSignAndExecute } from '../hooks/useSignAndExecute';
 import {
 	buildRegisterAccountTx,
 	contraPackageConfig,
@@ -106,9 +108,9 @@ export function EncKeySetup({
 	address,
 	tokenType,
 }: EncKeySetupProps) {
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 	const network = useActiveNetwork();
-	const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+	const signAndExecute = useSignAndExecute();
 
 	const [step, setStep] = useState<SetupStep>('checking');
 	const [importInput, setImportInput] = useState('');
@@ -119,12 +121,12 @@ export function EncKeySetup({
 	const [faucetError, setFaucetError] = useState('');
 
 	// SUI balance check for gas
-	const { data: suiBalance, refetch: refetchSuiBalance } = useSuiClientQuery(
-		'getBalance',
-		{ owner: address },
-		{ refetchInterval: 10_000 },
-	);
-	const suiBalanceNum = suiBalance ? Number(suiBalance.totalBalance) / 1e9 : 0;
+	const { data: suiBalance, refetch: refetchSuiBalance } = useQuery({
+		queryKey: ['sui-balance', network, address],
+		refetchInterval: 10_000,
+		queryFn: async () => (await suiClient.core.getBalance({ owner: address })).balance,
+	});
+	const suiBalanceNum = suiBalance ? Number(suiBalance.balance) / 1e9 : 0;
 	const hasEnoughSui = suiBalanceNum > 1;
 
 	const handleRequestFaucet = async () => {
@@ -206,7 +208,7 @@ export function EncKeySetup({
 				accountStatus,
 			});
 			const result = await signAndExecute({ transaction: tx });
-			await suiClient.waitForTransaction({ digest: result.digest });
+			await suiClient.core.waitForTransaction({ digest: result.digest });
 			saveKey(generatedKeyHex);
 		} catch (e) {
 			setRegisterError(String(e));

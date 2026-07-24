@@ -1,31 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCurrentAccount, useCurrentWallet } from '@mysten/dapp-kit';
-import { useEffect, useReducer } from 'react';
+import { useCurrentAccount, useCurrentWallet } from '@mysten/dapp-kit-react';
 
 import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { isNetwork, saveNetwork, SUPPORTED_NETWORKS, walletChain, type Network } from '../network';
 
 export function NetworkBanner() {
 	const account = useCurrentAccount();
-	const { currentWallet } = useCurrentWallet();
+	const currentWallet = useCurrentWallet();
 	const appNetwork = useActiveNetwork();
-	const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
-
-	// Some wallets (e.g. Slush) fire `standard:events` `change` on a network
-	// switch with just `chains`/`features` and no `accounts`. dapp-kit's
-	// built-in listener only re-syncs when `accounts` is present, so the
-	// cached `useCurrentAccount` stays stale. We subscribe directly and
-	// force a re-render on any change so we can re-read the live wallet.
-	useEffect(() => {
-		const events = currentWallet?.features['standard:events'];
-		if (!events) return;
-		const unsub = events.on('change', () => forceUpdate());
-		return unsub;
-	}, [currentWallet]);
 
 	if (!account) return null;
+	// dapp-kit rebuilds its UiWallet/UiWalletAccount snapshots on every
+	// `standard:events` change, so re-reading the account from the wallet
+	// picks up network switches that only update `chains`.
 	const liveAccount = currentWallet?.accounts.find((a) => a.address === account.address) ?? account;
 	const chains = liveAccount.chains ?? [];
 

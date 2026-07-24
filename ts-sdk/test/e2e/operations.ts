@@ -13,7 +13,7 @@
  */
 
 import type { ClientWithExtensions } from '@mysten/sui/client';
-import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import type { ContraInitializer } from 'contra-utils/node';
@@ -29,7 +29,7 @@ export const FUNDING_AMOUNT = 50_000_000n;
 /** One MYCOIN, 9 decimals. */
 export const ONE = 1_000_000_000n;
 
-export type ContraTestClient = ClientWithExtensions<{ contra: ContraClient }, SuiJsonRpcClient>;
+export type ContraTestClient = ClientWithExtensions<{ contra: ContraClient }, SuiGrpcClient>;
 
 /** Expected decrypted balance state for an account. */
 export interface ExpectedBalance {
@@ -83,10 +83,13 @@ export function createOperations(
 		receiver: string,
 		amount: bigint,
 	) {
-		const coins = await contraInit.client.getCoins({ owner, coinType: tokenIssuer.tokenType });
-		expect(coins.data.length).toBeGreaterThan(0);
+		const coins = await contraInit.client.core.listCoins({
+			owner,
+			coinType: tokenIssuer.tokenType,
+		});
+		expect(coins.objects.length).toBeGreaterThan(0);
 		const tx = new Transaction();
-		const [coin] = tx.splitCoins(tx.object(coins.data[0].coinObjectId), [amount]);
+		const [coin] = tx.splitCoins(tx.object(coins.objects[0].objectId), [amount]);
 		tx.add(client.contra.wrap({ coin, receiver, tokenType: tokenIssuer.tokenType }));
 		tx.setSender(owner);
 		await exec(tx, ownerKeypair);

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { ContraClient, type TokenAccount } from 'ts-sdk';
@@ -42,7 +42,7 @@ export class Sender {
 
 	constructor(
 		private readonly opts: {
-			suiClient: SuiJsonRpcClient;
+			suiClient: ClientWithCoreApi;
 			contraClient: ContraClient;
 			paymentChannelClient: PaymentChannelClient;
 			walletKeypair: Ed25519Keypair;
@@ -106,10 +106,10 @@ export class Sender {
 			gasBudget,
 		});
 		const { signature } = await this.opts.walletKeypair.signTransaction(txBytes);
-		return await this.opts.suiClient.executeTransactionBlock({
-			transactionBlock: txBytes,
-			signature: [signature],
-			options: { showEffects: true, showEvents: true },
+		return await this.opts.suiClient.core.executeTransaction({
+			transaction: txBytes,
+			signatures: [signature],
+			include: { effects: true, events: true },
 		});
 	}
 

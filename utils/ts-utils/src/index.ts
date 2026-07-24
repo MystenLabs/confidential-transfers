@@ -7,6 +7,8 @@
  * faucet + filesystem access) live in `contra-utils/node`.
  */
 
-export { filterCreated, findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
-export type { Bytecodes, CreatedObject, ObjectChange, PublishResult } from './publish.js';
-export { createContraAccount, mintAndWrapBu, waitForSui } from './setup.js';
+export { grpcClientFor, grpcUrlFor } from './grpc.js';
+export type { ContraNetwork } from './grpc.js';
+export { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
+export type { Bytecodes, CreatedObject, ExecutedTransaction, PublishResult } from './publish.js';
+export { createContraAccount, waitForSui } from './setup.js';

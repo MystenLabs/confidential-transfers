@@ -3,14 +3,13 @@
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { normalizeStructTag, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
 import {
 	compileMovePackage,
 	ContraInitializer,
-	filterCreated,
 	findObject,
 	patchPublishedToml,
 	publishBytecodes,
@@ -64,7 +63,7 @@ function contraMoveDir(): string {
  * is left clean.
  */
 export async function deployBundle(opts: {
-	suiClient: SuiJsonRpcClient;
+	suiClient: ClientWithCoreApi;
 	deployer: Ed25519Keypair;
 }): Promise<Deployment> {
 	const contraInit = await ContraInitializer.init({ contraMoveDir: contraMoveDir() });
@@ -103,8 +102,7 @@ export async function deployBundle(opts: {
 			}),
 		],
 	});
-	const regChanges = await signExecuteAndWait(regTx, opts.deployer, opts.suiClient);
-	const regCreated = filterCreated(regChanges);
+	const regCreated = await signExecuteAndWait(regTx, opts.deployer, opts.suiClient);
 	const confidentialTokenId = findObject(
 		regCreated,
 		`${contra.packageId}::contra::ConfidentialToken<`,

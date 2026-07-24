@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { bcs } from '@mysten/sui/bcs';
-import { type SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { type ClientWithCoreApi } from '@mysten/sui/client';
 import {
 	type Transaction,
 	type TransactionObjectArgument,
@@ -23,10 +23,10 @@ export type PaymentChannelPackageConfig = {
  * using `ContraClient` with the `Auth<T>` returned by `getAuth`.
  */
 export class PaymentChannelClient {
-	readonly suiClient: SuiJsonRpcClient;
+	readonly suiClient: ClientWithCoreApi;
 	readonly config: PaymentChannelPackageConfig;
 
-	constructor(opts: { suiClient: SuiJsonRpcClient; config: PaymentChannelPackageConfig }) {
+	constructor(opts: { suiClient: ClientWithCoreApi; config: PaymentChannelPackageConfig }) {
 		this.suiClient = opts.suiClient;
 		this.config = opts.config;
 	}

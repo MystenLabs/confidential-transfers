@@ -158,8 +158,8 @@ jobs:
         # `sui move build -e devnet` needs a client.yaml that registers a
         # `devnet` env, otherwise the CLI errors with "No sui config…" and
         # the test harness blows up parsing the error as JSON. We don't need
-        # a populated keystore — signing happens via the JSON-RPC client in
-        # the test code, not the CLI.
+        # a populated keystore — signing happens via the SDK's gRPC client
+        # in the test code, not the CLI.
         run: |
           mkdir -p "$HOME/.sui/sui_config"
           cat > "$HOME/.sui/sui_config/client.yaml" <<EOF

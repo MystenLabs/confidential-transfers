@@ -3,24 +3,17 @@
 
 /**
  * Browser-safe helpers for publishing pre-compiled Move bytecodes and reading
- * back the resulting object changes. Compiling a Move package is a Node-only
+ * back the resulting created objects. Compiling a Move package is a Node-only
  * operation; that lives in `./node.ts`.
  */
 
-import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
 import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 
 export interface Bytecodes {
 	modules: string[];
 	dependencies: string[];
-}
-
-export interface ObjectChange {
-	type: string;
-	objectId?: string;
-	objectType?: string;
-	packageId?: string;
 }
 
 export interface CreatedObject {
@@ -34,19 +27,56 @@ export interface PublishResult {
 	createdObjects: CreatedObject[];
 }
 
-/** Filter a transaction's `objectChanges` down to fully-populated `created` entries. */
-export function filterCreated(changes: ObjectChange[]): CreatedObject[] {
-	return changes.filter(
-		(c): c is ObjectChange & CreatedObject =>
-			c.type === 'created' && !!c.objectId && !!c.objectType,
-	);
-}
+type ExecutedInclude = { effects: true; objectTypes: true };
+export type ExecutedTransaction = SuiClientTypes.Transaction<ExecutedInclude>;
 
 /** First created object whose `objectType` contains `typeMatch`. Throws if none. */
 export function findObject(objects: CreatedObject[], typeMatch: string): string {
 	const obj = objects.find((o) => o.objectType.includes(typeMatch));
 	if (!obj) throw new Error(`No object found matching "${typeMatch}"`);
 	return obj.objectId;
+}
+
+function assertSuccess(
+	result: SuiClientTypes.TransactionResult<ExecutedInclude>,
+	label: string,
+): ExecutedTransaction {
+	if (result.FailedTransaction) {
+		throw new Error(
+			`${label} failed: ${result.FailedTransaction.status.error?.message ?? 'unknown error'}`,
+		);
+	}
+	return result.Transaction;
+}
+
+/**
+ * Sign and execute `tx`, throw with `label` if it failed on chain, wait for
+ * finality, and return the executed transaction (with effects and object
+ * types included).
+ */
+export async function executeOrThrow(
+	client: ClientWithCoreApi,
+	tx: Transaction,
+	signer: Ed25519Keypair,
+	label = 'transaction',
+): Promise<ExecutedTransaction> {
+	const result = await client.core.signAndExecuteTransaction({
+		transaction: tx,
+		signer,
+		include: { effects: true, objectTypes: true },
+	});
+	const executed = assertSuccess(result, label);
+	await client.core.waitForTransaction({ result });
+	return executed;
+}
+
+function createdObjects(tx: ExecutedTransaction): CreatedObject[] {
+	return tx.effects.changedObjects
+		.filter((c) => c.idOperation === 'Created' && c.outputState === 'ObjectWrite')
+		.flatMap((c) => {
+			const objectType = tx.objectTypes[c.objectId];
+			return objectType ? [{ objectId: c.objectId, objectType }] : [];
+		});
 }
 
 /**
@@ -57,7 +87,7 @@ export function findObject(objects: CreatedObject[], typeMatch: string): string 
 export async function publishBytecodes(
 	bytecodes: Bytecodes,
 	keypair: Ed25519Keypair,
-	client: SuiJsonRpcClient,
+	client: ClientWithCoreApi,
 ): Promise<PublishResult> {
 	const tx = new Transaction();
 	const [upgradeCap] = tx.publish({
@@ -66,36 +96,25 @@ export async function publishBytecodes(
 	});
 	tx.transferObjects([upgradeCap], keypair.getPublicKey().toSuiAddress());
 
-	const result = await client.signAndExecuteTransaction({
-		transaction: tx,
-		signer: keypair,
-		options: { showObjectChanges: true },
-	});
+	const executed = await executeOrThrow(client, tx, keypair, 'publish');
 
-	const changes = (result.objectChanges ?? []) as ObjectChange[];
-	const published = changes.find((c) => c.type === 'published');
-	if (!published?.packageId) throw new Error('Failed to find published package');
-
-	await client.waitForTransaction({ digest: result.digest });
+	const packageId = executed.effects.changedObjects.find(
+		(c) => c.outputState === 'PackageWrite',
+	)?.objectId;
+	if (!packageId) throw new Error('Failed to find published package');
 
 	return {
-		digest: result.digest,
-		packageId: published.packageId,
-		createdObjects: filterCreated(changes),
+		digest: executed.digest,
+		packageId,
+		createdObjects: createdObjects(executed),
 	};
 }
 
-/** Sign and execute `tx` from `signer`, wait for finality, return objectChanges. */
+/** Sign and execute `tx` from `signer`, wait for finality, return the created objects. */
 export async function signExecuteAndWait(
 	tx: Transaction,
 	signer: Ed25519Keypair,
-	client: SuiJsonRpcClient,
-): Promise<ObjectChange[]> {
-	const result = await client.signAndExecuteTransaction({
-		transaction: tx,
-		signer,
-		options: { showObjectChanges: true },
-	});
-	await client.waitForTransaction({ digest: result.digest });
-	return (result.objectChanges ?? []) as ObjectChange[];
+	client: ClientWithCoreApi,
+): Promise<CreatedObject[]> {
+	return createdObjects(await executeOrThrow(client, tx, signer));
 }

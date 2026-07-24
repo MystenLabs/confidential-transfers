@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { createContraAccount, waitForSui } from 'contra-utils';
+import { createContraAccount, grpcClientFor, waitForSui } from 'contra-utils';
 import { ContraClient, DiscreteLogTable, TokenAccount } from 'ts-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -22,7 +22,7 @@ import {
 const NETWORK = 'devnet';
 
 describe('payment_channel e2e', () => {
-	let suiClient: SuiJsonRpcClient;
+	let suiClient: SuiGrpcClient;
 	let deployer: Ed25519Keypair;
 	let senderKp: Ed25519Keypair;
 	let receiverKp: Ed25519Keypair;
@@ -37,10 +37,7 @@ describe('payment_channel e2e', () => {
 	const lockedAmount = 100n;
 
 	beforeAll(async () => {
-		suiClient = new SuiJsonRpcClient({
-			url: getJsonRpcFullnodeUrl(NETWORK),
-			network: NETWORK,
-		});
+		suiClient = grpcClientFor(NETWORK);
 
 		deployer = Ed25519Keypair.generate();
 		senderKp = Ed25519Keypair.generate();
@@ -142,12 +139,13 @@ describe('payment_channel e2e', () => {
 	it('sender cannot sweep while channel is open and receiver has not settled', async () => {
 		const sender = makeSender();
 		const senderGas = await pickSuiGasCoin(suiClient, senderKp.toSuiAddress());
-		const res = await sender.sweep(senderGas);
-		expect(res.effects?.status?.status).toBe('failure');
-		const err = res.effects?.status?.error ?? '';
-		// MoveAbort in payment_channel with code 2 (EChannelActive).
-		expect(err).toMatch(/payment_channel/);
-		expect(err).toMatch(/, 2\)/);
+		// The gRPC client resolves transactions via simulation during build, so
+		// the EChannelActive MoveAbort (code 2) in `get_auth` surfaces as a
+		// build-time error rather than an executed transaction with failed
+		// effects.
+		await expect(sender.sweep(senderGas)).rejects.toThrow(
+			/abort code: 2.*payment_channel::get_auth/,
+		);
 	});
 
 	it('receiver settles, then sender sweeps the residual without waiting for end_time', async () => {
@@ -162,10 +160,10 @@ describe('payment_channel e2e', () => {
 		expect(receiver.getAccumulated()).toBe(35n);
 
 		const settled = await receiver.settle();
-		expect(settled.effects?.status?.status).toBe('success');
-		await suiClient.waitForTransaction({ digest: settled.digest });
-		const failed = (settled.events ?? []).find((e) =>
-			e.type.endsWith('::events::TryTransferFailedEvent'),
+		expect(settled.$kind).toBe('Transaction');
+		await suiClient.core.waitForTransaction({ result: settled });
+		const failed = (settled.Transaction?.events ?? []).find((e) =>
+			e.eventType.includes('::events::TryTransferFailedEvent'),
 		);
 		expect(failed, 'channel transfer should not have hit TryTransferFailedEvent').toBeUndefined();
 
@@ -175,10 +173,10 @@ describe('payment_channel e2e', () => {
 		// Sender, now that the channel is Closed, can sweep the residual.
 		const senderGas = await pickSuiGasCoin(suiClient, senderKp.toSuiAddress());
 		const sweep = await sender.sweep(senderGas);
-		expect(sweep.effects?.status?.status).toBe('success');
-		await suiClient.waitForTransaction({ digest: sweep.digest });
-		const sweepFailed = (sweep.events ?? []).find((e) =>
-			e.type.endsWith('::events::TryTransferFailedEvent'),
+		expect(sweep.$kind).toBe('Transaction');
+		await suiClient.core.waitForTransaction({ result: sweep });
+		const sweepFailed = (sweep.Transaction?.events ?? []).find((e) =>
+			e.eventType.includes('::events::TryTransferFailedEvent'),
 		);
 		expect(sweepFailed, 'sweep should not have hit TryTransferFailedEvent').toBeUndefined();
 

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentClient } from '@mysten/dapp-kit-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { AuditorVersionEntry, ContraAuditor, DiscreteLogTable } from 'ts-sdk';
 
@@ -31,7 +31,7 @@ export function useContraAuditor(
 	tokenType: string | undefined,
 	auditorKeyForVersion: Map<number, AuditorVersionEntry>,
 ): ContraAuditor | null {
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 	const [table, setTable] = useState<DiscreteLogTable | null>(null);
 
 	useEffect(() => {

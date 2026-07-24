@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentClient } from '@mysten/dapp-kit-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { ContraClient } from 'ts-sdk';
 
@@ -15,7 +15,7 @@ export function useAccountStatus(
 	address: string | undefined,
 	tokenType: string | undefined,
 ) {
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 	const [status, setStatus] = useState<AccountStatus>('loading');
 	const [error, setError] = useState<Error | undefined>();
 
