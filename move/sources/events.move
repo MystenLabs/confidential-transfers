@@ -3,7 +3,12 @@
 
 module contra::events;
 
-use contra::{auditors::VerifiedKeyEncryption, encrypted_amount::EncryptedAmount};
+use contra::{
+    auditors::VerifiedKeyEncryption,
+    encrypted_amount::EncryptedAmount,
+    guardian::{Ed25519PublicKey, Pcrs}
+};
+use std::string::String;
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -112,6 +117,26 @@ public struct UpdateAuditorsEvent<phantom T> has copy, drop {
     recommended_min_version: u32,
 }
 
+/// The guardian policy for token `T` changed: set (enabled), unset (disabled), or any
+/// of its fields updated (PCRs, `min_version`, operator).
+public struct GuardianPolicyUpdatedEvent<phantom T> has copy, drop {
+    enabled: bool,
+    operator: address,
+    url: String,
+    version: u16,
+    min_version: u16,
+    pcrs: Pcrs,
+}
+
+/// An enclave key was registered for (`registered = true`) or removed from
+/// (`registered = false`) token `T`'s guardian. `version` is the key's policy-version
+/// stamp in both cases.
+public struct GuardianEnclaveUpdatedEvent<phantom T> has copy, drop {
+    registered: bool,
+    signing_pk: Ed25519PublicKey,
+    version: u16,
+}
+
 // === Emit functions ===
 
 public(package) fun emit_new_confidential_token<T>() {
@@ -214,4 +239,30 @@ public(package) fun emit_update_auditors<T>(
     recommended_min_version: u32,
 ) {
     event::emit(UpdateAuditorsEvent<T> { public_keys, version, recommended_min_version });
+}
+
+public(package) fun emit_guardian_policy_update<T>(
+    enabled: bool,
+    operator: address,
+    url: String,
+    version: u16,
+    min_version: u16,
+    pcrs: Pcrs,
+) {
+    event::emit(GuardianPolicyUpdatedEvent<T> {
+        enabled,
+        operator,
+        url,
+        version,
+        min_version,
+        pcrs,
+    });
+}
+
+public(package) fun emit_guardian_enclave_update<T>(
+    registered: bool,
+    signing_pk: Ed25519PublicKey,
+    version: u16,
+) {
+    event::emit(GuardianEnclaveUpdatedEvent<T> { registered, signing_pk, version });
 }
