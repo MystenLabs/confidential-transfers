@@ -28,22 +28,27 @@ transfer or unwrap checks:
   disables it — no `enabled` flag needed.
 - Issuer creates the token with `new_confidential_token(..., pcrs, operator_address)`,
   which creates the `GuardianPolicy`.
-- Issuer (`ManagementCap`) can set / unset the policy, update PCRs, and replace the
-  operator.
-- The operator (a single address) registers and removes `enclave_keys`.
+- Issuer (`ManagementCap`) can set / unset the policy, and update it in one call —
+  each of `pcrs` / `min_version` / `operator` is an `Option`, `None` a no-op.
+- The operator (a single address) runs one serving endpoint (`url`) backed by
+  multiple enclave instances, each holding its own `{ signing_pk, enc_pk }` pair
+  generated inside the enclave. The operator registers and removes these
+  `guardian_enclave_keys` and updates `url`.
 
 ```move
 GuardianPolicy {
-  operator: address,        // registers / removes enclave_keys; issuer can replace
+  operator: address,        // registers / removes guardian_enclave_keys; issuer can replace
+  url: String,              // the one endpoint fronting the whole fleet; operator-updated,
+                            // routing metadata only (nothing security-relevant)
   version: u16,             // incremented per PCR change; stamps new registrations
   min_version: u16,         // issuer bumps this to invalidate old-image keys lazily;
-                            // enclave_keys is never cleared
-  pcrs: vector<vector<u8>>,
-  enclave_keys: VecMap<vector<u8>, EnclaveKey>, // keyed by signing_pk; see the
+                            // guardian_enclave_keys is never cleared
+  pcrs: Pcrs,               // (pcr0, pcr1, pcr2): image, kernel, application
+  guardian_enclave_keys: VecMap<vector<u8>, GuardianEnclaveKey>, // keyed by signing_pk; see the
                                                 // scaling options below — many or one
 }
 
-EnclaveKey {
+GuardianEnclaveKey {
   enc_pk: vector<u8>,
   version: u16,             // policy version at registration; valid while
                             // >= min_version
@@ -85,7 +90,7 @@ EnclaveKey {
   - Client fetches all live `enc_pk`s onchain and encrypts the request to all keys;
     the LB forwards it to an instance and gets a response identified by `signing_pk`.
   - Onchain the client submits `enclave_sig, signing_pk`. Checks: 1) look up
-    `signing_pk` in `enclave_keys`, 2) verify the sig, 3)
+    `signing_pk` in `guardian_enclave_keys`, 2) verify the sig, 3)
     `key.version >= policy.min_version`.
   - Provision new instances:
     - Each instance deploys and exposes `/attestation`.
@@ -122,7 +127,7 @@ EnclaveKey {
   - Rollback is free: old keys were never invalidated, so if the new image is broken,
     remove its keys and keep serving on the old fleet.
   - `min_version` is a floor (revoke everything older than X); revoking one specific
-    version while keeping older ones is per-key `remove_enclave_key` instead.
+    version while keeping older ones is per-key `remove_guardian_enclave_key` instead.
 
 ### Transfer Flow
 
@@ -179,7 +184,7 @@ enclave signs payload:
 fun batch_transfer(..., guardian_sig, signing_pk) {
   if (ct.guardian_policy.is_none()) return;   // guardian off: ZK proofs only
   let policy = ct.guardian_policy.borrow();
-  let key: &EnclaveKey = policy.enclave_keys.get(&signing_pk); // aborts if unknown
+  let key: &GuardianEnclaveKey = policy.guardian_enclave_keys.get(&signing_pk); // aborts if unknown
   assert!(key.version >= policy.min_version);
   let payload = { ... }; // rebuilt onchain, never passed
   assert!(ed25519_verify(&guardian_sig, &signing_pk, &bcs::to_bytes(payload)));
