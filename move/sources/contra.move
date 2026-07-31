@@ -819,8 +819,6 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
         },
         TransferBatch::Ok { coins, auditor_handles, .. } => {
             assert!(coins.is_empty(), EAllAmountsMustBeUsed);
-            // Handles are popped two-per-receiver alongside `coins`, so this holds whenever the
-            // above does; asserted as a guard against the two ever drifting.
             assert!(auditor_handles.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
             true
