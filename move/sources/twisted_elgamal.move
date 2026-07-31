@@ -137,39 +137,6 @@ public(package) fun encrypt_trivial(amount: u64): Encryption {
     }
 }
 
-/// A single-ciphertext encryption readable by multiple recipients. Shares one `ciphertext`
-/// component across all recipients, with a separate `decryption_handle` per recipient public key.
-public struct MultiRecipientEncryption has copy, drop, store {
-    ciphertext: Element<G>,
-    decryption_handles: vector<Element<G>>,
-}
-
-/// Construct a Twisted ElGamal `MultiRecipientEncryption` consisting of a shared ciphertext `c = r * g + m * h` and
-/// one decryption handle `d_i = r * pk_i` per recipient identified by their public key `pk_i`.
-public fun new_multi_recipient_encryption(
-    ciphertext: Element<G>,
-    decryption_handles: vector<Element<G>>,
-): MultiRecipientEncryption {
-    MultiRecipientEncryption {
-        ciphertext,
-        decryption_handles,
-    }
-}
-
-/// Returns the shared ciphertext component `c = r * g + m * h` of a Twisted ElGamal `MultiRecipientEncryption`.
-public fun multi_recipient_ciphertext(e: &MultiRecipientEncryption): &Element<G> {
-    &e.ciphertext
-}
-
-/// Returns the per-recipient decryption handles `d_i = r * pk_i` for recipient public key `pk_i` of a
-/// Twisted ElGamal `MultiRecipientEncryption`.
-public fun multi_recipient_decryption_handles(e: &MultiRecipientEncryption): &vector<Element<G>> {
-    &e.decryption_handles
-}
-
-public use fun multi_recipient_ciphertext as MultiRecipientEncryption.ciphertext;
-public use fun multi_recipient_decryption_handles as MultiRecipientEncryption.decryption_handles;
-
 #[test_only]
 public fun encrypt_zero_for_testing(): Encryption {
     encrypt_zero()

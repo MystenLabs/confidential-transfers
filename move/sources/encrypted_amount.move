@@ -22,6 +22,10 @@ const BULLETPROOFS_VERSION: u8 = 0;
 /// must show every committed value lies in `[0, 2^16)`.
 const LIMB_BITS: u8 = 16;
 
+/// Number of u32 limbs an auditor reads per amount: a u64 amount's four u16 limbs regroup into two
+/// u32 halves, so the sender attaches one decryption handle per two limbs (`2` handles per amount).
+const AUDITOR_LIMBS: u64 = 2;
+
 /// Maximum number of amounts covered by a single Bulletproof chunk.
 /// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
 /// count at 32 for `LIMB_BITS = 16`, and each amount contributes 4 limb commitments, so a single proof
@@ -260,6 +264,32 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
         c3 = g_add(&c3, a[3].ciphertext());
     });
     collapse_limbs(&c0, &c1, &c2, &c3)
+}
+
+/// The two u32-limb commitments `[C_0 + 2^16 C_1, C_2 + 2^16 C_3]` regrouped from `ea`'s four
+/// u16-limb ciphertext components.
+public(package) fun auditor_commitments(ea: &EncryptedAmount): vector<Element<G>> {
+    let shift = scalar_from_u64(1 << 16);
+    vector[
+        g_add(ea.l0.ciphertext(), &g_mul(&shift, ea.l1.ciphertext())),
+        g_add(ea.l2.ciphertext(), &g_mul(&shift, ea.l3.ciphertext())),
+    ]
+}
+
+/// Pair each amount's two `auditor_commitments` with the matching two `handles`, flattened in amount
+/// order, into `2 * amounts.length()` `Encryption`s. Aborts unless the lengths match.
+public(package) fun batch_auditor_encryptions(
+    amounts: &vector<WellFormedEncryptedAmount>,
+    handles: &vector<Element<G>>,
+): vector<Encryption> {
+    assert!(handles.length() == AUDITOR_LIMBS * amounts.length(), EMismatchedBatchLength);
+    let mut out = vector[];
+    amounts.length().do!(|i| {
+        let commitments = amounts[i].amount.auditor_commitments();
+        out.push_back(twisted_elgamal::new(commitments[0], handles[AUDITOR_LIMBS * i]));
+        out.push_back(twisted_elgamal::new(commitments[1], handles[AUDITOR_LIMBS * i + 1]));
+    });
+    out
 }
 
 /// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.

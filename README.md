@@ -195,7 +195,7 @@ The issuer (`TreasuryCap<T>`) can overwrite any account's encrypted balance dire
 
 ### Auditor visibility
 
-Alongside the controls above, the issuer can register one or more auditor public keys so designated parties can decrypt balances and transfers off-chain without participating in transactions. See [For Auditors](#for-auditors) for the onboarding model and the per-account auditing design.
+Alongside the controls above, the issuer can register an auditor public key so a designated party can decrypt transfer amounts off-chain without participating in transactions. See [For Auditors](#for-auditors) for the onboarding model and the per-transfer auditing design.
 
 ### Selective disclosure
 
@@ -210,8 +210,9 @@ By default `register`, `wrap`, and `unwrap` are open to any holder of `T`. The i
 
 An auditor is a passive reader of confidential balances and transfers for a given confidential token: they hold a or more secret keys whose public counterparts are registered on-chain by the issuer, and use them off-chain to decrypt user data. Auditors never sign protocol transactions.
 
-Many confidential transfer protocols implement **per-transaction auditing**, where the sender attaches an auditor-readable copy of each transfer amount to every transaction. Our current design instead uses **per-account auditing**: the user encrypts their secret key once at registration (or on key rotation) to the current auditor key set, and from then on auditors derive transfer-level visibility for free by decrypting that one key and reading the user's account state. This is cheaper for users (no extra ciphertext or proof per transfer) and simpler for auditors (e.g., stateless access to balances).
-See [Auditor Support in Confidential Transfers](AUDITORS.md) for more details on the per-transaction and per-account auditing.
+The contract implements **per-transaction auditing**: the sender attaches an auditor-readable copy of each transfer amount (two u32-limb decryption handles plus one batched proof) to every transfer, and the auditor never learns the user's viewing key. Balances stay encrypted only under the user's own key, so the same account key can be reused across tokens. See [Auditor Support in Confidential Transfers](AUDITORS.md) for the design and the alternatives considered.
+
+> **Note:** The on-chain contract implements per-transfer auditing; the TypeScript auditor tooling described below (`ContraAuditor`, the version-map onboarding) still reflects the earlier per-account escrow design and is being migrated to match.
 
 ### Onboarding flow
 

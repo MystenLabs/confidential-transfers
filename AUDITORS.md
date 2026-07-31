@@ -119,12 +119,14 @@ The two options trade cost against operational complexity. The table below summa
 
 ## Selected approach
 
-We adopt **Option 2 (per-account)** together with the issuer key derivation scheme above. Auditor-key leakage is assumed to be a rare event, and the offboarding asymmetry — where an offboarded or compromised auditor still holds user viewing keys recovered while active — can be handled by a wallet-driven viewing-key rotation policy:
+We implement **Option 1 (per-transfer)** with a single auditor key. Each transfer attaches auditor-readable ciphertexts of the amount; the auditor never learns a user's viewing key, so balances stay encrypted only under the user's own key and users may reuse one account public key across tokens.
 
-- **Routine rotation.** Wallets rotate user viewing keys roughly every month.
-- **Triggered rotation.** When the issuer signals on-chain that rotation is recommended (expected only in response to key leakage), wallets rotate immediately.
-- **Inactive accounts.** Inactive users may not rotate until they are next active, and would still receive deposits encrypted under the old key in the meantime. To limit exposure, wallets are encouraged not to send to accounts that haven't rotated within a month after an issuer-signaled rotation.
+Concretely (see `auditors.move` / `contra.move`):
 
-We believe this is a reasonable tradeoff: per-transfer overhead stays constant in the number of auditors, reads are stateless, and the residual exposure from rare key-leakage events is bounded by the rotation policy above.
+- **One auditor key with a grace window.** The token stores a `current_pk`, a `previous_pk`, and a `previous_expiration_epoch`. On rotation the outgoing key becomes `previous_pk` and stays valid for transfers through `previous_expiration_epoch`, so transfers built against the old key just before a rotation still verify. Setting `current_pk = none` disables auditing.
+- **Cheap per-transfer overhead.** A twisted-ElGamal ciphertext `c = r·g + m·h` is key-independent, so the receiver's four range-proven u16-limb commitments are reused for the auditor: the chain derives two u32-limb commitments (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`) on-chain, and the sender sends only two auditor decryption handles per amount (one per two limbs) plus one batched `ElGamalProof` over the whole transfer. No separate auditor commitments or range proofs.
+- **Offboarding is clean.** Because auditors hold no user viewing keys, removing an auditor key immediately ends its visibility into future transfers, with no user-driven viewing-key rotation required (unlike Option 2).
+
+Auditors read amounts from `TransferEvent`s (the two handles plus the commitments derived from `encrypted_amount_receiver`); reading is stateful (balances are reconstructed from the transfer graph), and history before an auditor's key was installed requires the previous keys, which the issuer key-derivation scheme above can supply.
 
 > **Disclaimer:** This selection is preliminary. The design may change based on feedback from the community and partners as we gather more input on auditor requirements and operational constraints.

@@ -3,7 +3,7 @@
 
 module contra::nizk;
 
-use contra::twisted_elgamal::{Self, Encryption, MultiRecipientEncryption};
+use contra::twisted_elgamal::{Self, Encryption};
 use std::bcs;
 use sui::{
     group_ops::Element,
@@ -22,14 +22,6 @@ use sui::{
     }
 };
 
-/// Number of 32-bit limbs in a `KeyConsistencyProof`. A 256-bit Ristretto255 scalar split into
-/// 32-bit chunks gives exactly 8 limbs; this is fixed by the protocol, not negotiable per call.
-const KEY_CONSISTENCY_LIMBS: u64 = 8;
-
-/// `verify_key_consistency` was called with vectors whose lengths don't match the protocol
-/// constants (`KEY_CONSISTENCY_LIMBS` limbs, `recipient_encryption_keys.length()` recipients).
-const EMalformedKeyConsistencyProof: u64 = 0;
-
 /// A shared-witness DDH proof of knowledge: one `w` with `images[k] = w * bases[k]` for all `k`.
 public struct DdhProof has drop {
     commitments: vector<Element<G>>,
@@ -46,22 +38,6 @@ public struct ElGamalProof has drop {
     z2: Element<Scalar>,
 }
 
-/// A non-interactive zero knowledge proof of knowledge showing that the eight 32-bit limbs of a
-/// 256-bit private key are correctly encrypted to a list of m recipient public keys `pk_j` using
-/// Twisted ElGamal. The proof shows that the prover knows randomness `(r_1, ..., r_8)` and key
-/// limbs `(u_1, ..., u_8)` such that:
-/// - `D_ij = r_i * pk_j` for all i and j, where `D_ij` is the decryption handle for the i-th limb
-///   and j-th recipient.
-/// - `C_i = r_i * g + u_i * h` for all i, where `C_i` is the ciphertext for the i-th limb.
-/// - `(\sum_i u_i * 2^{32i}) * g == sender_public_key`.
-public struct KeyConsistencyProof has drop {
-    a1: vector<Element<G>>, // 8*m elements: a_i * pk_j for all (i, j)
-    a2: vector<Element<G>>, // 8 elements: a_i * g + b_i * h
-    a3: Element<G>, // Single aggregate mask (\sum_i b_i * 2^{32i}) * g.
-    z1: vector<Element<Scalar>>, // 8 scalars: a_i + c * r_i
-    z2: vector<Element<Scalar>>, // 8 scalars: b_i + c * u_i
-}
-
 public fun new_ddh_proof(commitments: vector<Element<G>>, z: Element<Scalar>): DdhProof {
     DdhProof { commitments, z }
 }
@@ -73,16 +49,6 @@ public fun new_elgamal_proof(
     z2: Element<Scalar>,
 ): ElGamalProof {
     ElGamalProof { a, b, z1, z2 }
-}
-
-public fun new_key_consistency_proof(
-    a1: vector<Element<G>>,
-    a2: vector<Element<G>>,
-    a3: Element<G>,
-    z1: vector<Element<Scalar>>,
-    z2: vector<Element<Scalar>>,
-): KeyConsistencyProof {
-    KeyConsistencyProof { a1, a2, a3, z1, z2 }
 }
 
 /// Verify a `DdhProof`: a single witness `w` maps every base to its image,
@@ -130,82 +96,6 @@ public(package) fun verify_elgamal(
     is_valid_relation2(&proof.b, &agg_c, &g, &h, &proof.z1, &proof.z2, &c)
 }
 
-/// Verify a `KeyConsistencyProof` against the recipient public keys and `encryptions[i]`, the
-/// i-th-limb `MultiRecipientEncryption` (one shared `ciphertext` + one `decryption_handle` per
-/// recipient).
-public(package) fun verify_key_consistency(
-    proof: &KeyConsistencyProof,
-    dst: vector<u8>,
-    sender_public_key: &Element<G>,
-    recipient_encryption_keys: &vector<Element<G>>,
-    encryptions: &vector<MultiRecipientEncryption>,
-): bool {
-    let n = KEY_CONSISTENCY_LIMBS;
-    let m = recipient_encryption_keys.length();
-    assert!(proof.a1.length() == n * m, EMalformedKeyConsistencyProof);
-    assert!(proof.a2.length() == n, EMalformedKeyConsistencyProof);
-    assert!(proof.z1.length() == n, EMalformedKeyConsistencyProof);
-    assert!(proof.z2.length() == n, EMalformedKeyConsistencyProof);
-    assert!(encryptions.length() == n, EMalformedKeyConsistencyProof);
-    encryptions.do_ref!(
-        |e| assert!(
-            e.multi_recipient_decryption_handles().length() == m,
-            EMalformedKeyConsistencyProof,
-        ),
-    );
-
-    let g = twisted_elgamal::g();
-    let h = twisted_elgamal::h();
-    // Can skip hashing fixed g, h (left as a defense in depth)
-    let c = challenge_key_consistency(
-        dst,
-        &g,
-        &h,
-        sender_public_key,
-        recipient_encryption_keys,
-        encryptions,
-        &proof.a1,
-        &proof.a2,
-        &proof.a3,
-    );
-
-    // Check 1: A1_ij + c * D_ij == z1_i * pk_j for all (i, j)
-    let mut i = 0;
-    while (i < n) {
-        let z1i = &proof.z1[i];
-        let dhs = encryptions[i].multi_recipient_decryption_handles();
-        let mut j = 0;
-        while (j < m) {
-            let a1ij = &proof.a1[i * m + j];
-            if (!is_valid_relation(a1ij, &dhs[j], &recipient_encryption_keys[j], z1i, &c)) {
-                return false
-            };
-            j = j + 1;
-        };
-        i = i + 1;
-    };
-
-    // Check 2: A2_i + c * C_i == z1_i * g + z2_i * h for all i
-    let mut i = 0;
-    while (i < n) {
-        let a2i = &proof.a2[i];
-        let ci = encryptions[i].multi_recipient_ciphertext();
-        if (!is_valid_relation2(a2i, ci, &g, &h, &proof.z1[i], &proof.z2[i], &c)) return false;
-        i = i + 1;
-    };
-
-    // Check 3: A3 + c * sender_public_key == (\sum_i z2_i * 2^{32i}) * g
-    let base = scalar_from_u64(1u64 << 32);
-    let mut exp = scalar_from_u64(1u64);
-    let mut z_sum = scalar_from_u64(0u64);
-    n.do!(|i| {
-        let z2i = &proof.z2[i];
-        z_sum = scalar_add(&z_sum, &scalar_mul(z2i, &exp));
-        exp = scalar_mul(&exp, &base);
-    });
-    is_valid_relation(&proof.a3, sender_public_key, &g, &z_sum, &c)
-}
-
 /// Fiat-Shamir challenge for a `DdhProof`. Binds, in order, the DST, every base, every image, and
 /// every per-pair Schnorr commitment.
 fun challenge_ddh(
@@ -242,35 +132,6 @@ fun challenge_elgamal(
     inputs.push_back(*a.bytes());
     inputs.push_back(*b.bytes());
     fiat_shamir_challenge(inputs)
-}
-
-/// Compute the Fiat-Shamir challenge for a `KeyConsistencyProof`. The transcript binds the bases
-/// `g, h`, the sender public key, the recipient public keys, every per-limb ciphertext with its
-/// decryption handles, and finally the prover commitments `(a1, a2, a3)`.
-fun challenge_key_consistency(
-    dst: vector<u8>,
-    g: &Element<G>,
-    h: &Element<G>,
-    sender_public_key: &Element<G>,
-    recipient_encryption_keys: &vector<Element<G>>,
-    encryptions: &vector<MultiRecipientEncryption>,
-    a1: &vector<Element<G>>,
-    a2: &vector<Element<G>>,
-    a3: &Element<G>,
-): Element<Scalar> {
-    let mut random_oracle_inputs = vector[dst, *g.bytes(), *h.bytes(), *sender_public_key.bytes()];
-    recipient_encryption_keys.do_ref!(|rek| random_oracle_inputs.push_back(*rek.bytes()));
-    // For each limb: first the commitment, then its decryption handles.
-    encryptions.do_ref!(|e| {
-        random_oracle_inputs.push_back(*e.multi_recipient_ciphertext().bytes());
-        e
-            .multi_recipient_decryption_handles()
-            .do_ref!(|dh| random_oracle_inputs.push_back(*dh.bytes()));
-    });
-    a1.do_ref!(|a1i| random_oracle_inputs.push_back(*a1i.bytes()));
-    a2.do_ref!(|a2i| random_oracle_inputs.push_back(*a2i.bytes()));
-    random_oracle_inputs.push_back(*a3.bytes());
-    fiat_shamir_challenge(random_oracle_inputs)
 }
 
 fun fiat_shamir_challenge(random_oracle_inputs: vector<vector<u8>>): Element<Scalar> {
@@ -459,91 +320,6 @@ public fun sum_proof_for_testing(
     )
 }
 
-/// Split a Ristretto scalar into eight little-endian 32-bit limbs. Used to construct the witness
-/// for `prove_key_consistency` from a 256-bit private key.
-#[test_only]
-public fun scalar_to_limbs(sk: &Element<Scalar>): vector<u32> {
-    let bytes = sk.bytes();
-    vector::tabulate!(8, |i| {
-        let offset = i * 4;
-        (bytes[offset]       as u32)
-        | ((bytes[offset + 1]   as u32) << 8)
-        | ((bytes[offset + 2]   as u32) << 16)
-        | ((bytes[offset + 3]   as u32) << 24)
-    })
-}
-
-#[test_only]
-public fun prove_key_consistency(
-    dst: vector<u8>,
-    sender_private_key_limbs: &vector<u32>,
-    sender_public_key: &Element<G>,
-    recipient_encryption_keys: &vector<Element<G>>,
-    encryptions: &vector<MultiRecipientEncryption>,
-    blindings: &vector<Element<Scalar>>,
-    a: vector<Element<Scalar>>,
-    b: vector<Element<Scalar>>,
-): KeyConsistencyProof {
-    let g = twisted_elgamal::g();
-    let h = twisted_elgamal::h();
-    let n = sender_private_key_limbs.length();
-    let m = recipient_encryption_keys.length();
-
-    // a1[i*m + j] = a_i * pk_j for all limbs i and recipients j
-    let mut a1 = vector[];
-    n.do!(|i| {
-        let ai = &a[i];
-        m.do!(|j| {
-            a1.push_back(g_mul(ai, &recipient_encryption_keys[j]));
-        });
-    });
-
-    // a2[i] = a_i * g + b_i * h
-    let mut a2 = vector[];
-    n.do!(|i| {
-        let ai = &a[i];
-        let bi = &b[i];
-        a2.push_back(g_add(&g_mul(ai, &g), &g_mul(bi, &h)));
-    });
-
-    // a3 = (\sum_i b_i * 2^{32i}) * g
-    let base = scalar_from_u64(1u64 << 32);
-    let mut exp = scalar_from_u64(1u64);
-    let mut b_sum = scalar_from_u64(0u64);
-    n.do!(|i| {
-        b_sum = scalar_add(&b_sum, &scalar_mul(&b[i], &exp));
-        exp = scalar_mul(&exp, &base);
-    });
-    let a3 = g_mul(&b_sum, &g);
-
-    let c = challenge_key_consistency(
-        dst,
-        &g,
-        &h,
-        sender_public_key,
-        recipient_encryption_keys,
-        encryptions,
-        &a1,
-        &a2,
-        &a3,
-    );
-
-    // z1[i] = a_i + c * r_i
-    let mut z1 = vector[];
-    n.do!(|i| {
-        z1.push_back(scalar_add(&a[i], &scalar_mul(&c, &blindings[i])));
-    });
-
-    // z2[i] = b_i + c * u_i
-    let mut z2 = vector[];
-    n.do!(|i| {
-        let ui = scalar_from_u64(sender_private_key_limbs[i] as u64);
-        z2.push_back(scalar_add(&b[i], &scalar_mul(&c, &ui)));
-    });
-
-    KeyConsistencyProof { a1, a2, a3, z1, z2 }
-}
-
 #[test]
 fun ddh_proof_round_trip() {
     let g = ristretto255::g_generator();
@@ -586,68 +362,6 @@ fun ddh_proof_batch_round_trip() {
     let mut short_images = images;
     short_images.pop_back();
     assert!(!verify_ddh(&proof, vector[], &short_bases, &short_images));
-}
-
-#[test]
-fun key_consistency_proof_round_trip() {
-    let sk = scalar_from_u64(1234567890);
-    let g = twisted_elgamal::g();
-    let h = twisted_elgamal::h();
-    let sender_pk = g_mul(&sk, &g);
-
-    let limbs = scalar_to_limbs(&sk);
-
-    let recipient_pk_1 = g_mul(&scalar_from_u64(1111111111), &g);
-    let recipient_pk_2 = g_mul(&scalar_from_u64(2222222222), &g);
-    let recipient_pk_3 = g_mul(&scalar_from_u64(3333333333), &g);
-    let recipient_encryption_keys = vector[recipient_pk_1, recipient_pk_2, recipient_pk_3];
-
-    let mut encryptions = vector[];
-    let mut blindings = vector[];
-    let n = limbs.length();
-    n.do!(|i| {
-        let r = scalar_from_u64((i + 1) * 111);
-        let u = scalar_from_u64(limbs[i] as u64);
-        encryptions.push_back(
-            twisted_elgamal::new_multi_recipient_encryption(
-                g_add(&g_mul(&r, &g), &g_mul(&u, &h)),
-                vector[
-                    g_mul(&r, &recipient_pk_1),
-                    g_mul(&r, &recipient_pk_2),
-                    g_mul(&r, &recipient_pk_3),
-                ],
-            ),
-        );
-        blindings.push_back(r);
-    });
-
-    let mut a = vector[];
-    let mut b = vector[];
-    n.do!(|i| {
-        a.push_back(scalar_from_u64((i + 1) * 777));
-        b.push_back(scalar_from_u64((i + 1) * 888));
-    });
-
-    let proof = prove_key_consistency(
-        vector[],
-        &limbs,
-        &sender_pk,
-        &recipient_encryption_keys,
-        &encryptions,
-        &blindings,
-        a,
-        b,
-    );
-
-    assert!(
-        verify_key_consistency(
-            &proof,
-            vector[],
-            &sender_pk,
-            &recipient_encryption_keys,
-            &encryptions,
-        ),
-    );
 }
 
 #[test]

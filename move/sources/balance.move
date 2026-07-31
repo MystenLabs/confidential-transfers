@@ -246,23 +246,25 @@ public(package) fun try_update<T>(
     }
 }
 
-/// On a verifying `eq_proof` that `new_handles` re-key `self` (under `old_pk`) to `new_pk` — each
-/// limb's commitment kept, its decryption handle mapped by a shared witness — replace `self`'s
-/// amount with the re-keyed amount, preserving `upper_bound` (the re-keyed limbs encrypt the same
-/// values, so their bounds are unchanged). Returns whether the proof verified. The caller is
-/// responsible for updating its own record of the active key.
-public(package) fun try_set_public_key<T>(
-    self: &mut EncryptedBalance<T>,
+/// Verify — without committing — that `new_handles` re-key `self` (under `old_pk`) to `new_pk`, each
+/// limb's commitment kept and its decryption handle mapped by a shared witness. Returns the re-keyed
+/// amount on success, else `none`. The caller stages the returned amount and commits it later with
+/// `set_amount`, so a whole-account rotation can verify every token before applying any.
+public(package) fun try_rekey_amount<T>(
+    self: &EncryptedBalance<T>,
     old_pk: &Element<G>,
     new_pk: &Element<G>,
     new_handles: vector<Element<G>>,
-    eq_proof: DdhProof,
+    eq_proof: &DdhProof,
     dst: vector<u8>,
-): bool {
-    self.amount.try_rekey(old_pk, new_pk, new_handles, &eq_proof, dst).is_some_and!(|amount| {
-        self.amount = *amount;
-        true
-    })
+): Option<EncryptedAmount> {
+    self.amount.try_rekey(old_pk, new_pk, new_handles, eq_proof, dst)
+}
+
+/// Commit a re-keyed `amount` (from `try_rekey_amount`) into `self`, preserving `upper_bound` — the
+/// re-keyed limbs encrypt the same values, so their bounds are unchanged.
+public(package) fun set_amount<T>(self: &mut EncryptedBalance<T>, amount: EncryptedAmount) {
+    self.amount = amount;
 }
 
 // === Admin functions ===
