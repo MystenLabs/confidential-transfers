@@ -42,10 +42,10 @@
 /// 2. Register a token account for a token type `T` (no per-token key or auditor data needed).
 /// 3. Rotate the account public key (all token balances at once): pause account deposits
 ///    (`set_account_accepts_deposits(false)`) and `merge` each token, then `begin_key_rotation`, one
-///    `stage_token_rekey` per registered token (verify + stage), `finish_staging`, one
-///    `finalize_token_rekey` per token (commit), then `try_finish_key_rotation_and_unpause` (resumes deposits on
-///    success). A raced deposit soft-fails the rotation, leaving the account paused and merged so the
-///    caller can retry.
+///    `stage_token_rekey` per registered token (stage), `finish_staging` (verify a single re-keying
+///    `DdhProof` over every token's handle pairs at once), one `finalize_token_rekey` per token
+///    (commit), then `try_finish_key_rotation_and_unpause` (resumes deposits on success). A raced
+///    deposit soft-fails the rotation, leaving the account paused and merged so the caller can retry.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to two or more token accounts. If the token has an auditor key
@@ -219,7 +219,16 @@ public enum TransferBatch<phantom T> {
 /// the passes are no-ops and `try_finish_key_rotation_and_unpause` soft-fails, leaving the account paused and
 /// merged for a retry.
 public enum KeyRotation {
-    Staging { owner: address, new_pk: Element<G>, staged: VecMap<TypeName, EncryptedAmount> },
+    Staging {
+        owner: address,
+        new_pk: Element<G>,
+        // Accumulated re-keying DDH statement (Alg. 13's Π_rekey): `bases` starts `[old_pk]` and
+        // `images` `[new_pk]`, then each `stage_token_rekey` appends that token's four old/new limb
+        // handles, so one batched proof over all `4m+1` pairs is checked at `finish_staging`.
+        bases: vector<Element<G>>,
+        images: vector<Element<G>>,
+        staged: VecMap<TypeName, EncryptedAmount>,
+    },
     Finalizing { owner: address, new_pk: Element<G>, staged: VecMap<TypeName, EncryptedAmount> },
     Failed { owner: address },
 }
@@ -430,57 +439,63 @@ public fun begin_key_rotation<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(new_pk != g_identity(), EIdentityPublicKey);
-    KeyRotation::Staging { owner: account.owner, new_pk, staged: vec_map::empty() }
+    KeyRotation::Staging {
+        owner: account.owner,
+        new_pk,
+        bases: vector[account.pk],
+        images: vector[new_pk],
+        staged: vec_map::empty(),
+    }
 }
 
-/// Verify pass: check that `new_handles` re-key token `T`'s active balance (under the account's
-/// current key) to the rotation's `new_pk`, and stage the re-keyed amount without committing. On a
-/// failed proof — e.g. a deposit raced the caller's read — the receipt transitions to `Failed` so
-/// the whole rotation soft-fails at `try_finish_key_rotation_and_unpause` rather than aborting. No-op once
-/// `Failed`. Aborts if the receipt is not in the `Staging` phase, is for a different account, `T`
-/// was already prepared, or the token has unmerged pending deposits.
+/// Stage pass: append token `T`'s four old/new limb-handle pairs to the rotation's DDH statement and
+/// stage its re-keyed amount, without verifying (the whole batch is checked once at
+/// `finish_staging`). No-op once `Failed`. Aborts if the receipt is not in the `Staging` phase, is
+/// for a different account, `T` was already staged, or the token has unmerged pending deposits.
 public fun stage_token_rekey<T>(
     rotation: KeyRotation,
     account: &Account,
     new_handles: vector<Element<G>>,
-    rekey_proof: DdhProof,
 ): KeyRotation {
     match (rotation) {
         KeyRotation::Failed { owner } => KeyRotation::Failed { owner },
-        KeyRotation::Staging { owner, new_pk, mut staged } => {
+        KeyRotation::Staging { owner, new_pk, mut bases, mut images, mut staged } => {
             assert!(owner == account.owner, EKeyRotationOwnerMismatch);
             let ty = type_name::with_defining_ids<T>();
             assert!(!staged.contains(&ty), ETokenAlreadyPrepared);
-            let old_pk = account.pk;
             let token_account = &account[TokenAccountKey<T>()];
             assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
-            let dst = token_account.session_id.dst(DST_BATCH_DDH);
-            let rekeyed = token_account
-                .active
-                .try_rekey_amount(&old_pk, &new_pk, new_handles, &rekey_proof, dst);
-            if (rekeyed.is_some()) {
-                staged.insert(ty, rekeyed.destroy_some());
-                KeyRotation::Staging { owner, new_pk, staged }
-            } else {
-                rekeyed.destroy_none();
-                KeyRotation::Failed { owner }
-            }
+            bases.append(token_account.active.limb_handles());
+            staged.insert(ty, token_account.active.rekey_amount_unchecked(new_handles));
+            images.append(new_handles);
+            KeyRotation::Staging { owner, new_pk, bases, images, staged }
         },
         KeyRotation::Finalizing { .. } => abort EInvalidRotationPhase,
     }
 }
 
-/// Advance from the `Staging` phase to `Finalizing`, requiring every registered token to have been
-/// prepared (`staged.length() == account.num_tokens`). This is what makes `finalize_token_rekey` unable to
-/// fail: no token can start committing until all have verified. No-op once `Failed`; aborts if
-/// already `Finalizing`.
-public fun finish_staging(rotation: KeyRotation, account: &Account): KeyRotation {
+/// Advance from `Staging` to `Finalizing`: require every registered token to have been staged
+/// (`staged.length() == account.num_tokens`) and verify the single batched re-keying DDH over the
+/// `4m+1` accumulated pairs — Algorithm 13's `Π_rekey` under the one shared witness. A failing proof
+/// (e.g. a deposit raced the caller's read) transitions to `Failed`, so the rotation soft-fails at
+/// `try_finish_key_rotation_and_unpause` rather than aborting; no token can start committing until
+/// every one has verified. No-op once `Failed`; aborts if already `Finalizing`.
+public fun finish_staging(
+    rotation: KeyRotation,
+    account: &Account,
+    rekey_proof: DdhProof,
+): KeyRotation {
     match (rotation) {
         KeyRotation::Failed { owner } => KeyRotation::Failed { owner },
-        KeyRotation::Staging { owner, new_pk, staged } => {
+        KeyRotation::Staging { owner, new_pk, bases, images, staged } => {
             assert!(owner == account.owner, EKeyRotationOwnerMismatch);
             assert!(staged.length() == account.num_tokens, ENotAllTokensPrepared);
-            KeyRotation::Finalizing { owner, new_pk, staged }
+            let dst = account.account_session_id().dst(DST_BATCH_DDH);
+            if (rekey_proof.verify_ddh(dst, &bases, &images)) {
+                KeyRotation::Finalizing { owner, new_pk, staged }
+            } else {
+                KeyRotation::Failed { owner }
+            }
         },
         KeyRotation::Finalizing { .. } => abort EInvalidRotationPhase,
     }
@@ -1137,6 +1152,13 @@ public(package) fun session_id<T>(account: &Account): vector<u8> {
     derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>()).to_bytes().take(20)
 }
 
+/// 20-byte account-level session_id, the DST context for whole-account key rotation, which spans
+/// every token and so cannot use a per-`TokenAccount` `session_id`. `owner` is unique per account
+/// (one account per address) and the re-keying statement itself binds `account.pk`.
+public(package) fun account_session_id(account: &Account): vector<u8> {
+    account.owner.to_bytes().take(20)
+}
+
 /// 21-byte Fiat-Shamir DST `session_id || protocol_id`.
 public(package) fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
     let mut bytes = session_id;
@@ -1221,4 +1243,9 @@ public fun account_public_key(account: &Account): Element<G> {
 #[test_only]
 public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
     account.session_id<T>().dst(protocol_id)
+}
+
+#[test_only]
+public fun account_derive_dst_for_testing(account: &Account, protocol_id: u8): vector<u8> {
+    account.account_session_id().dst(protocol_id)
 }

@@ -801,15 +801,14 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
 
     // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate the
-    // whole account via the two-phase flow (begin -> prepare each token -> finalize each token ->
-    // try_finish_key_rotation_and_unpause).
-    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
+    // whole account (begin -> stage each token -> finish_staging (batched DDH) -> finalize each
+    // token -> try_finish_key_rotation_and_unpause).
+    let batch_ddh_dst = account_1.account_derive_dst_for_testing(contra::protocol_id_batch_ddh());
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
     let id = ristretto255::g_identity();
-    // Batched re-key proof over (pk, limb-0 handle) -- the other limbs are zero (identity handles).
+    // Batched re-key proof over (pk, limb-0 handle) for the one token -- the other limbs are zero
+    // (identity handles).
     let rekey_proof = nizk::prove_ddh(
         batch_ddh_dst,
         &w,
@@ -828,9 +827,8 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
         rotation,
         &account_1,
         new_ea.decryption_handles_for_testing(),
-        rekey_proof,
     );
-    let rotation = contra::finish_staging(rotation, &account_1);
+    let rotation = contra::finish_staging(rotation, &account_1, rekey_proof);
     let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
     assert!(contra::try_finish_key_rotation_and_unpause(rotation, &mut account_1));
 
@@ -915,9 +913,7 @@ fun test_key_rotation_soft_fails_on_bad_proof() {
 
     // A re-key proof built with the wrong witness -- verification fails, standing in for a raced
     // balance the client's handles no longer match.
-    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
+    let batch_ddh_dst = account_1.account_derive_dst_for_testing(contra::protocol_id_batch_ddh());
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let wrong_w = ristretto255::scalar_from_u64(7);
     let id = ristretto255::g_identity();
@@ -937,11 +933,10 @@ fun test_key_rotation_soft_fails_on_bad_proof() {
         rotation,
         &account_1,
         new_ea.decryption_handles_for_testing(),
-        bad_proof,
     );
     // The remaining steps no-op on a `Failed` receipt (the PTB is not aborted), then the seal
     // reports failure.
-    let rotation = contra::finish_staging(rotation, &account_1);
+    let rotation = contra::finish_staging(rotation, &account_1, bad_proof);
     let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
     assert!(!contra::try_finish_key_rotation_and_unpause(rotation, &mut account_1));
 
@@ -1022,9 +1017,7 @@ fun test_finish_aborts_on_bad_proof() {
     contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
 
-    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
+    let batch_ddh_dst = account_1.account_derive_dst_for_testing(contra::protocol_id_batch_ddh());
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let wrong_w = ristretto255::scalar_from_u64(7);
     let id = ristretto255::g_identity();
@@ -1044,9 +1037,8 @@ fun test_finish_aborts_on_bad_proof() {
         rotation,
         &account_1,
         new_ea.decryption_handles_for_testing(),
-        bad_proof,
     );
-    let rotation = contra::finish_staging(rotation, &account_1);
+    let rotation = contra::finish_staging(rotation, &account_1, bad_proof);
     let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
     // Aborts here with `EKeyRotationFailed` (unlike the `try_` variant, which returns `false`).
     contra::finish_key_rotation(rotation, &mut account_1);

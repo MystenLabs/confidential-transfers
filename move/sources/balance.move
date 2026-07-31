@@ -246,23 +246,24 @@ public(package) fun try_update<T>(
     }
 }
 
-/// Verify — without committing — that `new_handles` re-key `self` (under `old_pk`) to `new_pk`, each
-/// limb's commitment kept and its decryption handle mapped by a shared witness. Returns the re-keyed
-/// amount on success, else `none`. The caller stages the returned amount and commits it later with
-/// `set_amount`, so a whole-account rotation can verify every token before applying any.
-public(package) fun try_rekey_amount<T>(
-    self: &EncryptedBalance<T>,
-    old_pk: &Element<G>,
-    new_pk: &Element<G>,
-    new_handles: vector<Element<G>>,
-    eq_proof: &DdhProof,
-    dst: vector<u8>,
-): Option<EncryptedAmount> {
-    self.amount.try_rekey(old_pk, new_pk, new_handles, eq_proof, dst)
+/// The four limb decryption handles of `self`'s amount, in order — the old handles a whole-account
+/// re-keying DDH maps to the new ones.
+public(package) fun limb_handles<T>(self: &EncryptedBalance<T>): vector<Element<G>> {
+    self.amount.limb_handles()
 }
 
-/// Commit a re-keyed `amount` (from `try_rekey_amount`) into `self`, preserving `upper_bound` — the
-/// re-keyed limbs encrypt the same values, so their bounds are unchanged.
+/// Re-key `self`'s amount by swapping its limb handles for `new_handles` without verifying (see
+/// `encrypted_amount::rekey_unchecked`); the caller batches one DDH over all tokens before committing
+/// with `set_amount`.
+public(package) fun rekey_amount_unchecked<T>(
+    self: &EncryptedBalance<T>,
+    new_handles: vector<Element<G>>,
+): EncryptedAmount {
+    self.amount.rekey_unchecked(new_handles)
+}
+
+/// Commit a re-keyed `amount` into `self`, preserving `upper_bound` — the re-keyed limbs encrypt the
+/// same values, so their bounds are unchanged.
 public(package) fun set_amount<T>(self: &mut EncryptedBalance<T>, amount: EncryptedAmount) {
     self.amount = amount;
 }
