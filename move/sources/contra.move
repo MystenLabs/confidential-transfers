@@ -17,7 +17,7 @@
 /// 5. Freeze specific accounts via the token's deny list, using
 ///    `sui::coin::deny_list_v2_add` / `sui::coin::deny_list_v2_remove`. The deny list affects
 ///    both the public and the private coin; to freeze only the private coin, see items 2 and 3.
-/// 6. Rotate or disable the auditor key via `update_auditors` (using the ManagementCap). The
+/// 6. Rotate or disable the auditor key via `update_auditor` (using the ManagementCap). The
 ///    outgoing key stays valid for transfers through a caller-set `expiration_epoch` (a grace
 ///    window for in-flight transfers); passing `none` disables auditing going forward. Auditing is
 ///    per-transfer: each transfer carries auditor-readable ciphertexts of the amount, so the auditor
@@ -43,7 +43,7 @@
 /// 3. Rotate the account public key (all token balances at once): pause account deposits
 ///    (`set_account_accepts_deposits(false)`) and `merge` each token, then `begin_key_rotation`, one
 ///    `stage_token_rekey` per registered token (verify + stage), `finish_staging`, one
-///    `finalize_token_rekey` per token (commit), then `try_finish_and_unpause` (resumes deposits on
+///    `finalize_token_rekey` per token (commit), then `try_finish_key_rotation_and_unpause` (resumes deposits on
 ///    success). A raced deposit soft-fails the rotation, leaving the account paused and merged so the
 ///    caller can retry.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
@@ -152,7 +152,7 @@ public struct ConfidentialToken<phantom T> has key {
     is_active: bool, // Global freeze capability.
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
-    auditors: Auditors,
+    auditor: Auditors,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -164,25 +164,18 @@ public struct Pool<phantom T> has key {
     id: UID,
 }
 
-/// Base account that stores token accounts as dynamic fields. `pk` is the account's single ElGamal
-/// public key, shared by every token balance; `num_tokens` counts registered token types so
-/// `finish_key_rotation` can require every balance to be re-keyed. `accepts_deposits` is the
-/// account-wide deposit gate that whole-account key rotation owns (`begin_key_rotation` clears it,
-/// `finish_key_rotation` sets it); a deposit is accepted only if both this and the per-`TokenAccount`
-/// gate allow it.
+/// Base account that stores token accounts as dynamic fields.
 public struct Account has key {
     id: UID,
     owner: address,
     pk: Element<G>,
     accepts_deposits: bool,
     // TODO: removable if `TokenAccount`s are stored in a `Bag` rather than raw dynamic fields —
-    // `Bag::length()` would maintain this count for `finish_key_rotation`.
+    // `Bag::length()` would maintain this count for the rotation's completeness check.
     num_tokens: u64,
 }
 
-/// A user's account for one confidential token. Balances are encrypted under the account-level
-/// `Account.pk`. `accepts_deposits` is the per-token deposit gate, independent of the account-wide
-/// one on `Account`.
+/// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
     session_id: vector<u8>,
     is_frozen: bool,
@@ -211,20 +204,19 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        // Flattened auditor handles (two per receiver, in order), or empty when auditing is off.
         auditor_handles: vector<Element<G>>,
     },
 }
 
 /// Hot-potato state machine for a whole-account key rotation (no abilities, so it can't be stored or
-/// dropped — it must be consumed by `try_finish_and_unpause`).
+/// dropped — it must be consumed by `try_finish_key_rotation_and_unpause`).
 ///
 /// The rotation runs in two phases carried as distinct variants: `Staging` (`stage_token_rekey` verifies
 /// each token's re-key and stages the re-keyed amount) advances via `finish_staging` — once every
 /// token is staged — to `Finalizing` (`finalize_token_rekey` pops and applies each staged amount). When
-/// `Finalizing`'s `staged` map is empty every balance has been re-keyed and `try_finish_and_unpause`
+/// `Finalizing`'s `staged` map is empty every balance has been re-keyed and `try_finish_key_rotation_and_unpause`
 /// flips the account key. `Failed` is entered when a `stage_token_rekey` re-key check fails, after which
-/// the passes are no-ops and `try_finish_and_unpause` soft-fails, leaving the account paused and
+/// the passes are no-ops and `try_finish_key_rotation_and_unpause` soft-fails, leaving the account paused and
 /// merged for a retry.
 public enum KeyRotation {
     Staging { owner: address, new_pk: Element<G>, staged: VecMap<TypeName, EncryptedAmount> },
@@ -301,7 +293,7 @@ public use fun share_confidential_token as ConfidentialToken.share;
 /// TreasuryCaps from being used.
 ///
 /// Sets the token's auditor key to `auditor_pk` (per-transfer auditing). Pass `none` to start with
-/// auditing disabled; the issuer can enable or rotate it later via `update_auditors`.
+/// auditing disabled; the issuer can enable or rotate it later via `update_auditor`.
 ///
 /// Returns the created `ConfidentialToken` and a `ManagementCap` that can be used to perform
 /// administrative operations for this token.
@@ -322,7 +314,7 @@ public fun new_confidential_token<T>(
             is_active: true,
             freeze_admins: vec_set::empty(),
             policy: policy::permissionless(),
-            auditors: new_auditors(auditor_pk),
+            auditor: new_auditors(auditor_pk),
         },
         ManagementCap { id: object::new(ctx) },
     )
@@ -407,7 +399,7 @@ public fun set_accepts_encrypted_deposits<T>(
 
 /// Set the account-wide deposit gate (independent of the per-token gates). A key rotation requires
 /// this paused: the caller sets it `false` before `begin_key_rotation` (which asserts it), and
-/// `try_finish_and_unpause` resumes it on success. Authorized by `auth`, which must be for
+/// `try_finish_key_rotation_and_unpause` resumes it on success. Authorized by `auth`, which must be for
 /// `account.owner`; any `Auth<T>` is accepted regardless of which operation it covers.
 public fun set_account_accepts_deposits<T>(
     account: &mut Account,
@@ -420,7 +412,7 @@ public fun set_account_accepts_deposits<T>(
 
 /// Begin a whole-account key rotation to `new_pk`. Because `pk` is account-level, rotation re-keys
 /// every registered token balance in two phases — `stage_token_rekey` per token (verify + stage),
-/// `finish_staging`, `finalize_token_rekey` per token (commit) — sealed by `try_finish_and_unpause`,
+/// `finish_staging`, `finalize_token_rekey` per token (commit) — sealed by `try_finish_key_rotation_and_unpause`,
 /// which resumes deposits on success. Returns the `KeyRotation` receipt in the `Staging` phase.
 /// Authenticates `account.owner` via `auth`, which must be for the `PERMISSIONED_REGISTER` operation
 /// and may be for any token the account is registered for (rotation reuses the registration
@@ -444,7 +436,7 @@ public fun begin_key_rotation<T>(
 /// Verify pass: check that `new_handles` re-key token `T`'s active balance (under the account's
 /// current key) to the rotation's `new_pk`, and stage the re-keyed amount without committing. On a
 /// failed proof — e.g. a deposit raced the caller's read — the receipt transitions to `Failed` so
-/// the whole rotation soft-fails at `try_finish_and_unpause` rather than aborting. No-op once
+/// the whole rotation soft-fails at `try_finish_key_rotation_and_unpause` rather than aborting. No-op once
 /// `Failed`. Aborts if the receipt is not in the `Staging` phase, is for a different account, `T`
 /// was already prepared, or the token has unmerged pending deposits.
 public fun stage_token_rekey<T>(
@@ -513,8 +505,8 @@ public fun finalize_token_rekey<T>(rotation: KeyRotation, account: &mut Account)
 }
 
 /// Seal a completed rotation: check the caller and that `staged` is drained empty (every token
-/// finalized), then flip the account key to `new_pk`. Shared by `finish` and
-/// `try_finish_and_unpause`.
+/// finalized), then flip the account key to `new_pk`. Shared by `finish_key_rotation` and
+/// `try_finish_key_rotation_and_unpause`.
 fun commit_rotation(
     account: &mut Account,
     owner: address,
@@ -530,7 +522,7 @@ fun commit_rotation(
 
 /// Commit a completed rotation, flipping the account key to `new_pk` (deposits stay paused). Aborts
 /// if the rotation soft-failed (`EKeyRotationFailed`) or is incomplete.
-public fun finish(rotation: KeyRotation, account: &mut Account) {
+public fun finish_key_rotation(rotation: KeyRotation, account: &mut Account) {
     match (rotation) {
         KeyRotation::Finalizing { owner, new_pk, staged } => {
             commit_rotation(account, owner, new_pk, staged)
@@ -543,7 +535,7 @@ public fun finish(rotation: KeyRotation, account: &mut Account) {
 /// Commit a completed rotation, flipping the account key to `new_pk` and resuming deposits; returns
 /// `true`. A soft-failed rotation instead emits `TryKeyRotationFailedEvent` and returns `false`
 /// (deposits stay paused). Aborts if incomplete.
-public fun try_finish_and_unpause(rotation: KeyRotation, account: &mut Account): bool {
+public fun try_finish_key_rotation_and_unpause(rotation: KeyRotation, account: &mut Account): bool {
     match (rotation) {
         KeyRotation::Failed { owner } => {
             assert!(owner == account.owner, EKeyRotationOwnerMismatch);
@@ -712,7 +704,7 @@ fun verify_auditing<T>(
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
 ): vector<Element<G>> {
-    if (!ct.auditors.is_enabled()) {
+    if (!ct.auditor.is_enabled()) {
         assert!(auditor_handles.is_none() && auditor_proof.is_none(), EUnexpectedAuditorData);
         return vector[]
     };
@@ -722,7 +714,7 @@ fun verify_auditing<T>(
     let encryptions = encrypted_amount::batch_auditor_encryptions(receiver_amounts, &handles);
     assert!(
         ct
-            .auditors
+            .auditor
             .verify_transfer(
                 ctx.epoch(),
                 &encryptions,
@@ -1106,17 +1098,17 @@ public fun set_policy<T, W>(
 /// Rotate this confidential token's auditor key to `new_pk` (pass `none` to disable auditing). The
 /// outgoing key stays valid for transfers through `expiration_epoch`, so transfers built against it
 /// just before the rotation still verify (see `auditors::verify_transfer`).
-public fun update_auditors<T>(
+public fun update_auditor<T>(
     ct: &mut ConfidentialToken<T>,
     _cap: &ManagementCap<T>,
     new_pk: Option<Element<G>>,
     expiration_epoch: u64,
 ) {
-    ct.auditors.update(new_pk, expiration_epoch);
+    ct.auditor.update(new_pk, expiration_epoch);
     events::emit_update_auditors<T>(
-        ct.auditors.current_pk(),
-        ct.auditors.previous_pk(),
-        ct.auditors.previous_expiration_epoch(),
+        ct.auditor.current_pk(),
+        ct.auditor.previous_pk(),
+        ct.auditor.previous_expiration_epoch(),
     );
 }
 

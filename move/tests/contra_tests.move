@@ -802,7 +802,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 
     // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate the
     // whole account via the two-phase flow (begin -> prepare each token -> finalize each token ->
-    // try_finish_and_unpause).
+    // try_finish_key_rotation_and_unpause).
     let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_batch_ddh(),
     );
@@ -832,7 +832,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     );
     let rotation = contra::finish_staging(rotation, &account_1);
     let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
-    assert!(contra::try_finish_and_unpause(rotation, &mut account_1));
+    assert!(contra::try_finish_key_rotation_and_unpause(rotation, &mut account_1));
 
     // The on-chain handle must now be bound to `pk_new`, the account key updated, and deposits
     // resumed.
@@ -857,7 +857,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 }
 
 /// A failed `stage_token_rekey` (here: a bad re-key proof, standing in for a raced deposit) must
-/// soft-fail the whole rotation: `finalize_token_rekey` is a no-op, `try_finish_and_unpause` returns
+/// soft-fail the whole rotation: `finalize_token_rekey` is a no-op, `try_finish_key_rotation_and_unpause` returns
 /// `false`, nothing is committed, and the account is left paused (so a retry is race-free).
 #[test]
 fun test_key_rotation_soft_fails_on_bad_proof() {
@@ -943,7 +943,7 @@ fun test_key_rotation_soft_fails_on_bad_proof() {
     // reports failure.
     let rotation = contra::finish_staging(rotation, &account_1);
     let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
-    assert!(!contra::try_finish_and_unpause(rotation, &mut account_1));
+    assert!(!contra::try_finish_key_rotation_and_unpause(rotation, &mut account_1));
 
     // Nothing committed: key unchanged, balance unchanged, and the account is still paused.
     assert_eq!(account_1.account_public_key(), pk_old);
@@ -966,8 +966,8 @@ fun test_key_rotation_soft_fails_on_bad_proof() {
     scenario.end();
 }
 
-/// The hard `finish` aborts (reverting the PTB) when the rotation soft-failed, rather than reporting
-/// `false` like `try_finish_and_unpause`.
+/// The hard `finish_key_rotation` aborts (reverting the PTB) when the rotation soft-failed, rather than reporting
+/// `false` like `try_finish_key_rotation_and_unpause`.
 #[test, expected_failure(abort_code = ::contra::contra::EKeyRotationFailed)]
 fun test_finish_aborts_on_bad_proof() {
     let setup_addr = @0x0;
@@ -1049,7 +1049,7 @@ fun test_finish_aborts_on_bad_proof() {
     let rotation = contra::finish_staging(rotation, &account_1);
     let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
     // Aborts here with `EKeyRotationFailed` (unlike the `try_` variant, which returns `false`).
-    contra::finish(rotation, &mut account_1);
+    contra::finish_key_rotation(rotation, &mut account_1);
 
     // Unreachable; included so the resource flow type-checks if the abort is removed.
     unit_test::destroy(account_1);

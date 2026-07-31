@@ -72,7 +72,7 @@ public struct TryTransferFailedEvent() has copy, drop;
 /// Emitted when a `try_unwrap` fails due to an invalid balance proof.
 public struct TryUnwrapFailedEvent() has copy, drop;
 
-/// Emitted when `try_finish_and_unpause` bails because a `stage_token_rekey` re-key check failed. The
+/// Emitted when `try_finish_key_rotation_and_unpause` bails because a `stage_token_rekey` re-key check failed. The
 /// account is left paused and merged so the rotation can be retried.
 public struct TryKeyRotationFailedEvent() has copy, drop;
 
