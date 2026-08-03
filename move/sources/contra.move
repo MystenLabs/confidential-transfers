@@ -189,7 +189,7 @@ public enum TransferBatch<phantom T> {
         seed_point: Element<G>,
         next_index: u8,
         auditor_handles: vector<Element<G>>,
-        register_permissionless: bool,
+        can_register_permissionless: bool,
     },
 }
 
@@ -588,7 +588,10 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_handles,
-            register_permissionless: policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
+            can_register_permissionless: policy::is_permissionless(
+                &ct.policy,
+                PERMISSIONED_REGISTER,
+            ),
         }
     } else {
         withdrawn.destroy_none();
@@ -653,7 +656,7 @@ public fun add_to_batch<T>(
             seed_point,
             next_index,
             mut auditor_handles,
-            register_permissionless,
+            can_register_permissionless,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -664,7 +667,7 @@ public fun add_to_batch<T>(
             // the new account is keyed at `Account.pk`, matching the key the sender encrypted under.
             // For a permissioned token, an unregistered receiver's deposit aborts instead.
             if (!receiver.has_token<T>()) {
-                assert!(register_permissionless, EReceiverNotRegistered);
+                assert!(can_register_permissionless, EReceiverNotRegistered);
                 let session_id = receiver.session_id<T>();
                 receiver.add_token_account<T>(session_id);
             };
@@ -706,7 +709,7 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index: next_index + 1,
                 auditor_handles,
-                register_permissionless,
+                can_register_permissionless,
             }
         },
     }
