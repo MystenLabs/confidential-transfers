@@ -200,9 +200,6 @@ public enum TransferBatch<phantom T> {
         seed_point: Element<G>,
         next_index: u8,
         auditor_handles: vector<Element<G>>,
-        /// Whether token `T` leaves `register` permissionless, computed once in `batched_transfer`.
-        /// When true, `add_to_batch` auto-creates a receiver's `TokenAccount` on first deposit;
-        /// otherwise an unregistered receiver's deposit aborts (the issuer gates registration).
         register_permissionless: bool,
     },
 }
