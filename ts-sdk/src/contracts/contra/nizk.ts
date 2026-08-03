@@ -8,16 +8,6 @@ import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
 import * as group_ops from './deps/sui/group_ops.js';
 
 const $moduleName = '@local-pkg/contra::nizk';
-export const KeyConsistencyProof = new MoveStruct({
-	name: `${$moduleName}::KeyConsistencyProof`,
-	fields: {
-		a1: bcs.vector(group_ops.Element),
-		a2: bcs.vector(group_ops.Element),
-		a3: group_ops.Element,
-		z1: bcs.vector(group_ops.Element),
-		z2: bcs.vector(group_ops.Element),
-	},
-});
 export const ElGamalProof = new MoveStruct({
 	name: `${$moduleName}::ElGamalProof`,
 	fields: {
@@ -80,43 +70,6 @@ export function newElgamalProof(options: NewElgamalProofOptions) {
 			package: packageAddress,
 			module: 'nizk',
 			function: 'new_elgamal_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewKeyConsistencyProofArguments {
-	a1: TransactionArgument;
-	a2: TransactionArgument;
-	a3: TransactionArgument;
-	z1: TransactionArgument;
-	z2: TransactionArgument;
-}
-export interface NewKeyConsistencyProofOptions {
-	package?: string;
-	arguments:
-		| NewKeyConsistencyProofArguments
-		| [
-				a1: TransactionArgument,
-				a2: TransactionArgument,
-				a3: TransactionArgument,
-				z1: TransactionArgument,
-				z2: TransactionArgument,
-		  ];
-}
-export function newKeyConsistencyProof(options: NewKeyConsistencyProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [
-		'vector<null>',
-		'vector<null>',
-		null,
-		'vector<null>',
-		'vector<null>',
-	] satisfies (string | null)[];
-	const parameterNames = ['a1', 'a2', 'a3', 'z1', 'z2'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'nizk',
-			function: 'new_key_consistency_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

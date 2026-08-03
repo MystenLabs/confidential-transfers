@@ -68,31 +68,6 @@ export function encryptedAmount(options: EncryptedAmountOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface MultiRecipientEncryptionArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-	m: RawTransactionArgument<number | bigint>;
-}
-export interface MultiRecipientEncryptionOptions {
-	package?: string;
-	arguments:
-		| MultiRecipientEncryptionArguments
-		| [
-				parts: RawTransactionArgument<Array<Array<number>>>,
-				m: RawTransactionArgument<number | bigint>,
-		  ];
-}
-export function multiRecipientEncryption(options: MultiRecipientEncryptionOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
-	const parameterNames = ['parts', 'm'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'multi_recipient_encryption',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
 export interface DdhProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -147,31 +122,6 @@ export function consistencyProof(options: ConsistencyProofOptions) {
 			package: packageAddress,
 			module: 'decode',
 			function: 'consistency_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface KeyConsistencyProofArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-	m: RawTransactionArgument<number | bigint>;
-}
-export interface KeyConsistencyProofOptions {
-	package?: string;
-	arguments:
-		| KeyConsistencyProofArguments
-		| [
-				parts: RawTransactionArgument<Array<Array<number>>>,
-				m: RawTransactionArgument<number | bigint>,
-		  ];
-}
-export function keyConsistencyProof(options: KeyConsistencyProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
-	const parameterNames = ['parts', 'm'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'key_consistency_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

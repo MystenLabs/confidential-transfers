@@ -4,7 +4,6 @@
 import { bcs } from '@mysten/sui/bcs';
 
 import { MoveStruct, MoveTuple } from '../utils/index.js';
-import * as auditors from './auditors.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as encrypted_amount from './encrypted_amount.js';
 
@@ -22,15 +21,26 @@ export const NewRegistrationEvent = new MoveStruct({
 	fields: {
 		owner: bcs.Address,
 		pk: group_ops.Element,
-		verified_key_encryption: auditors.VerifiedKeyEncryption,
 	},
 });
-export const UpdatedPublicKeyEvent = new MoveStruct({
-	name: `${$moduleName}::UpdatedPublicKeyEvent<phantom T>`,
+export const AccountKeyRotatedEvent = new MoveStruct({
+	name: `${$moduleName}::AccountKeyRotatedEvent`,
 	fields: {
 		owner: bcs.Address,
 		new_pk: group_ops.Element,
-		verified_key_encryption: auditors.VerifiedKeyEncryption,
+	},
+});
+export const TokenRekeyedEvent = new MoveStruct({
+	name: `${$moduleName}::TokenRekeyedEvent<phantom T>`,
+	fields: {
+		owner: bcs.Address,
+		new_pk: group_ops.Element,
+	},
+});
+export const TryTokenRekeyFailedEvent = new MoveStruct({
+	name: `${$moduleName}::TryTokenRekeyFailedEvent<phantom T>`,
+	fields: {
+		owner: bcs.Address,
 	},
 });
 export const WrapEvent = new MoveStruct({
@@ -51,6 +61,7 @@ export const TransferEvent = new MoveStruct({
 		receiver: bcs.Address,
 		receiver_pk: group_ops.Element,
 		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
+		auditor_handles: bcs.vector(group_ops.Element),
 		memo: bcs.vector(bcs.u8()),
 	},
 });
@@ -66,10 +77,6 @@ export const TryTransferFailedEvent = new MoveTuple({
 });
 export const TryUnwrapFailedEvent = new MoveTuple({
 	name: `${$moduleName}::TryUnwrapFailedEvent`,
-	fields: [bcs.bool()],
-});
-export const TrySetPublicKeyFailedEvent = new MoveTuple({
-	name: `${$moduleName}::TrySetPublicKeyFailedEvent`,
 	fields: [bcs.bool()],
 });
 export const UnwrapEvent = new MoveStruct({
@@ -116,8 +123,8 @@ export const AccountUnfreezeEvent = new MoveStruct({
 export const UpdateAuditorsEvent = new MoveStruct({
 	name: `${$moduleName}::UpdateAuditorsEvent<phantom T>`,
 	fields: {
-		public_keys: bcs.vector(group_ops.Element),
-		version: bcs.u32(),
-		recommended_min_version: bcs.u32(),
+		current_pk: bcs.option(group_ops.Element),
+		previous_pk: bcs.option(group_ops.Element),
+		previous_expiration_epoch: bcs.u64(),
 	},
 });

@@ -11,18 +11,15 @@ export {
 	Ciphertext,
 	DiscreteLogTable,
 	EncryptedAmount,
-	MultiRecipientEncryption,
 	computeTableEntries,
 } from './twisted_elgamal.js';
 export { TokenAccount } from './token_account.js';
 export { G, randomScalar, scalarToBytes, pointFromBcs } from './ristretto255.js';
 export type { RistrettoPoint } from './ristretto255.js';
 export { point } from './helpers.js';
-export { KeyEncryption } from './key_encryption.js';
-export { DdhNizk, ElGamalNizk, KeyConsistencyProof, limbsToScalar, scalarToLimbs } from './nizk.js';
+export { DdhNizk, ElGamalNizk } from './nizk.js';
 export type {
 	AccountStatus,
-	AuditorVersionEntry,
 	BalanceEntry,
 	BatchedTransferOptions,
 	BatchedTransferRecipient,
@@ -34,14 +31,14 @@ export type {
 	NewAccountOptions,
 	PauseAccountOptions,
 	RegisterOptions,
-	RotateKeyAndTransferBatchOptions,
+	RekeyTokenOptions,
 	RotateKeyOptions,
+	SetAccountKeyOptions,
 	ShareAccountOptions,
-	TokenAuditors,
+	TokenAuditor,
 	TokenBalance,
 	TransferOptions,
 	UnpauseAccountOptions,
 	UnwrapOptions,
-	VerifiedKeyEncryption,
 	WrapOptions,
 } from './types.js';

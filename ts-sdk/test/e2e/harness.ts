@@ -4,14 +4,15 @@
 /**
  * Shared setup for the devnet e2e suite. `createHarness` publishes the contra
  * package and a fresh test token, builds a `ContraClient`, configures a
- * baseline two-auditor set, and bundles in the shared transaction helpers
- * from `operations.ts`.
+ * baseline per-transfer auditor key, and bundles in the shared transaction
+ * helpers from `operations.ts`.
  */
 
 import { join } from 'node:path';
 import { ContraInitializer } from 'contra-utils/node';
 
 import { contra } from '../../src/client.js';
+import { randomScalar } from '../../src/ristretto255.js';
 import { DiscreteLogTable } from '../../src/twisted_elgamal.js';
 import { createOperations } from './operations.js';
 import type { ContraTestClient } from './operations.js';
@@ -29,8 +30,8 @@ export type {
 
 /**
  * Deploy the contra package and a fresh confidential test token, build a
- * `ContraClient`, configure a baseline two-auditor set, and return the
- * context plus the shared transaction helpers.
+ * `ContraClient`, configure a baseline per-transfer auditor key, and return
+ * the context plus the shared transaction helpers.
  */
 export async function createHarness() {
 	const contraInit = await ContraInitializer.init({
@@ -46,8 +47,8 @@ export async function createHarness() {
 
 	const client: ContraTestClient = contraInit.client.$extend(contra({ packageConfig, table }));
 
-	// Baseline: two auditor keys configured for the token.
-	await tokenIssuer.rotateAuditorKeys(2);
+	// Baseline: a single per-transfer auditor key configured for the token.
+	await tokenIssuer.setAuditorKey(randomScalar());
 
 	return {
 		contraInit,

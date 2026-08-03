@@ -17,27 +17,24 @@ import {
 
 import * as contraContracts from '../../src/contracts/contra/contra.js';
 import { point } from '../../src/helpers.js';
-import { G, randomScalar } from '../../src/ristretto255.js';
+import { G } from '../../src/ristretto255.js';
 import type { RistrettoPoint } from '../../src/ristretto255.js';
 
-/** Auditor keys for one on-chain version. */
-export interface AuditorKeys {
-	privateKeys: bigint[];
-	publicKeys: RistrettoPoint[];
-}
+/** Move type of the auditor public key wrapped in an `Option`. */
+const ELEMENT_TYPE = '0x2::group_ops::Element<0x2::ristretto255::G>';
 
 /**
  * Token issuer: publishes a coin and registers it as a confidential token.
  * A separate actor from the protocol initializer; holds the coin's
- * TreasuryCap and ManagementCap, and tracks every auditor key set it has
- * ever set on chain (indexed by the on-chain auditor version).
+ * TreasuryCap and ManagementCap, and tracks the single per-transfer auditor
+ * key it has currently set on chain.
  *
- * The token is registered with no auditor keys (version 0); call
- * `rotateAuditorKeys(k)` to set or replace the auditor key set.
+ * The token is registered with no auditor key; call `setAuditorKey(sk)` to
+ * set or replace it, or `setAuditorKey()` to disable auditing.
  */
 export class TokenIssuer {
-	#auditorVersion = 0;
-	#auditorKeysByVersion = new Map<number, AuditorKeys>();
+	#auditorPrivateKey?: bigint;
+	#auditorPublicKey?: RistrettoPoint;
 
 	private constructor(
 		readonly client: SuiGrpcClient,
@@ -51,15 +48,16 @@ export class TokenIssuer {
 		readonly contraPackageId: string,
 		readonly freezeAdminKeypair: Ed25519Keypair,
 		readonly freezeAdminAddress: string,
-	) {
-		// new_confidential_token initializes auditors at version 0 with
-		// whatever keys we passed in (here, none).
-		this.#auditorKeysByVersion.set(0, { privateKeys: [], publicKeys: [] });
+	) {}
+
+	/** The current auditor private key, or `undefined` when auditing is disabled. */
+	get auditorPrivateKey(): bigint | undefined {
+		return this.#auditorPrivateKey;
 	}
 
-	/** The current on-chain auditor key version. Starts at 0, increments per rotation. */
-	get auditorVersion(): number {
-		return this.#auditorVersion;
+	/** The current auditor public key, or `undefined` when auditing is disabled. */
+	get auditorPublicKey(): RistrettoPoint | undefined {
+		return this.#auditorPublicKey;
 	}
 
 	/**
@@ -112,9 +110,9 @@ export class TokenIssuer {
 				arguments: {
 					registry: tokenRegistryId,
 					T: treasuryCapId,
-					auditorPublicKeys: regTx.makeMoveVec({
-						type: '0x2::group_ops::Element<0x2::ristretto255::G>',
-						elements: [],
+					auditorPk: regTx.moveCall({
+						target: '0x1::option::none',
+						typeArguments: [ELEMENT_TYPE],
 					}),
 				},
 			}),
@@ -197,43 +195,37 @@ export class TokenIssuer {
 	}
 
 	/**
-	 * Generate `k` fresh auditor keypairs, push them on chain via
-	 * `update_auditors`, and store them under the new auditor version.
-	 * `k = 0` clears the auditor set (disables the auditor flow). When
-	 * `bumpRecommendedMin` is true, the new version becomes the issuer's
-	 * recommended minimum; this is advisory only and not enforced on chain.
+	 * Set the token's per-transfer auditor key on chain via `update_auditor`. Pass a private key to
+	 * enable auditing under it; omit it to disable auditing. The outgoing key (if any) is retained on
+	 * chain as the previous key, valid through `expirationEpoch` (default 0).
 	 */
-	async rotateAuditorKeys(k: number, bumpRecommendedMin: boolean = false): Promise<void> {
-		const privateKeys = Array.from({ length: k }, () => randomScalar());
-		const publicKeys = privateKeys.map((sk) => G.multiply(sk));
+	async setAuditorKey(privateKey?: bigint, expirationEpoch: bigint = 0n): Promise<void> {
+		const publicKey = privateKey === undefined ? undefined : G.multiply(privateKey);
 
 		const tx = new Transaction();
+		const newPk = publicKey
+			? tx.moveCall({
+					target: '0x1::option::some',
+					typeArguments: [ELEMENT_TYPE],
+					arguments: [point(publicKey.toBytes())],
+				})
+			: tx.moveCall({ target: '0x1::option::none', typeArguments: [ELEMENT_TYPE] });
 		tx.add(
-			contraContracts.updateAuditors({
+			contraContracts.updateAuditor({
 				package: this.contraPackageId,
 				typeArguments: [this.tokenType],
 				arguments: {
 					ct: this.confidentialTokenId,
 					Cap: this.managementCapId,
-					publicKeys: tx.makeMoveVec({
-						type: '0x2::group_ops::Element<0x2::ristretto255::G>',
-						elements: publicKeys.map((pk) => point(pk.toBytes())),
-					}),
-					bumpRecommendedMin,
+					newPk,
+					expirationEpoch,
 				},
 			}),
 		);
 		tx.setSender(this.address);
 		await signExecuteAndWait(tx, this.keypair, this.client);
 
-		this.#auditorVersion += 1;
-		this.#auditorKeysByVersion.set(this.#auditorVersion, { privateKeys, publicKeys });
-	}
-
-	/** Return the auditor keypair material for a specific version. */
-	getAuditorKeys(version: number): AuditorKeys {
-		const keys = this.#auditorKeysByVersion.get(version);
-		if (!keys) throw new Error(`Unknown auditor key version: ${version}`);
-		return keys;
+		this.#auditorPrivateKey = privateKey;
+		this.#auditorPublicKey = publicKey;
 	}
 }

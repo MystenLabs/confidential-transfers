@@ -111,7 +111,7 @@ export const ConfidentialToken = new MoveStruct({
 		is_active: bcs.bool(),
 		freeze_admins: vec_set.VecSet(bcs.Address),
 		policy: bcs.option(policy.Policy),
-		auditors: auditors.Auditors,
+		auditor: auditors.Auditors,
 	},
 });
 export const Pool = new MoveStruct({
@@ -125,13 +125,13 @@ export const Account = new MoveStruct({
 	fields: {
 		id: bcs.Address,
 		owner: bcs.Address,
+		pk: group_ops.Element,
 	},
 });
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
 		pk: group_ops.Element,
-		verified_key_encryption: auditors.VerifiedKeyEncryption,
 		session_id: bcs.vector(bcs.u8()),
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
@@ -190,6 +190,7 @@ export const TransferBatch = new MoveEnum({
 				coins: bcs.vector(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),
+				auditor_handles: bcs.vector(group_ops.Element),
 			},
 		}),
 	},
@@ -294,7 +295,7 @@ export function authorizeAsObject(options: AuthorizeAsObjectOptions) {
 export interface NewConfidentialTokenArguments {
 	registry: RawTransactionArgument<string>;
 	T: RawTransactionArgument<string>;
-	auditorPublicKeys: TransactionArgument;
+	auditorPk: TransactionArgument;
 }
 export interface NewConfidentialTokenOptions {
 	package?: string;
@@ -303,7 +304,7 @@ export interface NewConfidentialTokenOptions {
 		| [
 				registry: RawTransactionArgument<string>,
 				T: RawTransactionArgument<string>,
-				auditorPublicKeys: TransactionArgument,
+				auditorPk: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -315,7 +316,7 @@ export interface NewConfidentialTokenOptions {
  * TreasuryCaps from being used.
  *
  * Creates an `Auditors` object for the confidential token using the provided
- * public keys. The auditor public keys can be empty initially and updated later by
+ * auditor public key. The auditor key can be `none` initially and updated later by
  * the issuer.
  *
  * Returns the created `ConfidentialToken` and a `ManagementCap` that can be used
@@ -323,8 +324,8 @@ export interface NewConfidentialTokenOptions {
  */
 export function newConfidentialToken(options: NewConfidentialTokenOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, 'vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['registry', 'T', 'auditorPublicKeys'];
+	const argumentsTypes = [null, null, null] satisfies (string | null)[];
+	const parameterNames = ['registry', 'T', 'auditorPk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -362,12 +363,17 @@ export function shareConfidentialToken(options: ShareConfidentialTokenOptions) {
 export interface NewAccountArguments {
 	registry: RawTransactionArgument<string>;
 	owner: RawTransactionArgument<string>;
+	pk: TransactionArgument;
 }
 export interface NewAccountOptions {
 	package?: string;
 	arguments:
 		| NewAccountArguments
-		| [registry: RawTransactionArgument<string>, owner: RawTransactionArgument<string>];
+		| [
+				registry: RawTransactionArgument<string>,
+				owner: RawTransactionArgument<string>,
+				pk: TransactionArgument,
+		  ];
 }
 /**
  * Create a new account for the given address. Can only happen once per address.
@@ -379,8 +385,8 @@ export interface NewAccountOptions {
  */
 export function newAccount(options: NewAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, 'address'] satisfies (string | null)[];
-	const parameterNames = ['registry', 'owner'];
+	const argumentsTypes = [null, 'address', null] satisfies (string | null)[];
+	const parameterNames = ['registry', 'owner', 'pk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -415,33 +421,24 @@ export function shareAccount(options: ShareAccountOptions) {
 export interface RegisterArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
-	ct: RawTransactionArgument<string>;
-	pk: TransactionArgument;
-	keyEncryption: TransactionArgument;
 }
 export interface RegisterOptions {
 	package?: string;
 	arguments:
 		| RegisterArguments
-		| [
-				account: RawTransactionArgument<string>,
-				auth: TransactionArgument,
-				ct: RawTransactionArgument<string>,
-				pk: TransactionArgument,
-				keyEncryption: TransactionArgument,
-		  ];
+		| [account: RawTransactionArgument<string>, auth: TransactionArgument];
 	typeArguments: [string];
 }
 /**
- * Create a `TokenAccount` for token `T` with the given `pk`. Authorized by `auth`,
- * which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
- * If `ConfidentialToken<T>` has auditors enabled, a `KeyEncryption` must be
- * provided.
+ * Create a `TokenAccount` for token `T`, with its balances keyed under the current
+ * `account.pk`. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER`
+ * operation and for `account.owner`. Under per-transfer auditing, registration
+ * carries no auditor data.
  */
 export function register(options: RegisterOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth', 'ct', 'pk', 'keyEncryption'];
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -486,134 +483,114 @@ export function setAcceptsEncryptedDeposits(options: SetAcceptsEncryptedDeposits
 			typeArguments: options.typeArguments,
 		});
 }
-export interface SetPublicKeyArguments {
+export interface SetAccountKeyArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
-	ct: RawTransactionArgument<string>;
 	newPk: TransactionArgument;
-	newHandles: TransactionArgument;
-	rekeyProof: TransactionArgument;
-	keyEncryption: TransactionArgument;
 }
-export interface SetPublicKeyOptions {
+export interface SetAccountKeyOptions {
 	package?: string;
 	arguments:
-		| SetPublicKeyArguments
+		| SetAccountKeyArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
-				ct: RawTransactionArgument<string>,
 				newPk: TransactionArgument,
-				newHandles: TransactionArgument,
-				rekeyProof: TransactionArgument,
-				keyEncryption: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Update the public key for the account of token `T`. Authorized by `auth`, which
- * must be for the `PERMISSIONED_REGISTER` operation and for `account.owner` -- key
- * rotation reuses the registration authorization since the same flow gates account
- * onboarding. This aborts if there are pending deposits that need to be merged, so
- * the caller should:
- *
- * - Call `merge` to merge pending deposits and `set_accepts_encrypted_deposits` to
- *   false to prevent new encrypted deposits.
- * - Call `set_public_key` to update the public key and
- *   `set_accepts_encrypted_deposits` to true to allow new encrypted deposits
- *   again.
+ * Rotate the account's key to `new_pk`. O(1): sets the convergence target
+ * `account.pk`; it does not touch any token balance. Each token's balance stays
+ * under its own `TokenAccount.pk` until the owner catches it up with `rekey_token`.
+ * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and
+ * may be for any token the account is registered for.
  */
-export function setPublicKey(options: SetPublicKeyOptions) {
+export function setAccountKey(options: SetAccountKeyOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, 'vector<null>', null, null] satisfies (
-		| string
-		| null
-	)[];
-	const parameterNames = [
-		'account',
-		'auth',
-		'ct',
-		'newPk',
-		'newHandles',
-		'rekeyProof',
-		'keyEncryption',
-	];
+	const argumentsTypes = [null, null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newPk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'set_public_key',
+			function: 'set_account_key',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
 }
-export interface TrySetPublicKeyAndUnpauseArguments {
+export interface RekeyTokenArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
-	ct: RawTransactionArgument<string>;
-	newPk: TransactionArgument;
-	restatedBalance: TransactionArgument;
-	restatedBalanceProof: TransactionArgument;
-	balanceProof: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
-	keyEncryption: TransactionArgument;
 }
-export interface TrySetPublicKeyAndUnpauseOptions {
+export interface RekeyTokenOptions {
 	package?: string;
 	arguments:
-		| TrySetPublicKeyAndUnpauseArguments
+		| RekeyTokenArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
-				ct: RawTransactionArgument<string>,
-				newPk: TransactionArgument,
-				restatedBalance: TransactionArgument,
-				restatedBalanceProof: TransactionArgument,
-				balanceProof: TransactionArgument,
 				newHandles: TransactionArgument,
 				rekeyProof: TransactionArgument,
-				keyEncryption: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Optimistic key rotation: re-state the balance under a fresh blinding, re-key it
- * to `new_pk`, and unpause. If the restate's `balance_proof` fails (e.g. a deposit
- * raced the caller's read), emits `TrySetPublicKeyFailedEvent` and leaves the
- * account paused for a retry. The caller must `merge` (and pause) first.
+ * Re-key token `T`'s active balance from its current `TokenAccount.pk` to the
+ * account key `account.pk`, swapping each limb's decryption handle for the matching
+ * `new_handles[i]` (proven by `rekey_proof`). Aborts if the token has unmerged
+ * pending deposits (merge them first) or the proof fails. Authorized by `auth`,
+ * which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
  */
-export function trySetPublicKeyAndUnpause(options: TrySetPublicKeyAndUnpauseOptions) {
+export function rekeyToken(options: RekeyTokenOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		'vector<null>',
-		null,
-		null,
-	] satisfies (string | null)[];
-	const parameterNames = [
-		'account',
-		'auth',
-		'ct',
-		'newPk',
-		'restatedBalance',
-		'restatedBalanceProof',
-		'balanceProof',
-		'newHandles',
-		'rekeyProof',
-		'keyEncryption',
-	];
+	const argumentsTypes = [null, null, 'vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newHandles', 'rekeyProof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'try_set_public_key_and_unpause',
+			function: 'rekey_token',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+			typeArguments: options.typeArguments,
+		});
+}
+export interface TryRekeyTokenArguments {
+	account: RawTransactionArgument<string>;
+	auth: TransactionArgument;
+	newHandles: TransactionArgument;
+	rekeyProof: TransactionArgument;
+}
+export interface TryRekeyTokenOptions {
+	package?: string;
+	arguments:
+		| TryRekeyTokenArguments
+		| [
+				account: RawTransactionArgument<string>,
+				auth: TransactionArgument,
+				newHandles: TransactionArgument,
+				rekeyProof: TransactionArgument,
+		  ];
+	typeArguments: [string];
+}
+/**
+ * Like `rekey_token` but soft-fails instead of aborting: if the re-key proof does
+ * not verify (e.g. a deposit raced the caller's read), it emits
+ * `TryTokenRekeyFailedEvent` and returns `false`, leaving the token unchanged (still
+ * stale) for a retry. Lets a caller bundle `set_account_key` and re-keys of several
+ * tokens into one PTB without pausing. Still aborts on unmerged pending deposits.
+ */
+export function tryRekeyToken(options: TryRekeyTokenOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null, 'vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newHandles', 'rekeyProof'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'try_rekey_token',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
@@ -678,6 +655,8 @@ export interface BatchedTransferArguments {
 	seedPoint: TransactionArgument;
 	newBalance: TransactionArgument;
 	balanceProof: TransactionArgument;
+	auditorHandles: TransactionArgument;
+	auditorProof: TransactionArgument;
 }
 export interface BatchedTransferOptions {
 	package?: string;
@@ -695,6 +674,8 @@ export interface BatchedTransferOptions {
 				seedPoint: TransactionArgument,
 				newBalance: TransactionArgument,
 				balanceProof: TransactionArgument,
+				auditorHandles: TransactionArgument,
+				auditorProof: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -730,6 +711,8 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		null,
 		null,
 		null,
+		null,
+		null,
 	] satisfies (string | null)[];
 	const parameterNames = [
 		'sender',
@@ -743,6 +726,8 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'seedPoint',
 		'newBalance',
 		'balanceProof',
+		'auditorHandles',
+		'auditorProof',
 	];
 	return (tx: Transaction) =>
 		tx.moveCall({
@@ -1316,42 +1301,38 @@ export function setPolicy(options: SetPolicyOptions) {
 			typeArguments: options.typeArguments,
 		});
 }
-export interface UpdateAuditorsArguments {
+export interface UpdateAuditorArguments {
 	ct: RawTransactionArgument<string>;
 	Cap: RawTransactionArgument<string>;
-	publicKeys: TransactionArgument;
-	bumpRecommendedMin: RawTransactionArgument<boolean>;
+	newPk: TransactionArgument;
+	expirationEpoch: RawTransactionArgument<number | bigint>;
 }
-export interface UpdateAuditorsOptions {
+export interface UpdateAuditorOptions {
 	package?: string;
 	arguments:
-		| UpdateAuditorsArguments
+		| UpdateAuditorArguments
 		| [
 				ct: RawTransactionArgument<string>,
 				Cap: RawTransactionArgument<string>,
-				publicKeys: TransactionArgument,
-				bumpRecommendedMin: RawTransactionArgument<boolean>,
+				newPk: TransactionArgument,
+				expirationEpoch: RawTransactionArgument<number | bigint>,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Update the auditors for this confidential token by setting their new public keys
- * in the corresponding `auditors` struct. If `bump_recommended_min` is true, the
- * auditors' `recommended_min_version` is raised to the new version, signalling
- * that all users should call `set_public_key` with a valid viewing key encrypted
- * towards the new auditor keys. The floor is advisory; the chain does not enforce
- * it on transfer. The auditor flow can be disabled by inputting an empty
- * `public_keys` vector.
+ * Update the auditor key for this confidential token. `new_pk` becomes the current
+ * key (`none` disables auditing); the outgoing key is retained as the previous key,
+ * valid for transfers through `expiration_epoch`.
  */
-export function updateAuditors(options: UpdateAuditorsOptions) {
+export function updateAuditor(options: UpdateAuditorOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, 'vector<null>', 'bool'] satisfies (string | null)[];
-	const parameterNames = ['ct', 'Cap', 'publicKeys', 'bumpRecommendedMin'];
+	const argumentsTypes = [null, null, null, 'u64'] satisfies (string | null)[];
+	const parameterNames = ['ct', 'Cap', 'newPk', 'expirationEpoch'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'update_auditors',
+			function: 'update_auditor',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});

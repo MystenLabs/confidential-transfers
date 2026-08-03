@@ -15,15 +15,13 @@ import { blake2b } from '@noble/hashes/blake2.js';
 import { hexToBytes } from '@noble/hashes/utils.js';
 
 import type { BatchRangeProver } from './bp.js';
-import * as auditorsContracts from './contracts/contra/auditors.js';
 import * as decodeContracts from './contracts/contra/decode.js';
 import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
 import { InvalidArgumentError } from './error.js';
-import type { KeyEncryption } from './key_encryption.js';
-import type { DdhNizk, KeyConsistencyProof } from './nizk.js';
+import type { DdhNizk } from './nizk.js';
 import { ElGamalNizk } from './nizk.js';
 import { type RistrettoPoint } from './ristretto255.js';
-import type { Ciphertext, MultiRecipientEncryption } from './twisted_elgamal.js';
+import type { Ciphertext } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
 
 /** Concatenate one or more byte arrays into a single `Uint8Array`. */
@@ -61,14 +59,12 @@ export function fiatShamirChallenge(randomOracleInputs: Uint8Array[]): bigint {
 export const PROTOCOL_DDH = 0x01;
 /** Domain-separation byte for ElGamal proofs in Fiat-Shamir transcripts. */
 export const PROTOCOL_ELGAMAL = 0x02;
-/** Domain-separation byte for key-consistency proofs in Fiat-Shamir transcripts. */
-export const PROTOCOL_KEY_CONSISTENCY = 0x03;
 /** Domain-separation byte for 16-bit (amount well-formedness) Bulletproof range proofs. */
 export const PROTOCOL_RANGE_PROOF_16 = 0x04;
-/** Domain-separation byte for 32-bit (auditor key-encryption) Bulletproof range proofs. */
-export const PROTOCOL_RANGE_PROOF_32 = 0x05;
 /** Domain-separation byte for the batched re-keying DDH proof (Π_rekey). */
 export const PROTOCOL_BATCH_DDH = 0x06;
+/** Domain-separation byte for the batched per-transfer auditor ElGamal proof. */
+export const PROTOCOL_AUDITOR_ELGAMAL = 0x07;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.
@@ -367,36 +363,22 @@ export function buildEncryptedAmountAndProof(
 	};
 }
 
-/**
- * Build a `MultiRecipientEncryption` on-chain from a TypeScript
- * `MultiRecipientEncryption`. Calls `twisted_elgamal::new_multi_recipient_encryption`
- * with the shared commitment and per-recipient decryption handles.
- */
-export function buildMultiRecipientEncryption(packageId: string, mrc: MultiRecipientEncryption) {
-	return decodeContracts.multiRecipientEncryption({
-		package: packageId,
-		arguments: {
-			parts: elemParts([
-				mrc.commitment.toBytes(),
-				...mrc.decryptionHandles.map((dh) => dh.toBytes()),
-			]),
-			m: mrc.decryptionHandles.length,
-		},
-	});
-}
+/** Move type of the per-transfer auditor handles Option: `vector<Element<G>>`. */
+const ELEMENT_VECTOR_TYPE = `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`;
 
 /**
- * Build an `Option<KeyEncryption>` Move value. Returns `option::some` wrapping the
- * `KeyEncryption` when provided, `option::none` otherwise.
+ * Build an `Option<vector<Element<G>>>` of the flattened per-transfer auditor decryption handles
+ * (two u32-limb handles per receiver). `option::some` wrapping the `decode::g_vector` when `handles`
+ * is provided, `option::none` when auditing is disabled.
  */
-export function buildKeyEncryptionOption(packageId: string, keyEncryption?: KeyEncryption) {
-	const optionType = [`${packageId}::auditors::KeyEncryption`];
-	if (keyEncryption) {
+export function buildAuditorHandlesOption(packageId: string, handles?: RistrettoPoint[]) {
+	const optionType = [`vector<${ELEMENT_VECTOR_TYPE}>`];
+	if (handles) {
 		return (tx: Transaction) =>
 			tx.moveCall({
 				target: '0x1::option::some',
 				typeArguments: optionType,
-				arguments: [buildKeyEncryption(packageId, keyEncryption)],
+				arguments: [buildGVector(packageId, handles)],
 			});
 	}
 	return (tx: Transaction) =>
@@ -404,47 +386,19 @@ export function buildKeyEncryptionOption(packageId: string, keyEncryption?: KeyE
 }
 
 /**
- * Build a `KeyEncryption` on-chain from a TypeScript `KeyEncryption` by calling
- * `auditors::new_key_encryption` with the per-limb ciphertexts, the
- * `KeyConsistencyProof`, and the serialized aggregate Bulletproof.
+ * Build an `Option<ElGamalProof>` for the batched per-transfer auditor proof. `option::some`
+ * wrapping the serialized `ElGamalNizk` when provided, `option::none` when auditing is disabled.
  */
-export function buildKeyEncryption(packageId: string, keyEncryption: KeyEncryption) {
+export function buildAuditorProofOption(packageId: string, proof?: ElGamalNizk) {
+	const optionType = [`${packageId}::nizk::ElGamalProof`];
+	if (proof) {
+		return (tx: Transaction) =>
+			tx.moveCall({
+				target: '0x1::option::some',
+				typeArguments: optionType,
+				arguments: [buildElGamalProof(packageId, proof)],
+			});
+	}
 	return (tx: Transaction) =>
-		auditorsContracts.newKeyEncryption({
-			package: packageId,
-			arguments: {
-				ciphertext: tx.makeMoveVec({
-					type: `${packageId}::twisted_elgamal::MultiRecipientEncryption`,
-					elements: keyEncryption.ciphertexts.map((mrc) =>
-						buildMultiRecipientEncryption(packageId, mrc),
-					),
-				}),
-				proof: buildKeyConsistencyProof(packageId, keyEncryption.proof),
-				rangeProof: Array.from(keyEncryption.rangeProof),
-			},
-		})(tx);
-}
-
-/**
- * Build a `KeyConsistencyProof` on-chain via `decode::key_consistency_proof`, passing the
- * sigma-protocol fields as one flat list `[a1(8m) ‖ a2(8) ‖ a3(1) ‖ z1(8) ‖ z2(8)]` plus the
- * recipient count `m` so the on-chain side can slice the variable-length `a1`.
- */
-export function buildKeyConsistencyProof(packageId: string, proof: KeyConsistencyProof) {
-	// 8 limbs per key (matches `nizk::scalar_to_limbs`); `a1` holds `8 * m`, so `m = a1.length / 8`.
-	const KEY_LIMBS = 8;
-	const m = proof.a1.length / KEY_LIMBS;
-	return decodeContracts.keyConsistencyProof({
-		package: packageId,
-		arguments: {
-			parts: elemParts([
-				...proof.a1.map((p) => p.toBytes()),
-				...proof.a2.map((p) => p.toBytes()),
-				proof.a3.toBytes(),
-				...proof.z1.map((s) => numberToBytesLE(s, 32)),
-				...proof.z2.map((s) => numberToBytesLE(s, 32)),
-			]),
-			m,
-		},
-	});
+		tx.moveCall({ target: '0x1::option::none', typeArguments: optionType });
 }

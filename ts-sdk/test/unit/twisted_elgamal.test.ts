@@ -5,14 +5,12 @@ import { ristretto255 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
 
 import { DecryptionFailedError } from '../../src/error.js';
-import { H, randomScalar } from '../../src/ristretto255.js';
 import {
 	Ciphertext,
 	computeTableEntries,
 	DiscreteLogTable,
 	EncryptedAmount,
 	generateKeyPair,
-	MultiRecipientEncryption,
 } from '../../src/twisted_elgamal.js';
 
 describe('twisted elgamal', () => {
@@ -211,58 +209,6 @@ describe('twisted elgamal', () => {
 			const [pk, sk] = generateKeyPair();
 			const { ciphertext } = Ciphertext.encrypt(pk, 200n);
 			expect(ciphertext.decrypt(sk, smallTable)).toEqual(200n);
-		});
-	});
-
-	describe('MultiRecipientEncryption', () => {
-		it('single recipient: decrypt recovers plaintext', () => {
-			const [pk, sk] = generateKeyPair();
-			const value = 42n;
-			const blinding = randomScalar();
-			const ct = MultiRecipientEncryption.encrypt([pk], value, blinding);
-			expect(ct.decrypt(0, sk, table)).toEqual(value);
-		});
-
-		it('multiple recipients: each recovers same plaintext', () => {
-			const [pk0, sk0] = generateKeyPair();
-			const [pk1, sk1] = generateKeyPair();
-			const [pk2, sk2] = generateKeyPair();
-			const value = 1337n;
-			const blinding = randomScalar();
-			const ct = MultiRecipientEncryption.encrypt([pk0, pk1, pk2], value, blinding);
-			expect(ct.decrypt(0, sk0, table)).toEqual(value);
-			expect(ct.decrypt(1, sk1, table)).toEqual(value);
-			expect(ct.decrypt(2, sk2, table)).toEqual(value);
-		});
-
-		it('all recipients share the same commitment', () => {
-			const [pk0] = generateKeyPair();
-			const [pk1] = generateKeyPair();
-			const blinding = randomScalar();
-			const ct = MultiRecipientEncryption.encrypt([pk0, pk1], 99n, blinding);
-			// Each recipient pairs the single shared commitment with their own handle.
-			const c0 = new Ciphertext(ct.commitment, ct.decryptionHandles[0]);
-			const c1 = new Ciphertext(ct.commitment, ct.decryptionHandles[1]);
-			expect(c0.ciphertext.equals(c1.ciphertext)).toBe(true);
-		});
-
-		it('decryption handles differ per recipient', () => {
-			const [pk0] = generateKeyPair();
-			const [pk1] = generateKeyPair();
-			const blinding = randomScalar();
-			const ct = MultiRecipientEncryption.encrypt([pk0, pk1], 7n, blinding);
-			expect(ct.decryptionHandles[0].equals(ct.decryptionHandles[1])).toBe(false);
-		});
-
-		it('recipient cannot decrypt a slot not meant for them', () => {
-			const [pk0] = generateKeyPair();
-			const [, sk1] = generateKeyPair();
-			const value = 55n;
-			const blinding = randomScalar();
-			const ct = MultiRecipientEncryption.encrypt([pk0], value, blinding);
-			const skInv = ristretto255.Point.Fn.inv(sk1);
-			const decrypted = ct.commitment.subtract(ct.decryptionHandles[0].multiply(skInv));
-			expect(decrypted.equals(H.multiply(value))).toBe(false);
 		});
 	});
 });

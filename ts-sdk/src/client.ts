@@ -14,33 +14,31 @@ import { getBulletproofs, type BatchRangeProver, type Bulletproofs } from './bp.
 import * as contraContracts from './contracts/contra/contra.js';
 import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
 import {
-	DepositsMustBePausedError,
 	InsufficientBalanceError,
 	InvalidArgumentError,
 	ReceiverDoesNotAcceptDepositsError,
 	TokenAccountDoesNotExistError,
 } from './error.js';
 import {
+	buildAuditorHandlesOption,
+	buildAuditorProofOption,
 	buildDdhProof,
 	buildElGamalProof,
 	buildEncryptedAmount,
 	buildEncryptedAmountAndProof,
 	buildGVector,
-	buildKeyEncryptionOption,
 	buildWellFormedProof,
 	getAccountId,
 	getConfidentialTokenId,
 	getTokenAccountId,
 	point,
+	PROTOCOL_AUDITOR_ELGAMAL,
 	PROTOCOL_BATCH_DDH,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
-	PROTOCOL_KEY_CONSISTENCY,
 	PROTOCOL_RANGE_PROOF_16,
-	PROTOCOL_RANGE_PROOF_32,
 	type WellFormedLimb,
 } from './helpers.js';
-import { KeyEncryption } from './key_encryption.js';
 import { DdhNizk, ElGamalNizk } from './nizk.js';
 import { addScalars, mul, pointFromBcs, randomScalar } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
@@ -57,10 +55,11 @@ import type {
 	NewAccountOptions,
 	PauseAccountOptions,
 	RegisterOptions,
-	RotateKeyAndTransferBatchOptions,
+	RekeyTokenOptions,
 	RotateKeyOptions,
+	SetAccountKeyOptions,
 	ShareAccountOptions,
-	TokenAuditors,
+	TokenAuditor,
 	TokenBalance,
 	TransferOptions,
 	UnpauseAccountOptions,
@@ -167,7 +166,6 @@ export class ContraClient {
 				pk: pointFromBcs(parsed.pk),
 				acceptsEncryptedDeposits: parsed.accepts_deposits,
 				isFrozen: parsed.is_frozen,
-				keyEncryptionVersion: parsed.verified_key_encryption.version,
 			};
 		});
 	}
@@ -191,17 +189,24 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * const account = tx.add(contraClient.newAccount({ owner: senderAddress }));
+	 * const account = tx.add(
+	 *   contraClient.newAccount({ owner: senderAddress, publicKey: tokenAccount.publicKey }),
+	 * );
 	 * tx.add(contraClient.shareAccount({ account }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAccountAlreadyRegistered` — `owner` already has an account (one per address).
+	 * - `EIdentityPublicKey` — `publicKey` is the group identity.
 	 */
-	newAccount({ owner }: NewAccountOptions) {
+	newAccount({ owner, publicKey }: NewAccountOptions) {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
-			arguments: { registry: this.#packageConfig.accountRegistryId, owner },
+			arguments: {
+				registry: this.#packageConfig.accountRegistryId,
+				owner,
+				pk: point(publicKey.toBytes()),
+			},
 		});
 	}
 
@@ -286,35 +291,33 @@ export class ContraClient {
 	}
 
 	/**
-	 * Fetch the current auditor configuration for the given token type.
+	 * Fetch the current per-transfer auditor configuration for the given token type.
 	 *
-	 * Returns the auditor public keys together with the current version number
-	 * and the `recommendedMinVersion` floor. The floor is advisory: the chain
-	 * does not enforce it, but wallets should treat accounts whose
-	 * viewing-key encryption version is below it as stale and prompt the user
-	 * to rotate via `set_public_key` before transferring.
+	 * Returns the current auditor public key (`undefined` when auditing is disabled), the previous
+	 * key retained across a rotation, and the epoch through which that previous key still audits
+	 * in-flight transfers.
 	 *
 	 * @example
 	 * ```ts
-	 * const { pks, version, recommendedMinVersion } =
-	 *   await contraClient.getAuditors('0x2::sui::SUI');
+	 * const { currentPk, previousPk, previousExpirationEpoch } =
+	 *   await contraClient.getAuditor('0x2::sui::SUI');
 	 * ```
 	 *
 	 * Throws the underlying fetch error if any.
 	 */
-	async getAuditors(tokenType: string): Promise<TokenAuditors> {
-		const { auditors } = await this.#getConfidentialToken(tokenType);
+	async getAuditor(tokenType: string): Promise<TokenAuditor> {
+		const { auditor } = await this.#getConfidentialToken(tokenType);
 		return {
-			pks: auditors.pks.map((e) => pointFromBcs(e)),
-			version: auditors.version,
-			recommendedMinVersion: auditors.recommended_min_version,
+			currentPk: auditor.current_pk ? pointFromBcs(auditor.current_pk) : undefined,
+			previousPk: auditor.previous_pk ? pointFromBcs(auditor.previous_pk) : undefined,
+			previousExpirationEpoch: BigInt(auditor.previous_expiration_epoch),
 		};
 	}
 
 	/**
 	 * Fetch and parse the on-chain `ConfidentialToken<T>` object. Used to read
-	 * `is_active` (global freeze) and the auditor set; the auditor exposure goes
-	 * through `getAuditors`.
+	 * `is_active` (global freeze) and the auditor key; the auditor exposure goes
+	 * through `getAuditor`.
 	 */
 	async #getConfidentialToken(tokenType: string) {
 		const { object } = await this.#suiClient.core.getObject({
@@ -364,35 +367,12 @@ export class ContraClient {
 	}
 
 	/**
-	 * Return `true` iff the issuer's `recommendedMinVersion` is above this account's
-	 * `keyEncryptionVersion`, signalling that the user should refresh their on-chain
-	 * key encryption against the new auditor set.
-	 *
-	 * @example
-	 * ```ts
-	 * if (await contraClient.shouldRotateKey(tokenAccount)) {
-	 *   // Caller builds the post-rotation account and submits the PTB themselves.
-	 *   // See `rotateKeyAndUnpauseAccount` for the full pause→rotate flow.
-	 * }
-	 * ```
-	 *
-	 * Throws `TokenAccountDoesNotExistError` if `tokenAccount.address` is not
-	 * registered for `tokenAccount.tokenType`.
-	 */
-	async shouldRotateKey(tokenAccount: TokenAccount): Promise<boolean> {
-		const [auditors, state] = await Promise.all([
-			this.getAuditors(tokenAccount.tokenType),
-			this.#getAccountState(tokenAccount.address, tokenAccount.tokenType),
-		]);
-		return state.keyEncryptionVersion < auditors.recommendedMinVersion;
-	}
-
-	/**
 	 * Register a token account for `tokenAccount.tokenType` inside the
 	 * account owned by `tokenAccount.address`.
 	 *
-	 * The public key registered on chain is derived from the token
-	 * account's private key as `G * privateKey`.
+	 * The token balance is keyed under the current account key (`Account.pk`), which the caller set
+	 * at `newAccount`. Under per-transfer auditing registration carries no auditor data, so the
+	 * caller's `tokenAccount` private key must correspond to the account key.
 	 *
 	 * When `account` is omitted the shared account object is looked up
 	 * by its derived ID. Pass `account` explicitly when the account was
@@ -406,7 +386,9 @@ export class ContraClient {
 	 *
 	 * // In the same PTB as account creation:
 	 * const tx = new Transaction();
-	 * const account = tx.add(contraClient.newAccount({ owner: senderAddress }));
+	 * const account = tx.add(
+	 *   contraClient.newAccount({ owner: senderAddress, publicKey: tokenAccount.publicKey }),
+	 * );
 	 * tx.add(await contraClient.register({ tokenAccount, account }));
 	 * tx.add(contraClient.shareAccount({ account }));
 	 * ```
@@ -414,34 +396,14 @@ export class ContraClient {
 	 * On-chain aborts:
 	 * - `EAccountAlreadyRegistered` — the account is already registered for `T`.
 	 * - `EAuthorizationError` — `auth` was invalid.
-	 * - `EMissingEncryptedViewingKeyArguments` / `ETooManyEncryptedViewingKeyArguments` —
-	 *   `auditorPublicKeys` doesn't match the token's auditor configuration (omitted
-	 *   when required, or provided when the token has none).
-	 * - `EInvalidEncryptedViewingKey` — `auditorPublicKeys` doesn't match the on-chain
-	 *   auditor set.
 	 */
 	async register({
 		tokenAccount,
 		account,
-		auditorPublicKeys,
 		auth,
 	}: RegisterOptions): Promise<(tx: Transaction) => TransactionResult> {
 		const { address, tokenType } = tokenAccount;
-		const pkBytes = tokenAccount.publicKey.toBytes();
 		const pid = this.#packageConfig.packageId;
-
-		const { batchRangeProver } = await this.#getBulletproofs();
-		const keyEncryption =
-			auditorPublicKeys && auditorPublicKeys.length > 0
-				? KeyEncryption.prove(
-						batchRangeProver,
-						tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-						tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
-						tokenAccount.privateKey,
-						tokenAccount.publicKey,
-						auditorPublicKeys,
-					)
-				: undefined;
 
 		return (tx: Transaction): TransactionResult =>
 			tx.add(
@@ -449,11 +411,8 @@ export class ContraClient {
 					package: pid,
 					typeArguments: [tokenType],
 					arguments: {
-						ct: this.#getConfidentialTokenId(tokenType),
 						account: account ?? this.getAccountId(address),
 						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenType),
-						pk: point(pkBytes),
-						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
 					},
 				}),
 			);
@@ -758,181 +717,218 @@ export class ContraClient {
 	}
 
 	/**
-	 * Rotate a token account's encryption key. The caller supplies the post-rotation
-	 * `newTokenAccount` and must persist it.
-	 *
-	 * By default (`pauseAndMerge = true`) the returned PTB is optimistic and self-contained: it
-	 * pauses encrypted deposits, folds any pending deposits into the active balance, then in one
-	 * `try_set_public_key_and_unpause` call re-states the balance under a fresh blinding, re-keys
-	 * it, and unpauses. The pause and merge always commit. If a new encrypted deposit lands between
-	 * the SDK's balance read and execution, the restate's balance proof no longer matches:
-	 * `try_set_public_key_and_unpause` no-ops (emitting `TrySetPublicKeyFailedEvent`) and the
-	 * account is left paused with the merge applied. Re-run `rotateKeyAndUnpauseAccount` against the
-	 * new balance to converge — no deposit can race the retry since the account is now paused.
-	 *
-	 * Pass `pauseAndMerge = false` when the account is already paused and merged (e.g. paused in a
-	 * prior transaction): the PTB skips the pause + merge and issues only the rekey. The account
-	 * must already refuse deposits or this throws `DepositsMustBePausedError`.
-	 *
-	 * Detect success/failure via the emitted events: `UpdatedPublicKeyEvent` on success,
-	 * `TrySetPublicKeyFailedEvent` on a raced retry.
-	 *
-	 * SDK-thrown:
-	 * - `DepositsMustBePausedError` — `pauseAndMerge` is `false` but the account still accepts
-	 *   encrypted deposits.
-	 * - `InvalidArgumentError` — `pauseAndMerge` is `false` but the account has pending deposits
-	 *   that must be merged first.
-	 * - `TokenAccountDoesNotExistError` — `tokenAccount` is not registered for the
-	 *   token.
-	 *
-	 * On-chain aborts (rare; mostly indicate races with concurrent admin actions):
-	 * - `EAuthorizationError` — `auth` was not for the owner.
-	 * - `sui::dynamic_field::EFieldDoesNotExist` — account lost its registration between SDK and execution.
-	 * - `EMissingEncryptedViewingKeyArguments` / `ETooManyEncryptedViewingKeyArguments` /
-	 *   `EInvalidEncryptedViewingKey` — the auditor set changed between the SDK's
-	 *   read and execution.
+	 * Rotate the account key (`Account.pk`) to `newPublicKey`. O(1): sets the convergence target
+	 * without touching any token balance. Each token's balance stays under its own `TokenAccount.pk`
+	 * (deposits keep landing there) until the owner catches it up with `rekeyToken`.
 	 *
 	 * @example
 	 * ```ts
 	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
-	 * const rotateFn = await contraClient.rotateKeyAndUnpauseAccount({ tokenAccount, newTokenAccount });
-	 * const tx = new Transaction();
-	 * tx.add(rotateFn);
+	 * tx.add(client.contra.setAccountKey({ tokenAccount, newPublicKey: newTokenAccount.publicKey }));
 	 * ```
+	 *
+	 * On-chain aborts:
+	 * - `EAuthorizationError` — invalid `auth`.
+	 * - `EIdentityPublicKey` — `newPublicKey` is the group identity.
 	 */
-	async rotateKeyAndUnpauseAccount({
+	setAccountKey({
 		tokenAccount,
-		newTokenAccount,
-		pauseAndMerge = true,
+		newPublicKey,
 		auth,
-	}: RotateKeyOptions): Promise<(tx: Transaction) => TransactionResult> {
-		const { address, tokenType } = tokenAccount;
-		const oldPk = tokenAccount.publicKey;
-		const oldSk = tokenAccount.privateKey;
-		const newSk = newTokenAccount.privateKey;
-		const newPk = newTokenAccount.publicKey;
-
-		if (
-			!pauseAndMerge &&
-			(await this.#getAccountState(address, tokenType)).acceptsEncryptedDeposits
-		) {
-			throw new DepositsMustBePausedError(address);
-		}
-
-		// `verify_key_encryption` runs against the live `Auditors` value, so the only
-		// auditor set that can produce a valid `KeyEncryption` is the one currently on
-		// chain. An empty `pks` array means the token has no auditors and no key
-		// encryption is attached.
-		const auditorPks = (await this.getAuditors(tokenType)).pks;
-		const useAuditors = auditorPks.length > 0;
-
-		const { balance, pending, pendingPublicBalance } = await this.getBalance(tokenAccount);
-		const hasPending = pending.amount > 0n || pendingPublicBalance > 0n;
-		if (hasPending && !pauseAndMerge) {
-			throw new InvalidArgumentError(`Cannot skip pause and merge when there are pending deposits`);
-		}
-
-		const totalSpendable = hasPending
-			? balance.amount + pending.amount + pendingPublicBalance
-			: balance.amount;
-
-		const oldCollapsed = hasPending
-			? balance.ciphertext
-					.collapse()
-					.add(pending.ciphertext.collapse())
-					.add(Ciphertext.trivial(pendingPublicBalance))
-			: balance.ciphertext.collapse();
-
-		const ddhDst = tokenAccount.dst(PROTOCOL_DDH);
-
-		// Per-limb encryption of the spendable amount under the OLD public key with
-		// fresh blindings we know. After `update_active_balance` lands, these become the
-		// on-chain commitments and decryption handles.
-		const newBalanceUnderOldPk = intoLimbs(totalSpendable).map((value) => ({
-			value,
-			...Ciphertext.encryptWithBlinding(oldPk, value, randomScalar()),
-		}));
-
-		// Balance proof for `update_active_balance`: collapsed(new) - collapsed(old) == 0.
-		const balanceProofUpdate = new EncryptedAmount(
-			newBalanceUnderOldPk[0].ciphertext,
-			newBalanceUnderOldPk[1].ciphertext,
-			newBalanceUnderOldPk[2].ciphertext,
-			newBalanceUnderOldPk[3].ciphertext,
-		)
-			.collapse()
-			.subtract(oldCollapsed)
-			.proveIsZero(ddhDst, oldSk, oldPk);
-
-		// Batched re-key (Π_rekey): the witness `w = newSk * oldSk^{-1}` maps each old handle to the new
-		// one (`w * D_i = r_i*newPk`) using only the secret keys; commitments are reused, so no proof.
-		const w = ristretto255.Point.Fn.create(newSk * ristretto255.Point.Fn.inv(oldSk));
-		const newBalanceUnderNewPk = newBalanceUnderOldPk.map((l) => ({
-			ciphertext: new Ciphertext(l.ciphertext.ciphertext, mul(l.ciphertext.decryptionHandle, w)),
-		}));
-		const rekeyBases = [oldPk, ...newBalanceUnderOldPk.map((l) => l.ciphertext.decryptionHandle)];
-		const rekeyImages = [newPk, ...newBalanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle)];
-		const rekeyProof = DdhNizk.prove(
-			tokenAccount.dst(PROTOCOL_BATCH_DDH),
-			w,
-			rekeyBases,
-			rekeyImages,
-		);
-
-		const { batchRangeProver } = await this.#getBulletproofs();
-		const keyEncryption = useAuditors
-			? KeyEncryption.prove(
-					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
-					newSk,
-					newPk,
-					auditorPks,
-				)
-			: undefined;
-
-		return (tx: Transaction): TransactionResult => {
-			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenType);
-			const pid = this.#packageConfig.packageId;
-
-			if (pauseAndMerge) {
-				this.#setAcceptsEncryptedDeposits(tx, tokenAccount, false, authArg);
-				tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			}
-
-			const { encryptedAmount: restatedBalance, wellFormedProof: restatedBalanceProof } =
-				buildEncryptedAmountAndProof(
-					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-					tokenAccount.dst(PROTOCOL_ELGAMAL),
-					tx,
-					pid,
-					{ limbs: newBalanceUnderOldPk, pk: oldPk },
-				);
-			const newHandles = tx.add(
-				buildGVector(
-					pid,
-					newBalanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle),
-				),
-			);
-			return tx.add(
-				contraContracts.trySetPublicKeyAndUnpause({
-					package: pid,
-					typeArguments: [tokenType],
+	}: SetAccountKeyOptions): (tx: Transaction) => TransactionResult {
+		return (tx: Transaction) =>
+			tx.add(
+				contraContracts.setAccountKey({
+					package: this.#packageConfig.packageId,
+					typeArguments: [tokenAccount.tokenType],
 					arguments: {
-						account: this.getAccountId(address),
-						auth: authArg,
-						ct: this.#getConfidentialTokenId(tokenType),
-						newPk: point(newPk.toBytes()),
-						restatedBalance,
-						restatedBalanceProof,
-						balanceProof: buildDdhProof(pid, balanceProofUpdate),
-						newHandles,
-						rekeyProof: buildDdhProof(pid, rekeyProof),
-						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
+						account: this.getAccountId(tokenAccount.address),
+						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType),
+						newPk: point(newPublicKey.toBytes()),
 					},
 				}),
 			);
+	}
+
+	/**
+	 * Fetch the token's active balance and build the re-key material mapping it from the old key to
+	 * the new key: the four new decryption handles (`w * D_i`) and the batched DDH proof
+	 * (`w = newSk * oldSk^{-1}` maps `[oldPk, D_0..3]` to `[newPk, D'_0..3]`). When the token has
+	 * pending deposits and `merge` is set, the handles fold in the pending deposits' handles so the
+	 * proof matches the post-merge active balance.
+	 */
+	async #buildRekeyMaterial(
+		tokenAccount: TokenAccount,
+		newTokenAccount: TokenAccount,
+		merge: boolean,
+	): Promise<{
+		shouldMerge: boolean;
+		newHandles: PublicKey[];
+		rekeyProof: DdhNizk;
+	}> {
+		const oldPk = tokenAccount.publicKey;
+		const newPk = newTokenAccount.publicKey;
+		const { balance, pending, pendingPublicBalance } = await this.getBalance(tokenAccount);
+
+		// `rekey_token` requires an empty pending balance; merge folds pending (encrypted + public)
+		// into active first. Public deposits contribute a zero handle, so they don't affect the
+		// handle mapping — only the encrypted pending handles do.
+		const shouldMerge =
+			merge && (pending.upperBound > 0 || pending.amount > 0n || pendingPublicBalance > 0n);
+
+		const activeLimbs = [
+			balance.ciphertext.l0,
+			balance.ciphertext.l1,
+			balance.ciphertext.l2,
+			balance.ciphertext.l3,
+		];
+		const pendingLimbs = [
+			pending.ciphertext.l0,
+			pending.ciphertext.l1,
+			pending.ciphertext.l2,
+			pending.ciphertext.l3,
+		];
+		const oldHandles = activeLimbs.map((limb, i) =>
+			shouldMerge
+				? limb.decryptionHandle.add(pendingLimbs[i].decryptionHandle)
+				: limb.decryptionHandle,
+		);
+
+		const w = ristretto255.Point.Fn.create(
+			newTokenAccount.privateKey * ristretto255.Point.Fn.inv(tokenAccount.privateKey),
+		);
+		const newHandles = oldHandles.map((h) => mul(h, w));
+		const rekeyProof = DdhNizk.prove(
+			tokenAccount.dst(PROTOCOL_BATCH_DDH),
+			w,
+			[oldPk, ...oldHandles],
+			[newPk, ...newHandles],
+		);
+		return { shouldMerge, newHandles, rekeyProof };
+	}
+
+	/**
+	 * Emit the `rekey_token` (or `try_rekey_token`) Move call re-keying the token's active balance
+	 * from its current `TokenAccount.pk` to the account key. Shared by `rekeyToken`, `tryRekeyToken`,
+	 * and `rotateKey`.
+	 */
+	#rekeyTokenCall(
+		tx: Transaction,
+		tokenAccount: TokenAccount,
+		newHandles: PublicKey[],
+		rekeyProof: DdhNizk,
+		auth: TransactionObjectArgument,
+		soft: boolean,
+	): TransactionResult {
+		const pid = this.#packageConfig.packageId;
+		const options = {
+			package: pid,
+			typeArguments: [tokenAccount.tokenType] as [string],
+			arguments: {
+				account: this.getAccountId(tokenAccount.address),
+				auth,
+				newHandles: buildGVector(pid, newHandles),
+				rekeyProof: buildDdhProof(pid, rekeyProof),
+			},
+		};
+		return tx.add(
+			soft ? contraContracts.tryRekeyToken(options) : contraContracts.rekeyToken(options),
+		);
+	}
+
+	/**
+	 * Re-key one token's active balance to the current account key (`Account.pk`). Requires the
+	 * account key to already equal `newTokenAccount.publicKey` (set via `setAccountKey`). When the
+	 * token has pending deposits and `merge` is `true` (the default), a `merge` is prepended so the
+	 * re-key (which requires an empty pending) can proceed.
+	 *
+	 * SDK-thrown:
+	 * - `TokenAccountDoesNotExistError` — `tokenAccount` is not registered for the token.
+	 *
+	 * On-chain aborts:
+	 * - `EAuthorizationError` — invalid `auth`.
+	 * - `EPendingDepositsMustBeMerged` — the token still has pending deposits (e.g. `merge=false`).
+	 * - `EAmountsEqualityProofFailed` — the re-key proof did not verify (e.g. a deposit raced the
+	 *   SDK's balance read). Use `tryRekeyToken` to soft-fail instead of aborting.
+	 */
+	async rekeyToken({
+		tokenAccount,
+		newTokenAccount,
+		merge = true,
+		auth,
+	}: RekeyTokenOptions): Promise<(tx: Transaction) => TransactionResult> {
+		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
+			tokenAccount,
+			newTokenAccount,
+			merge,
+		);
+		return (tx: Transaction) => {
+			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
+			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
+			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, false);
+		};
+	}
+
+	/**
+	 * Like `rekeyToken`, but soft-fails instead of aborting when the re-key proof does not verify
+	 * (e.g. a deposit raced the balance read): the token is left stale for a retry and a
+	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setAccountKey` and re-keys of several tokens ride
+	 * in one PTB without pausing.
+	 */
+	async tryRekeyToken({
+		tokenAccount,
+		newTokenAccount,
+		merge = true,
+		auth,
+	}: RekeyTokenOptions): Promise<(tx: Transaction) => TransactionResult> {
+		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
+			tokenAccount,
+			newTokenAccount,
+			merge,
+		);
+		return (tx: Transaction) => {
+			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
+			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
+			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, true);
+		};
+	}
+
+	/**
+	 * Rotate the account key and re-key one token in a single PTB: `setAccountKey`, an optional
+	 * `merge`, then `rekey_token`. The caller supplies and persists `newTokenAccount`. This is the
+	 * common single-token rotation; for a multi-token account, call `setAccountKey` once and then
+	 * `rekeyToken` / `tryRekeyToken` per token.
+	 *
+	 * SDK-thrown / on-chain aborts: as for `rekeyToken`, plus `EIdentityPublicKey` if the new key is
+	 * the group identity.
+	 *
+	 * @example
+	 * ```ts
+	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
+	 * const rotateFn = await client.contra.rotateKey({ tokenAccount, newTokenAccount });
+	 * tx.add(rotateFn);
+	 * ```
+	 */
+	async rotateKey({
+		tokenAccount,
+		newTokenAccount,
+		merge = true,
+		auth,
+	}: RotateKeyOptions): Promise<(tx: Transaction) => TransactionResult> {
+		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
+			tokenAccount,
+			newTokenAccount,
+			merge,
+		);
+		return (tx: Transaction) => {
+			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
+			this.setAccountKey({
+				tokenAccount,
+				newPublicKey: newTokenAccount.publicKey,
+				auth: () => authArg,
+			})(tx);
+			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
+			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, false);
 		};
 	}
 
@@ -1110,6 +1106,14 @@ export class ContraClient {
 
 		const { batchRangeProver } = await this.#getBulletproofs();
 
+		// Per-transfer auditing: when the token has an auditor key, attach two u32-limb decryption
+		// handles per receiver plus one batched `ElGamalProof` over the derived `(commitment, handle)`
+		// pairs. Both are `none` when auditing is disabled.
+		const auditor = await this.getAuditor(tokenType);
+		const auditorData = auditor.currentPk
+			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), auditor.currentPk, prepared)
+			: undefined;
+
 		return (tx: Transaction): TransactionResult => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenType);
 			if (shouldMerge) {
@@ -1167,6 +1171,8 @@ export class ContraClient {
 							newBalance.map((l) => l.ciphertext),
 						),
 						balanceProof: buildDdhProof(pid, balanceProof),
+						auditorHandles: buildAuditorHandlesOption(pid, auditorData?.handles),
+						auditorProof: buildAuditorProofOption(pid, auditorData?.proof),
 					},
 				}),
 			);
@@ -1194,291 +1200,6 @@ export class ContraClient {
 					package: pid,
 					typeArguments: [tokenType],
 					arguments: { batch },
-				}),
-			);
-		};
-	}
-
-	/**
-	 * Transfer to a batch of recipients and rotate the account's encryption key, all in one
-	 * transaction: pause → merge → transfer → rotate (re-key + unpause).
-	 *
-	 * The transfer is built under the CURRENT (old) key against the merged balance; the rotation
-	 * then re-states the post-transfer balance and re-keys it. Both steps are optimistic: if a
-	 * deposit races the balance read, `TryTransferFailedEvent` is emitted and neither the transfer
-	 * nor the rotation took effect. Pause and merge stay committed, so the caller just retries
-	 * (deterministic now, since the account is paused). On success the account ends debited by the
-	 * transfer total, re-keyed, and unpaused.
-	 *
-	 * @example
-	 * ```ts
-	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
-	 * const fn = await contraClient.rotateKeyAndTransferBatch({
-	 *   tokenAccount,
-	 *   newTokenAccount,
-	 *   recipients: [{ receiverAddress: alice, amount: 100n }],
-	 * });
-	 * const tx = new Transaction();
-	 * tx.add(fn);
-	 * ```
-	 *
-	 * SDK-thrown:
-	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries, or contains the
-	 *   sender's own address.
-	 * - `ReceiverDoesNotAcceptDepositsError` — at least one receiver has paused encrypted deposits
-	 *   or has a per-account freeze active.
-	 * - `InsufficientBalanceError` — the transfer total exceeds the spendable balance.
-	 * - `TokenAccountDoesNotExistError` — sender or a receiver is not registered for the token.
-	 *
-	 * On-chain aborts:
-	 * - `EAuthorizationError` — invalid `auth`.
-	 * - `ETransferDenied` — the token is paused, the deny list is globally frozen, the sender or
-	 *   a receiver is on the deny list, the sender has a per-account freeze active (the
-	 *   receiver-frozen case is caught by the SDK), or a receiver's state changed between the
-	 *   SDK check and execution.
-	 * - `sui::dynamic_field::EFieldDoesNotExist` — sender or receiver lost its registration between the SDK's check
-	 *   and execution.
-	 */
-	async rotateKeyAndTransferBatch({
-		tokenAccount,
-		newTokenAccount,
-		recipients,
-		auth,
-	}: RotateKeyAndTransferBatchOptions): Promise<(tx: Transaction) => TransactionResult> {
-		if (recipients.length === 0 || recipients.length > MAX_BATCH_RECIPIENTS) {
-			throw new InvalidArgumentError(
-				`Batch size must be in [1, ${MAX_BATCH_RECIPIENTS}], got ${recipients.length}.`,
-			);
-		}
-		const { address, tokenType } = tokenAccount;
-		const oldPk = tokenAccount.publicKey;
-		const oldSk = tokenAccount.privateKey;
-		const newPk = newTokenAccount.publicKey;
-		const newSk = newTokenAccount.privateKey;
-		const elgamalDst = tokenAccount.dst(PROTOCOL_ELGAMAL);
-		const ddhDst = tokenAccount.dst(PROTOCOL_DDH);
-
-		const normalizedSender = normalizeSuiAddress(address);
-		if (recipients.some((r) => normalizeSuiAddress(r.receiverAddress) === normalizedSender)) {
-			throw new InvalidArgumentError(`Cannot transfer to yourself (${address}).`);
-		}
-
-		const auditorPks = (await this.getAuditors(tokenType)).pks;
-		const useAuditors = auditorPks.length > 0;
-
-		const receiverStates = await this.#getAccountStates(
-			recipients.map((r) => r.receiverAddress),
-			tokenType,
-		);
-		const refusing = recipients
-			.map((recipient, i) => ({ recipient, state: receiverStates[i] }))
-			.filter(({ state }) => !state.acceptsEncryptedDeposits || state.isFrozen)
-			.map(({ recipient }) => recipient.receiverAddress);
-		if (refusing.length > 0) {
-			throw new ReceiverDoesNotAcceptDepositsError(refusing);
-		}
-
-		// The whole spendable balance is merged first; the transfer debits it under the old key,
-		// then the rotation re-keys whatever is left.
-		const { balance, pending, pendingPublicBalance } = await this.getBalance(tokenAccount);
-		const total = balance.amount + pending.amount + pendingPublicBalance;
-		const oldCollapsed = balance.ciphertext
-			.collapse()
-			.add(pending.ciphertext.collapse())
-			.add(Ciphertext.trivial(pendingPublicBalance));
-
-		// --- Transfer material, built under the OLD key against the merged balance. ---
-		// Per-transfer randomness (point `P` + seed-derived blindings) under the OLD key; see the
-		// equivalent block in `transferBatch` for the rationale.
-		const randomness = sampleTransferRandomness(oldPk);
-		const prepared = recipients.map((recipient, i) => {
-			const receiverPk = receiverStates[i].pk;
-			const encAmountReceiver = intoLimbs(recipient.amount).map((value, j) => ({
-				value,
-				...Ciphertext.encryptWithBlinding(receiverPk, value, randomness.blinding(i, j)),
-			}));
-			return { recipient, receiverPk, encAmountReceiver };
-		});
-		const totalAmount = recipients.reduce((acc, r) => acc + r.amount, 0n);
-		if (totalAmount > total) {
-			throw new InsufficientBalanceError(totalAmount, total, 'total');
-		}
-		const totalBlinding = addScalars(prepared.map((p) => collapseBlindings(p.encAmountReceiver)));
-		const { ciphertext: totalSenderEnc } = Ciphertext.encryptWithBlinding(
-			oldPk,
-			totalAmount,
-			totalBlinding,
-		);
-		const consistencyProof = ElGamalNizk.prove(elgamalDst, oldPk, [
-			{ ciphertext: totalSenderEnc, value: totalAmount, blinding: totalBlinding },
-		]);
-		// Sender's post-transfer balance under the old key: `total - totalAmount`.
-		const transferNewBalance = intoLimbs(total - totalAmount).map((value) => ({
-			value,
-			...Ciphertext.encryptWithBlinding(oldPk, value, randomScalar()),
-		}));
-		const transferNewBalanceEnc = new EncryptedAmount(
-			transferNewBalance[0].ciphertext,
-			transferNewBalance[1].ciphertext,
-			transferNewBalance[2].ciphertext,
-			transferNewBalance[3].ciphertext,
-		);
-		const transferBalanceProof = transferNewBalanceEnc
-			.collapse()
-			.subtract(oldCollapsed)
-			.add(totalSenderEnc)
-			.proveIsZero(ddhDst, oldSk, oldPk);
-
-		// --- Rotation material: re-state the POST-transfer balance under the old key (fresh known
-		// blinding), then re-key the same (value, blinding) to the new key. ---
-		const postTransferCollapsed = transferNewBalanceEnc.collapse();
-		const restateUnderOldPk = intoLimbs(total - totalAmount).map((value) => ({
-			value,
-			...Ciphertext.encryptWithBlinding(oldPk, value, randomScalar()),
-		}));
-		const restateProof = new EncryptedAmount(
-			restateUnderOldPk[0].ciphertext,
-			restateUnderOldPk[1].ciphertext,
-			restateUnderOldPk[2].ciphertext,
-			restateUnderOldPk[3].ciphertext,
-		)
-			.collapse()
-			.subtract(postTransferCollapsed)
-			.proveIsZero(ddhDst, oldSk, oldPk);
-		// Batched re-key (Π_rekey): the witness `w = newSk * oldSk^{-1}` maps each old handle to the new
-		// one (`w * D_i = r*newPk`) using only the secret keys; commitments are reused, so no proof.
-		const w = ristretto255.Point.Fn.create(newSk * ristretto255.Point.Fn.inv(oldSk));
-		const balanceUnderNewPk = restateUnderOldPk.map((l) => ({
-			ciphertext: new Ciphertext(l.ciphertext.ciphertext, mul(l.ciphertext.decryptionHandle, w)),
-		}));
-		const rekeyBases = [oldPk, ...restateUnderOldPk.map((l) => l.ciphertext.decryptionHandle)];
-		const rekeyImages = [newPk, ...balanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle)];
-		const rekeyProof = DdhNizk.prove(
-			tokenAccount.dst(PROTOCOL_BATCH_DDH),
-			w,
-			rekeyBases,
-			rekeyImages,
-		);
-		const { batchRangeProver } = await this.#getBulletproofs();
-		const keyEncryption = useAuditors
-			? KeyEncryption.prove(
-					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
-					newSk,
-					newPk,
-					auditorPks,
-				)
-			: undefined;
-
-		return (tx: Transaction): TransactionResult => {
-			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenType);
-			const pid = this.#packageConfig.packageId;
-
-			// 1. pause, 2. merge — always, so a deposit that raced the balance read is folded in.
-			// Then the transfer fails optimistically (rather than the rekey aborting on pending),
-			// and pause + merge stay committed for a clean retry.
-			this.#setAcceptsEncryptedDeposits(tx, tokenAccount, false, authArg);
-			tx.add(this.#merge({ tokenAccount, auth: authArg }));
-
-			// 3. transfer, built under the OLD key against the merged balance.
-			let [batch] = tx.add(
-				contraContracts.batchedTransfer({
-					package: pid,
-					typeArguments: [tokenType],
-					arguments: {
-						sender: this.getAccountId(address),
-						auth: authArg,
-						ct: this.#getConfidentialTokenId(tokenType),
-						receiverPks: buildGVector(
-							pid,
-							prepared.map((p) => p.receiverPk),
-						),
-						receiverAmounts: tx.makeMoveVec({
-							type: `${pid}::encrypted_amount::EncryptedAmount`,
-							elements: prepared.map((p) =>
-								buildEncryptedAmount(
-									pid,
-									p.encAmountReceiver.map((l) => l.ciphertext),
-								),
-							),
-						}),
-						wellFormedProofs: buildWellFormedProof(
-							batchRangeProver,
-							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-							elgamalDst,
-							pid,
-							[
-								...prepared.map((p) => ({ limbs: p.encAmountReceiver, pk: p.receiverPk })),
-								{ limbs: transferNewBalance, pk: oldPk },
-							],
-						),
-						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
-						consistencyProof: buildElGamalProof(pid, consistencyProof),
-						seedPoint: point(randomness.seedPoint.toBytes()),
-						newBalance: buildEncryptedAmount(
-							pid,
-							transferNewBalance.map((l) => l.ciphertext),
-						),
-						balanceProof: buildDdhProof(pid, transferBalanceProof),
-					},
-				}),
-			);
-			for (const p of prepared) {
-				[batch] = tx.add(
-					contraContracts.addToBatch({
-						package: pid,
-						typeArguments: [tokenType],
-						arguments: {
-							batch,
-							receiver: this.getAccountId(p.recipient.receiverAddress),
-							memo: memoBytes(p.recipient.memo),
-						},
-					}),
-				);
-			}
-			tx.add(
-				contraContracts.tryFinalize({
-					package: pid,
-					typeArguments: [tokenType],
-					arguments: { batch },
-				}),
-			);
-
-			// 4. rotate last: restate the post-transfer balance → re-key → unpause, optimistically.
-			// If the transfer no-op'd on a race, the restate fails and this no-ops too — leaving the
-			// account paused + merged so the caller just retries the transfer + rotation.
-			const { encryptedAmount: restatedEa, wellFormedProof: restatedEaProof } =
-				buildEncryptedAmountAndProof(
-					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-					tokenAccount.dst(PROTOCOL_ELGAMAL),
-					tx,
-					pid,
-					{ limbs: restateUnderOldPk, pk: oldPk },
-				);
-			const newHandles = tx.add(
-				buildGVector(
-					pid,
-					balanceUnderNewPk.map((l) => l.ciphertext.decryptionHandle),
-				),
-			);
-			return tx.add(
-				contraContracts.trySetPublicKeyAndUnpause({
-					package: pid,
-					typeArguments: [tokenType],
-					arguments: {
-						account: this.getAccountId(address),
-						auth: authArg,
-						ct: this.#getConfidentialTokenId(tokenType),
-						newPk: point(newPk.toBytes()),
-						restatedBalance: restatedEa,
-						restatedBalanceProof: restatedEaProof,
-						balanceProof: buildDdhProof(pid, restateProof),
-						newHandles,
-						rekeyProof: buildDdhProof(pid, rekeyProof),
-						keyEncryption: buildKeyEncryptionOption(pid, keyEncryption),
-					},
 				}),
 			);
 		};
@@ -1599,11 +1320,50 @@ interface AccountState {
 	pk: PublicKey;
 	acceptsEncryptedDeposits: boolean;
 	isFrozen: boolean;
-	keyEncryptionVersion: number;
 }
 
 /** Max recipients in a single `transferBatch` PTB. Mirrors `MAX_BATCH_RECIPIENTS` in `contra.move`. */
 const MAX_BATCH_RECIPIENTS = 255;
+
+/** A prepared receiver amount: its four well-formed limbs (value/blinding/ciphertext) and its pk. */
+type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb[] };
+
+/**
+ * Build the per-transfer auditor data (Appendix C): for each receiver, regroup its four u16 limbs
+ * into two u32-limb `(commitment, handle)` pairs under `auditorPk` — commitment
+ * `Č_k = C_{2k} + 2^16 C_{2k+1}` (reusing the receiver's range-proven commitments), handle
+ * `D̃_k = ρ̃_k · auditorPk` with `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`. Returns the flattened handles (two
+ * per receiver, in `prepared` order — matching `add_to_batch`'s consumption order) and one batched
+ * `ElGamalNizk` over every derived pair, all under the single `auditorPk`.
+ */
+function buildAuditorData(
+	dst: Uint8Array,
+	auditorPk: PublicKey,
+	prepared: readonly PreparedAmount[],
+): { handles: PublicKey[]; proof: ElGamalNizk } {
+	const shift = 1n << 16n;
+	const handles: PublicKey[] = [];
+	const entries: { ciphertext: Ciphertext; value: bigint; blinding: bigint }[] = [];
+	for (const p of prepared) {
+		const limbs = p.encAmountReceiver;
+		for (const [lo, hi] of [
+			[0, 1],
+			[2, 3],
+		] as const) {
+			const blinding = ristretto255.Point.Fn.create(
+				limbs[lo].blinding + shift * limbs[hi].blinding,
+			);
+			const value = limbs[lo].value + shift * limbs[hi].value;
+			const commitment = limbs[lo].ciphertext.ciphertext.add(
+				mul(limbs[hi].ciphertext.ciphertext, shift),
+			);
+			const handle = mul(auditorPk, blinding);
+			handles.push(handle);
+			entries.push({ ciphertext: new Ciphertext(commitment, handle), value, blinding });
+		}
+	}
+	return { handles, proof: ElGamalNizk.prove(dst, auditorPk, entries) };
+}
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */
 function memoBytes(memo?: string): number[] {

@@ -186,7 +186,12 @@ export function createOperations(
 		for (const user of users) {
 			const [coin] = setupTx.splitCoins(setupTx.gas, [FUNDING_AMOUNT]);
 			setupTx.transferObjects([coin], user.address);
-			const account = setupTx.add(client.contra.newAccount({ owner: user.address }));
+			const account = setupTx.add(
+				client.contra.newAccount({
+					owner: user.address,
+					publicKey: user.tokenAccount.publicKey,
+				}),
+			);
 			setupTx.add(client.contra.shareAccount({ account }));
 		}
 		setupTx.setSender(contraInit.address);
@@ -196,22 +201,16 @@ export function createOperations(
 	}
 
 	/**
-	 * `setupFreshAccounts` plus a registered `TokenAccount` for each, under
-	 * the current auditor set. Registrations run in parallel — each is signed
-	 * by its own fresh keypair, so there is no gas-coin contention.
+	 * `setupFreshAccounts` plus a registered `TokenAccount` for each. Registrations run in parallel —
+	 * each is signed by its own fresh keypair, so there is no gas-coin contention. Under per-transfer
+	 * auditing, registration carries no auditor data.
 	 */
 	async function setupFreshUsers(count: number): Promise<FreshUser[]> {
 		const users = await setupFreshAccounts(count);
-		const auditorPks = tokenIssuer.getAuditorKeys(tokenIssuer.auditorVersion).publicKeys;
 		await Promise.all(
 			users.map(async (user) => {
 				const regTx = new Transaction();
-				regTx.add(
-					await client.contra.register({
-						tokenAccount: user.tokenAccount,
-						auditorPublicKeys: auditorPks,
-					}),
-				);
+				regTx.add(await client.contra.register({ tokenAccount: user.tokenAccount }));
 				regTx.setSender(user.address);
 				await exec(regTx, user.keypair);
 			}),
