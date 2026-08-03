@@ -12,7 +12,7 @@ use contra::{
         EncryptedAmount,
         WellFormedEncryptedAmount,
         from_value,
-        sum_commitments
+        sum_commitments,
     },
     nizk::{DdhProof, ElGamalProof, verify_elgamal},
     twisted_elgamal::{Self, Encryption}
