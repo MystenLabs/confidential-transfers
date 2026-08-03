@@ -685,7 +685,9 @@ describe('core user flows (devnet)', () => {
 				balance: wrapAmount + extra,
 				pending: 0n,
 				pendingPublicBalance: 0n,
-				balanceUpperBound: 1,
+				// The inline merge folded the pending public deposit into `active` (bound 1 -> 2), and
+				// the lazy re-key only swaps handles (preserving the bound), so this is 2, not 1.
+				balanceUpperBound: 2,
 			});
 
 			// Sanity check: a transfer from the post-rotation account still works.
