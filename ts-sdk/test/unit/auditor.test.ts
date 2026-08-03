@@ -66,7 +66,9 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 		expect(() => auditorFor().decryptTransferAmount(ea, [])).toThrow(/2 auditor handles/);
 	});
 
-	it('a wrong auditor key does not recover the amount', () => {
+	// A wrong key yields an out-of-range point, so the u32 BSGS search runs to exhaustion
+	// (~2^16 giant steps per limb) before it gives up — legitimately slow, hence the timeout.
+	it('a wrong auditor key does not recover the amount', { timeout: 30_000 }, () => {
 		const amount = 500n;
 		const { ea, handles } = buildTransfer(receiverPk, auditorPk, amount);
 		const [, wrongSk] = generateKeyPair();
