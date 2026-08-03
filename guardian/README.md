@@ -1,6 +1,4 @@
-# Contra Guardian Design
-
-Author: Joy
+# Guardian
 
 The Guardian is an off-chain service running in an attested TEE (using the
 [Nautilus](https://docs.sui.io/concepts/cryptography/nautilus) pattern) that acts as a
@@ -11,7 +9,7 @@ transfer or unwrap checks:
 2. A registered enclave attesting that it independently re-checked the transfer
    arithmetic in plaintext. The enclave signature is verified onchain.
 
-### Goals
+## Goals
 
 - **Soundness.** A bug in the proof layer (verifier / Fiat–Shamir / range-proof bug)
   lets an attacker mint hidden value and nobody can observe it until unwrap time. The
@@ -22,13 +20,13 @@ transfer or unwrap checks:
 - **The enclave only checks the math.** There is no replay/expiry protection or domain 
   separation, as they come other components of the confidential transfer system. 
 
-### Registration
+On-chain counterpart: `../move/sources/guardian.move`.
+
+## Registration
 
 - The token holds `Option<GuardianPolicy>`: `Some` enables the guardian, `None`
   disables it — no `enabled` flag needed.
-- Issuer creates the token with `new_confidential_token(..., pcrs, operator_address)`,
-  which creates the `GuardianPolicy`.
-- Issuer (`ManagementCap`) can set / unset the policy, and update it in one call —
+- Issuer (`ManagementCap`) sets / unsets the policy, and updates it in one call —
   each of `pcrs` / `min_version` / `operator` is an `Option`, `None` a no-op.
 - The operator (a single address) runs one serving endpoint (`url`) backed by
   multiple enclave instances, each holding its own `{ signing_pk, enc_pk }` pair
@@ -37,25 +35,30 @@ transfer or unwrap checks:
 
 ```move
 GuardianPolicy {
-  operator: address,        // registers / removes guardian_enclave_keys; issuer can replace
+  operator: address,        // registers / removes keys and updates url; issuer can replace
   url: String,              // the one endpoint fronting the whole fleet; operator-updated,
                             // routing metadata only (nothing security-relevant)
   version: u16,             // incremented per PCR change; stamps new registrations
   min_version: u16,         // issuer bumps this to invalidate old-image keys lazily;
                             // guardian_enclave_keys is never cleared
   pcrs: Pcrs,               // (pcr0, pcr1, pcr2): image, kernel, application
-  guardian_enclave_keys: VecMap<vector<u8>, GuardianEnclaveKey>, // keyed by signing_pk; see the
-                                                // scaling options below — many or one
+  guardian_enclave_keys: VecMap<Ed25519PublicKey, GuardianEnclaveKey>,
 }
 
 GuardianEnclaveKey {
-  enc_pk: vector<u8>,
-  version: u16,             // policy version at registration; valid while
-                            // >= min_version
+  signing_pk: Ed25519PublicKey,
+  enc_pk: X25519PublicKey,
+  version: u16,             // policy version at registration; valid while >= min_version
 }
 ```
 
-### Enclave Scaling
+- Entry points: `set_guardian_policy(pcrs, operator, url)` / `unset_guardian_policy()` /
+  `update_guardian_policy(pcrs?, min_version?, operator?)` for the issuer;
+  `register_guardian_enclave(attestation)` / `remove_guardian_enclave(signing_pk)` /
+  `set_guardian_url(url)` for the operator. The attestation's `user_data` is
+  `signing_pk || enc_pk`, 32 bytes each.
+
+## Enclave Scaling
 
 - **Offchain option: provision the fleet of enclaves to the same pk**
   - Client sends the request encrypted under the single `enc_key`.
@@ -127,26 +130,25 @@ GuardianEnclaveKey {
   - Rollback is free: old keys were never invalidated, so if the new image is broken,
     remove its keys and keep serving on the old fleet.
   - `min_version` is a floor (revoke everything older than X); revoking one specific
-    version while keeping older ones is per-key `remove_guardian_enclave_key` instead.
+    version while keeping older ones is per-key `remove_guardian_enclave` instead.
 
-### Transfer Flow
+## Transfer Flow
 
 - Alice calls the enclave with the request encrypted under all `enc_pk`s. Ciphertexts
   are collapses of the onchain 4-limb structures.
 
 ```
 {
-  session_id,    // the account's static (account, token) tag; pins the approval
   pk_B[],
   enc_bal_A_old: (C_1_A, C_2_A),
   enc_bal_A_new: (C_1_A_new, C_2_A_new),
   enc_tx_amt[]: (C_1_tx_i, C_2_tx_i),
 
   // private witnesses
-  x_A,
+  x_A,           // opens both balances, whose blindings are unknowable
   bal_A_old,     // the plaintext m is sent so the enclave never solves a discrete log
   tx_amount[],
-  r_tx[]
+  r_tx[]         // proves each enc_tx_amt[i] well-formed to pk_B[i]
 }
 ```
 
@@ -165,15 +167,21 @@ compute bal_A_new = bal_A_old - sum of tx_amount[i]
 check bal_A_new >= 0
 check C_1_A_new - C_2_A_new / x_A == bal_A_new*H
 
-enclave signs payload:
+enclave signs payload (an enum; the variant tag separates transfers from unwraps):
 
-{
-  session_id,
+Transfer {
   pk_A,
   pk_B[],
   enc_bal_A_old,
   enc_bal_A_new,
   enc_tx_amt[]
+}
+
+Unwrap {
+  pk_A,
+  enc_bal_A_old,
+  enc_bal_A_new,
+  amount
 }
 ```
 
@@ -184,7 +192,7 @@ enclave signs payload:
 fun batch_transfer(..., guardian_sig, signing_pk) {
   if (ct.guardian_policy.is_none()) return;   // guardian off: ZK proofs only
   let policy = ct.guardian_policy.borrow();
-  let key: &GuardianEnclaveKey = policy.guardian_enclave_keys.get(&signing_pk); // aborts if unknown
+  let key = policy.guardian_enclave_keys.get(&signing_pk); // aborts if unknown
   assert!(key.version >= policy.min_version);
   let payload = { ... }; // rebuilt onchain, never passed
   assert!(ed25519_verify(&guardian_sig, &signing_pk, &bcs::to_bytes(payload)));
@@ -195,7 +203,46 @@ Approvals are single-use: they bind `enc_bal_A_old`, which every transfer overwr
 valid exactly until the sender's active balance changes, no TTL needed. (Deposits land
 in `pending`, so they don't invalidate an in-flight approval.)
 
-### DDoS protection for enclave
+## DDoS protection for enclave
 
 - Basic per-IP rate limiting at the edge (e.g. Cloudflare) is enough: per-request
   enclave work is a few scalar mults.
+
+## Code layout
+
+- `core/` — wire types, plaintext checks, approval signing. No Nitro, no networking.
+- `enclave/` — the binary: key generation at boot, `/attestation`, `/health` +
+  `/ready`, and `/approve` for sealed requests.
+
+Deployment lives in `sui-operations` (`contra-guardian-enclave`, and
+`contra-guardian-proxy` for the ALB + Envoy config). There is no proxy crate here:
+routing is round robin plus a retry when an instance answers 422 ("not a recipient"),
+which is Envoy config, not app logic.
+
+## Test
+
+```
+cargo test --workspace --no-default-features --features contra-guardian-enclave/non-enclave-dev
+```
+
+`--features non-enclave-dev` stubs the NSM attestation call so the guardian runs
+outside an enclave; everything else — HPKE unseal, checks, signing — is the
+production path, and the binary warns once so a dev build is never mistaken for a
+real enclave. `enclave/tests/e2e.rs` serves a guardian in-process and verifies each
+approval against the payload the chain would rebuild.
+
+## Local fleet
+
+`scripts/` drives a local fleet against a localnet, mirroring what the deploy
+workflow does in production. Set `PACKAGE_ID`, `TOKEN_ID`, `TOKEN_TYPE` (plus
+`CAP_ID` for bootstrap); the active sui address must be the policy's operator.
+
+```
+./scripts/bootstrap.sh     # set the policy, start + register instance 1
+./scripts/scale.sh 2       # add 2 more instances (issuer not involved)
+./scripts/remove.sh 3002   # remove a key on chain, then stop the process
+```
+
+State lives in `.fleet/`. Registration uses `contra::register_guardian_enclave_for_dev`
+because a mock attestation cannot pass `sui::nitro_attestation`; everything after
+registration is the production path.
