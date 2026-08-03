@@ -14,16 +14,22 @@ public struct NewConfidentialTokenEvent<phantom T>() has copy, drop;
 /// A policy is updated for a confidential token.
 public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop;
 
-/// A new token account is registered for an account for a token type `T`. The account's public key
-/// is account-level (shared across token types) and is carried by `RotatedKeyEvent` / the account
-/// object, not here.
+/// A new token account is registered for an account for a token type `T`, keyed under `pk` (the
+/// account key at registration time).
 public struct NewRegistrationEvent<phantom T> has copy, drop {
     owner: address,
+    pk: Element<G>,
 }
 
-/// An account rotated its (account-level) public key to `new_pk`. Rotation re-keys every registered
-/// token balance at once, so this event is not parameterized by a token type.
-public struct RotatedKeyEvent has copy, drop {
+/// An account rotated its key (the convergence target) to `new_pk`. Token balances catch up lazily
+/// (see `TokenRekeyedEvent`), so this is not parameterized by a token type.
+public struct AccountKeyRotatedEvent has copy, drop {
+    owner: address,
+    new_pk: Element<G>,
+}
+
+/// Token `T`'s balance was re-keyed to `new_pk` (the account key), catching it up after a rotation.
+public struct TokenRekeyedEvent<phantom T> has copy, drop {
     owner: address,
     new_pk: Element<G>,
 }
@@ -71,10 +77,6 @@ public struct TryTransferFailedEvent() has copy, drop;
 
 /// Emitted when a `try_unwrap` fails due to an invalid balance proof.
 public struct TryUnwrapFailedEvent() has copy, drop;
-
-/// Emitted when `try_finish_key_rotation_and_unpause` bails because a `stage_token_rekey` re-key check failed. The
-/// account is left paused and merged so the rotation can be retried.
-public struct TryKeyRotationFailedEvent() has copy, drop;
 
 /// An amount is taken from the balance of an account and converted to public coins.
 public struct UnwrapEvent<phantom T> has copy, drop {
@@ -131,12 +133,16 @@ public(package) fun emit_policy_update<T, W>(permissioned_operations: vector<u8>
     event::emit(PolicyUpdateEvent<T, W>(permissioned_operations));
 }
 
-public(package) fun emit_new_registration<T>(owner: address) {
-    event::emit(NewRegistrationEvent<T> { owner });
+public(package) fun emit_new_registration<T>(owner: address, pk: Element<G>) {
+    event::emit(NewRegistrationEvent<T> { owner, pk });
 }
 
-public(package) fun emit_rotated_key(owner: address, new_pk: Element<G>) {
-    event::emit(RotatedKeyEvent { owner, new_pk });
+public(package) fun emit_account_key_rotated(owner: address, new_pk: Element<G>) {
+    event::emit(AccountKeyRotatedEvent { owner, new_pk });
+}
+
+public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: Element<G>) {
+    event::emit(TokenRekeyedEvent<T> { owner, new_pk });
 }
 
 public(package) fun emit_wrap<T>(receiver: address, amount: u64, memo: vector<u8>) {
@@ -177,10 +183,6 @@ public(package) fun emit_try_transfer_failed() {
 
 public(package) fun emit_try_unwrap_failed() {
     event::emit(TryUnwrapFailedEvent());
-}
-
-public(package) fun emit_try_key_rotation_failed() {
-    event::emit(TryKeyRotationFailedEvent());
 }
 
 public(package) fun emit_unwrap<T>(sender: address, amount: u64) {

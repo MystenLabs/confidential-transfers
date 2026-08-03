@@ -246,26 +246,22 @@ public(package) fun try_update<T>(
     }
 }
 
-/// The four limb decryption handles of `self`'s amount, in order — the old handles a whole-account
-/// re-keying DDH maps to the new ones.
-public(package) fun limb_handles<T>(self: &EncryptedBalance<T>): vector<Element<G>> {
-    self.amount.limb_handles()
-}
-
-/// Re-key `self`'s amount by swapping its limb handles for `new_handles` without verifying (see
-/// `encrypted_amount::rekey_unchecked`); the caller batches one DDH over all tokens before committing
-/// with `set_amount`.
-public(package) fun rekey_amount_unchecked<T>(
-    self: &EncryptedBalance<T>,
+/// On a verifying `eq_proof` that `new_handles` re-key `self` (under `old_pk`) to `new_pk` — each
+/// limb's commitment kept, its decryption handle mapped by a shared witness — replace `self`'s
+/// amount with the re-keyed amount, preserving `upper_bound` (the re-keyed limbs encrypt the same
+/// values, so their bounds are unchanged). Returns whether the proof verified.
+public(package) fun try_set_public_key<T>(
+    self: &mut EncryptedBalance<T>,
+    old_pk: &Element<G>,
+    new_pk: &Element<G>,
     new_handles: vector<Element<G>>,
-): EncryptedAmount {
-    self.amount.rekey_unchecked(new_handles)
-}
-
-/// Commit a re-keyed `amount` into `self`, preserving `upper_bound` — the re-keyed limbs encrypt the
-/// same values, so their bounds are unchanged.
-public(package) fun set_amount<T>(self: &mut EncryptedBalance<T>, amount: EncryptedAmount) {
-    self.amount = amount;
+    eq_proof: DdhProof,
+    dst: vector<u8>,
+): bool {
+    self.amount.try_rekey(old_pk, new_pk, new_handles, &eq_proof, dst).is_some_and!(|amount| {
+        self.amount = *amount;
+        true
+    })
 }
 
 // === Admin functions ===

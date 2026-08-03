@@ -214,31 +214,37 @@ public(package) fun verify_equal(
     )
 }
 
-/// The four limb decryption handles of `ea`, in order.
-public(package) fun limb_handles(ea: &EncryptedAmount): vector<Element<G>> {
-    vector[
-        *ea.l0.decryption_handle(),
-        *ea.l1.decryption_handle(),
-        *ea.l2.decryption_handle(),
-        *ea.l3.decryption_handle(),
-    ]
-}
-
-/// Re-key `ea` by swapping each limb's decryption handle for the matching `new_handles[i]` while
-/// keeping its Pedersen commitment, without verifying the swap. The caller must batch a DDH proof
-/// over `[(old_pk, new_pk)] ++ [(ea.limb_handles()[i], new_handles[i])]` before committing the
-/// result — reusing the commitments means the re-keyed amount encrypts the same per-limb values
-/// under the new key exactly when that proof verifies.
-public(package) fun rekey_unchecked(
-    ea: &EncryptedAmount,
+/// Re-key `old_amount` (encrypted under `old_pk`) to `new_pk` by swapping each limb's decryption
+/// handle for the matching `new_handles[i]` while keeping its Pedersen commitment. On a verifying
+/// re-keying DDH proof — a single witness `w` mapping `old_pk` and every old handle to `new_pk` and
+/// `new_handles[i]` — returns the re-keyed amount; otherwise `none`. Reusing the commitments means
+/// only the handles are caller-supplied, and the result encrypts the same per-limb values under
+/// `new_pk` by construction.
+public(package) fun try_rekey(
+    old_amount: &EncryptedAmount,
+    old_pk: &Element<G>,
+    new_pk: &Element<G>,
     new_handles: vector<Element<G>>,
-): EncryptedAmount {
+    proof: &DdhProof,
+    dst: vector<u8>,
+): Option<EncryptedAmount> {
     assert!(new_handles.length() == 4, EMismatchedBatchLength);
-    EncryptedAmount {
-        l0: twisted_elgamal::new(*ea.l0.ciphertext(), new_handles[0]),
-        l1: twisted_elgamal::new(*ea.l1.ciphertext(), new_handles[1]),
-        l2: twisted_elgamal::new(*ea.l2.ciphertext(), new_handles[2]),
-        l3: twisted_elgamal::new(*ea.l3.ciphertext(), new_handles[3]),
+    // Pair 0 re-keys the public key; pairs 1..4 re-key each limb's decryption handle.
+    let mut bases = vector[*old_pk];
+    let mut images = vector[*new_pk];
+    4u64.do!(|i| {
+        bases.push_back(*old_amount[i].decryption_handle());
+        images.push_back(new_handles[i]);
+    });
+    if (proof.verify_ddh(dst, &bases, &images)) {
+        option::some(EncryptedAmount {
+            l0: twisted_elgamal::new(*old_amount[0].ciphertext(), new_handles[0]),
+            l1: twisted_elgamal::new(*old_amount[1].ciphertext(), new_handles[1]),
+            l2: twisted_elgamal::new(*old_amount[2].ciphertext(), new_handles[2]),
+            l3: twisted_elgamal::new(*old_amount[3].ciphertext(), new_handles[3]),
+        })
+    } else {
+        option::none()
     }
 }
 
@@ -440,7 +446,12 @@ public fun collapse_for_testing(ea: &EncryptedAmount): Encryption {
 /// expects.
 #[test_only]
 public fun decryption_handles_for_testing(ea: &EncryptedAmount): vector<Element<G>> {
-    ea.limb_handles()
+    vector[
+        *ea[0].decryption_handle(),
+        *ea[1].decryption_handle(),
+        *ea[2].decryption_handle(),
+        *ea[3].decryption_handle(),
+    ]
 }
 
 #[test_only]

@@ -37,15 +37,14 @@
 ///    The default policy is fully permissionless.
 ///
 /// ## Key Flows for Users:
-/// 1. Create an account for an address with a single public key `pk` (needed once for all token
-///    types); `pk` is shared by every token balance under the account.
-/// 2. Register a token account for a token type `T` (no per-token key or auditor data needed).
-/// 3. Rotate the account public key (all token balances at once): pause account deposits
-///    (`set_account_accepts_deposits(false)`) and `merge` each token, then `begin_key_rotation`, one
-///    `stage_token_rekey` per registered token (stage), `finish_staging` (verify a single re-keying
-///    `DdhProof` over every token's handle pairs at once), one `finalize_token_rekey` per token
-///    (commit), then `try_finish_key_rotation_and_unpause` (resumes deposits on success). A raced
-///    deposit soft-fails the rotation, leaving the account paused and merged so the caller can retry.
+/// 1. Create an account for an address with an initial public key `pk` (needed once for all token
+///    types); `Account.pk` is the current account key and the target that token balances converge to.
+/// 2. Register a token account for a token type `T`; its balances start keyed under `Account.pk` (no
+///    auditor data needed).
+/// 3. Rotate the account key with `set_account_key` — O(1), it just moves the convergence target
+///    `Account.pk`. Each token's balance stays under its own `TokenAccount.pk` (deposits keep landing
+///    there) until the owner catches it up lazily with `rekey_token`, which merges the token first
+///    (`pending` must be empty) and re-keys `active` from `TokenAccount.pk` to `Account.pk`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to two or more token accounts. If the token has an auditor key
@@ -77,7 +76,6 @@ use contra::{
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy}
 };
-use std::type_name::{Self, TypeName};
 use sui::{
     coin::{Self, Coin, TreasuryCap},
     deny_list::DenyList,
@@ -85,7 +83,6 @@ use sui::{
     dynamic_field as df,
     group_ops::Element,
     ristretto255::{G, g_identity},
-    vec_map::{Self, VecMap},
     vec_set::{Self, VecSet}
 };
 
@@ -98,6 +95,7 @@ const ETokenAlreadyRegistered: u64 = 3;
 const EPendingDepositsMustBeMerged: u64 = 4;
 const EBalanceProofFailed: u64 = 5;
 const EAllAmountsMustBeUsed: u64 = 6;
+const EAmountsEqualityProofFailed: u64 = 7;
 const EEmptyTransferBatch: u64 = 8;
 const ETooManyReceivers: u64 = 9;
 /// Recovery: transfer or update active balance.
@@ -107,13 +105,6 @@ const EBatchTooLarge: u64 = 12;
 const EMissingAuditorData: u64 = 13;
 const EUnexpectedAuditorData: u64 = 14;
 const EAuditorProofFailed: u64 = 15;
-const EKeyRotationOwnerMismatch: u64 = 16;
-const ETokenAlreadyPrepared: u64 = 17;
-const ETokenAlreadyFinalized: u64 = 18;
-const ENotAllTokensPrepared: u64 = 19;
-const ERotationIncomplete: u64 = 20;
-const EInvalidRotationPhase: u64 = 21;
-const EKeyRotationFailed: u64 = 22;
 
 // === Constants ===
 
@@ -164,19 +155,21 @@ public struct Pool<phantom T> has key {
     id: UID,
 }
 
-/// Base account that stores token accounts as dynamic fields.
+/// Base account that stores token accounts as dynamic fields. `pk` is the account's current ElGamal
+/// key — the convergence target for key rotation. `set_account_key` updates it (O(1)); each token's
+/// balance catches up lazily via `rekey_token`, which re-keys that token from its own `TokenAccount.pk`
+/// to this one. New token accounts start at this key.
 public struct Account has key {
     id: UID,
     owner: address,
     pk: Element<G>,
-    accepts_deposits: bool,
-    // TODO: removable if `TokenAccount`s are stored in a `Bag` rather than raw dynamic fields —
-    // `Bag::length()` would maintain this count for the rotation's completeness check.
-    num_tokens: u64,
 }
 
-/// A user's account for one confidential token.
+/// A user's account for one confidential token. `pk` is the key this token's balances (active and
+/// pending) are actually encrypted under; it lags `Account.pk` after a rotation until `rekey_token`
+/// brings it current, so senders depositing to this token use `TokenAccount.pk`.
 public struct TokenAccount<phantom T> has store {
+    pk: Element<G>,
     session_id: vector<u8>,
     is_frozen: bool,
     accepts_deposits: bool,
@@ -206,31 +199,6 @@ public enum TransferBatch<phantom T> {
         next_index: u8,
         auditor_handles: vector<Element<G>>,
     },
-}
-
-/// Hot-potato state machine for a whole-account key rotation (no abilities, so it can't be stored or
-/// dropped — it must be consumed by `try_finish_key_rotation_and_unpause`).
-///
-/// The rotation runs in two phases carried as distinct variants: `Staging` (`stage_token_rekey` verifies
-/// each token's re-key and stages the re-keyed amount) advances via `finish_staging` — once every
-/// token is staged — to `Finalizing` (`finalize_token_rekey` pops and applies each staged amount). When
-/// `Finalizing`'s `staged` map is empty every balance has been re-keyed and `try_finish_key_rotation_and_unpause`
-/// flips the account key. `Failed` is entered when a `stage_token_rekey` re-key check fails, after which
-/// the passes are no-ops and `try_finish_key_rotation_and_unpause` soft-fails, leaving the account paused and
-/// merged for a retry.
-public enum KeyRotation {
-    Staging {
-        owner: address,
-        new_pk: Element<G>,
-        // Accumulated re-keying DDH statement (Alg. 13's Π_rekey): `bases` starts `[old_pk]` and
-        // `images` `[new_pk]`, then each `stage_token_rekey` appends that token's four old/new limb
-        // handles, so one batched proof over all `4m+1` pairs is checked at `finish_staging`.
-        bases: vector<Element<G>>,
-        images: vector<Element<G>>,
-        staged: VecMap<TypeName, EncryptedAmount>,
-    },
-    Finalizing { owner: address, new_pk: Element<G>, staged: VecMap<TypeName, EncryptedAmount> },
-    Failed { owner: address },
 }
 
 // === Keys ===
@@ -348,7 +316,7 @@ public fun new_account(registry: &mut AccountRegistry, owner: address, pk: Eleme
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
     assert!(pk != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    Account { id, owner, pk, accepts_deposits: true, num_tokens: 0 }
+    Account { id, owner, pk }
 }
 
 /// Share the account object.
@@ -358,9 +326,9 @@ public fun share_account(account: Account) {
     transfer::share_object(account);
 }
 
-/// Create a `TokenAccount` for token `T`. Balances are encrypted under the account-level
-/// `account.pk`. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and
-/// for `account.owner`. Under per-transfer auditing, registration carries no auditor data.
+/// Create a `TokenAccount` for token `T`, with its balances keyed under the current `account.pk`.
+/// Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
+/// `account.owner`. Under per-transfer auditing, registration carries no auditor data.
 public fun register<T>(account: &mut Account, auth: &Auth<T>) {
     let session_id = account.session_id<T>();
     register_internal(account, auth, session_id);
@@ -375,13 +343,14 @@ public(package) fun register_internal<T>(
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
 
-    events::emit_new_registration<T>(account.owner);
-    account.num_tokens = account.num_tokens + 1;
+    let pk = account.pk;
+    events::emit_new_registration<T>(account.owner, pk);
 
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
+            pk,
             session_id,
             is_frozen: false,
             accepts_deposits: true,
@@ -406,164 +375,45 @@ public fun set_accepts_encrypted_deposits<T>(
     account[TokenAccountKey<T>()].accepts_deposits = accepts_encrypted_deposits;
 }
 
-/// Set the account-wide deposit gate (independent of the per-token gates). A key rotation requires
-/// this paused: the caller sets it `false` before `begin_key_rotation` (which asserts it), and
-/// `try_finish_key_rotation_and_unpause` resumes it on success. Authorized by `auth`, which must be for
-/// `account.owner`; any `Auth<T>` is accepted regardless of which operation it covers.
-public fun set_account_accepts_deposits<T>(
-    account: &mut Account,
-    auth: &Auth<T>,
-    accepts_deposits: bool,
-) {
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    account.accepts_deposits = accepts_deposits;
-}
-
-/// Begin a whole-account key rotation to `new_pk`. Because `pk` is account-level, rotation re-keys
-/// every registered token balance in two phases — `stage_token_rekey` per token (verify + stage),
-/// `finish_staging`, `finalize_token_rekey` per token (commit) — sealed by `try_finish_key_rotation_and_unpause`,
-/// which resumes deposits on success. Returns the `KeyRotation` receipt in the `Staging` phase.
-/// Authenticates `account.owner` via `auth`, which must be for the `PERMISSIONED_REGISTER` operation
-/// and may be for any token the account is registered for (rotation reuses the registration
-/// authorization).
-///
-/// The caller should first pause account-wide deposits (`set_account_accepts_deposits(false)`) and
-/// `merge` each token so its pending balance is empty before `stage_token_rekey`. Pausing is not
-/// enforced — an unpaused rotation just risks a raced deposit soft-failing it (see
-/// `stage_token_rekey`), the same as before — but it makes retries race-free.
-public fun begin_key_rotation<T>(
-    account: &mut Account,
-    auth: &Auth<T>,
-    new_pk: Element<G>,
-): KeyRotation {
+/// Rotate the account's key to `new_pk`. O(1): sets the convergence target `account.pk`; it does not
+/// touch any token balance. Each token's balance stays under its own `TokenAccount.pk` (deposits keep
+/// landing there) until the owner catches it up with `rekey_token`. Authenticated by `auth`, which
+/// must be for the `PERMISSIONED_REGISTER` operation and may be for any token the account is
+/// registered for.
+public fun set_account_key<T>(account: &mut Account, auth: &Auth<T>, new_pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(new_pk != g_identity(), EIdentityPublicKey);
-    KeyRotation::Staging {
-        owner: account.owner,
-        new_pk,
-        bases: vector[account.pk],
-        images: vector[new_pk],
-        staged: vec_map::empty(),
-    }
-}
-
-/// Stage pass: append token `T`'s four old/new limb-handle pairs to the rotation's DDH statement and
-/// stage its re-keyed amount, without verifying (the whole batch is checked once at
-/// `finish_staging`). No-op once `Failed`. Aborts if the receipt is not in the `Staging` phase, is
-/// for a different account, `T` was already staged, or the token has unmerged pending deposits.
-public fun stage_token_rekey<T>(
-    rotation: KeyRotation,
-    account: &Account,
-    new_handles: vector<Element<G>>,
-): KeyRotation {
-    match (rotation) {
-        KeyRotation::Failed { owner } => KeyRotation::Failed { owner },
-        KeyRotation::Staging { owner, new_pk, mut bases, mut images, mut staged } => {
-            assert!(owner == account.owner, EKeyRotationOwnerMismatch);
-            let ty = type_name::with_defining_ids<T>();
-            assert!(!staged.contains(&ty), ETokenAlreadyPrepared);
-            let token_account = &account[TokenAccountKey<T>()];
-            assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
-            bases.append(token_account.active.limb_handles());
-            staged.insert(ty, token_account.active.rekey_amount_unchecked(new_handles));
-            images.append(new_handles);
-            KeyRotation::Staging { owner, new_pk, bases, images, staged }
-        },
-        KeyRotation::Finalizing { .. } => abort EInvalidRotationPhase,
-    }
-}
-
-/// Advance from `Staging` to `Finalizing`: require every registered token to have been staged
-/// (`staged.length() == account.num_tokens`) and verify the single batched re-keying DDH over the
-/// `4m+1` accumulated pairs — Algorithm 13's `Π_rekey` under the one shared witness. A failing proof
-/// (e.g. a deposit raced the caller's read) transitions to `Failed`, so the rotation soft-fails at
-/// `try_finish_key_rotation_and_unpause` rather than aborting; no token can start committing until
-/// every one has verified. No-op once `Failed`; aborts if already `Finalizing`.
-public fun finish_staging(
-    rotation: KeyRotation,
-    account: &Account,
-    rekey_proof: DdhProof,
-): KeyRotation {
-    match (rotation) {
-        KeyRotation::Failed { owner } => KeyRotation::Failed { owner },
-        KeyRotation::Staging { owner, new_pk, bases, images, staged } => {
-            assert!(owner == account.owner, EKeyRotationOwnerMismatch);
-            assert!(staged.length() == account.num_tokens, ENotAllTokensPrepared);
-            let dst = account.account_session_id().dst(DST_BATCH_DDH);
-            if (rekey_proof.verify_ddh(dst, &bases, &images)) {
-                KeyRotation::Finalizing { owner, new_pk, staged }
-            } else {
-                KeyRotation::Failed { owner }
-            }
-        },
-        KeyRotation::Finalizing { .. } => abort EInvalidRotationPhase,
-    }
-}
-
-/// Commit pass: pop token `T`'s staged re-keyed amount and apply it to its active balance. Only valid
-/// in the `Finalizing` phase (every token already prepared), so it cannot fail — no token is ever
-/// left half-rotated. No-op once `Failed`. Aborts if still `Staging` or `T` was already finalized.
-public fun finalize_token_rekey<T>(rotation: KeyRotation, account: &mut Account): KeyRotation {
-    match (rotation) {
-        KeyRotation::Failed { owner } => KeyRotation::Failed { owner },
-        KeyRotation::Finalizing { owner, new_pk, mut staged } => {
-            assert!(owner == account.owner, EKeyRotationOwnerMismatch);
-            let ty = type_name::with_defining_ids<T>();
-            assert!(staged.contains(&ty), ETokenAlreadyFinalized);
-            let (_, amount) = staged.remove(&ty);
-            account[TokenAccountKey<T>()].active.set_amount(amount);
-            KeyRotation::Finalizing { owner, new_pk, staged }
-        },
-        KeyRotation::Staging { .. } => abort EInvalidRotationPhase,
-    }
-}
-
-/// Seal a completed rotation: check the caller and that `staged` is drained empty (every token
-/// finalized), then flip the account key to `new_pk`. Shared by `finish_key_rotation` and
-/// `try_finish_key_rotation_and_unpause`.
-fun commit_rotation(
-    account: &mut Account,
-    owner: address,
-    new_pk: Element<G>,
-    staged: VecMap<TypeName, EncryptedAmount>,
-) {
-    assert!(owner == account.owner, EKeyRotationOwnerMismatch);
-    assert!(staged.is_empty(), ERotationIncomplete);
-    staged.destroy_empty();
     account.pk = new_pk;
-    events::emit_rotated_key(owner, new_pk);
+    events::emit_account_key_rotated(account.owner, new_pk);
 }
 
-/// Commit a completed rotation, flipping the account key to `new_pk` (deposits stay paused). Aborts
-/// if the rotation soft-failed (`EKeyRotationFailed`) or is incomplete.
-public fun finish_key_rotation(rotation: KeyRotation, account: &mut Account) {
-    match (rotation) {
-        KeyRotation::Finalizing { owner, new_pk, staged } => {
-            commit_rotation(account, owner, new_pk, staged)
-        },
-        KeyRotation::Failed { .. } => abort EKeyRotationFailed,
-        KeyRotation::Staging { .. } => abort ERotationIncomplete,
-    }
-}
-
-/// Commit a completed rotation, flipping the account key to `new_pk` and resuming deposits; returns
-/// `true`. A soft-failed rotation instead emits `TryKeyRotationFailedEvent` and returns `false`
-/// (deposits stay paused). Aborts if incomplete.
-public fun try_finish_key_rotation_and_unpause(rotation: KeyRotation, account: &mut Account): bool {
-    match (rotation) {
-        KeyRotation::Failed { owner } => {
-            assert!(owner == account.owner, EKeyRotationOwnerMismatch);
-            events::emit_try_key_rotation_failed();
-            false
-        },
-        KeyRotation::Finalizing { owner, new_pk, staged } => {
-            commit_rotation(account, owner, new_pk, staged);
-            account.accepts_deposits = true;
-            true
-        },
-        KeyRotation::Staging { .. } => abort ERotationIncomplete,
-    }
+/// Re-key token `T`'s active balance from its current `TokenAccount.pk` to the account key
+/// `account.pk`, swapping each limb's decryption handle for the matching `new_handles[i]` (proven by
+/// `rekey_proof`). Aborts if the token has unmerged pending deposits (which are under the old key, so
+/// they must be merged first) or the proof fails. Authorized by `auth`, which must be for the
+/// `PERMISSIONED_REGISTER` operation and for `account.owner`.
+public fun rekey_token<T>(
+    account: &mut Account,
+    auth: &Auth<T>,
+    new_handles: vector<Element<G>>,
+    rekey_proof: DdhProof,
+) {
+    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
+    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    let owner = account.owner;
+    let new_pk = account.pk;
+    let token_account = &mut account[TokenAccountKey<T>()];
+    assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
+    let dst = token_account.session_id.dst(DST_BATCH_DDH);
+    assert!(
+        token_account
+            .active
+            .try_set_public_key(&token_account.pk, &new_pk, new_handles, rekey_proof, dst),
+        EAmountsEqualityProofFailed,
+    );
+    token_account.pk = new_pk;
+    events::emit_token_rekeyed<T>(owner, new_pk);
 }
 
 // === Transfer flows ===
@@ -586,7 +436,6 @@ public fun wrap<T>(
         !is_receiver_denied<T>(deny_list, receiver.owner),
         ETransferDenied,
     );
-    assert!(receiver.accepts_deposits, ETransferDenied);
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
@@ -647,9 +496,9 @@ public fun batched_transfer<T>(
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
     assert!(receiver_amounts.length() == receiver_pks.length(), EEmptyTransferBatch);
     let sender_addr = sender.owner;
-    let sender_pk = sender.pk;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
+    let sender_pk = sender.pk;
     let sid = sender.session_id;
     // `well_formed_proofs` is one aggregate proof over `[receiver_amounts..., new_balance]`
     // under `[receiver_pks..., sender_pk]`; verify and wrap into WFEAs in one call, then peel
@@ -781,12 +630,11 @@ public fun add_to_batch<T>(
                 vector[lo, hi]
             };
 
-            let receiver_pk = receiver.pk;
-            let receiver_accepts = receiver.accepts_deposits;
             let receiver = &mut receiver[TokenAccountKey<T>()];
             assert!(!receiver.is_frozen, ETransferDenied);
-            assert!(receiver_accepts && receiver.accepts_deposits, ETransferDenied);
+            assert!(receiver.accepts_deposits, ETransferDenied);
             assert!(receiver.has_deposit_slot(), EBalancesFull);
+            let receiver_pk = receiver.pk;
 
             events::emit_transfer<T>(
                 sender,
@@ -867,21 +715,19 @@ public fun update_active_balance<T>(
 ) {
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    let pk = account.pk;
     let token_account = &mut account[TokenAccountKey<T>()];
     let sid = token_account.session_id;
     assert!(
-        token_account.try_update_active(&pk, new_balance, new_balance_proof, balance_proof, sid),
+        token_account.try_update_active(new_balance, new_balance_proof, balance_proof, sid),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
 }
 
-/// Re-state `self.active` as the well-formed `new_balance` (same key `pk`), proven equal in value by
-/// `balance_proof`. Returns whether the proof verified; adds no authorization or event.
+/// Re-state `self.active` as the well-formed `new_balance` (same key `self.pk`), proven equal in
+/// value by `balance_proof`. Returns whether the proof verified; adds no authorization or event.
 fun try_update_active<T>(
     self: &mut TokenAccount<T>,
-    pk: &Element<G>,
     new_balance: EncryptedAmount,
     new_balance_proof: WellFormedProof,
     balance_proof: &DdhProof,
@@ -890,10 +736,10 @@ fun try_update_active<T>(
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
         sid.dst(DST_RANGE_PROOF_16),
-        *pk,
+        self.pk,
         new_balance_proof,
     );
-    self.active.try_update(pk, new_balance, balance_proof, sid.dst(DST_DDH))
+    self.active.try_update(&self.pk, new_balance, balance_proof, sid.dst(DST_DDH))
 }
 
 /// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
@@ -982,9 +828,9 @@ fun try_unwrap_internal<T>(
         ETransferDenied,
     );
     let owner = account.owner;
-    let pk = account.pk;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
+    let pk = account.pk;
     let sid = account.session_id;
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
@@ -1152,13 +998,6 @@ public(package) fun session_id<T>(account: &Account): vector<u8> {
     derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>()).to_bytes().take(20)
 }
 
-/// 20-byte account-level session_id, the DST context for whole-account key rotation, which spans
-/// every token and so cannot use a per-`TokenAccount` `session_id`. `owner` is unique per account
-/// (one account per address) and the re-keying statement itself binds `account.pk`.
-public(package) fun account_session_id(account: &Account): vector<u8> {
-    account.owner.to_bytes().take(20)
-}
-
 /// 21-byte Fiat-Shamir DST `session_id || protocol_id`.
 public(package) fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
     let mut bytes = session_id;
@@ -1231,21 +1070,16 @@ public fun accepts_deposits<T>(account: &Account): bool {
 }
 
 #[test_only]
-public fun account_accepts_deposits(account: &Account): bool {
-    account.accepts_deposits
-}
-
-#[test_only]
 public fun account_public_key(account: &Account): Element<G> {
     account.pk
 }
 
 #[test_only]
-public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
-    account.session_id<T>().dst(protocol_id)
+public fun token_public_key<T>(account: &Account): Element<G> {
+    account[TokenAccountKey<T>()].pk
 }
 
 #[test_only]
-public fun account_derive_dst_for_testing(account: &Account, protocol_id: u8): vector<u8> {
-    account.account_session_id().dst(protocol_id)
+public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
+    account.session_id<T>().dst(protocol_id)
 }

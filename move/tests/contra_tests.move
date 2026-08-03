@@ -800,15 +800,15 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
 
-    // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate the
-    // whole account (begin -> stage each token -> finish_staging (batched DDH) -> finalize each
-    // token -> try_finish_key_rotation_and_unpause).
-    let batch_ddh_dst = account_1.account_derive_dst_for_testing(contra::protocol_id_batch_ddh());
+    // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate: set the
+    // account key (target), then `rekey_token` catches the token's balance up from token.pk to it.
+    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
     let id = ristretto255::g_identity();
-    // Batched re-key proof over (pk, limb-0 handle) for the one token -- the other limbs are zero
-    // (identity handles).
+    // Re-key proof over (pk, limb-0 handle) -- the other limbs are zero (identity handles).
     let rekey_proof = nizk::prove_ddh(
         batch_ddh_dst,
         &w,
@@ -818,25 +818,21 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     );
     let new_ea = amount_for_testing(50, &pk_new, r);
 
-    // The caller pauses account-wide deposits before rotating; `begin` asserts it.
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_accepts_deposits<TestCurrency>(&mut account_1, &auth, false);
-    assert!(!account_1.account_accepts_deposits());
-    let rotation = contra::begin_key_rotation(&mut account_1, &auth, pk_new);
-    let rotation = contra::stage_token_rekey<TestCurrency>(
-        rotation,
-        &account_1,
-        new_ea.decryption_handles_for_testing(),
-    );
-    let rotation = contra::finish_staging(rotation, &account_1, rekey_proof);
-    let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
-    assert!(contra::try_finish_key_rotation_and_unpause(rotation, &mut account_1));
-
-    // The on-chain handle must now be bound to `pk_new`, the account key updated, and deposits
-    // resumed.
-    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
+    // The account key is now pk_new, but the token's balance still lags under pk_old.
     assert_eq!(account_1.account_public_key(), pk_new);
-    assert!(account_1.account_accepts_deposits());
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
+    contra::rekey_token<TestCurrency>(
+        &mut account_1,
+        &auth,
+        new_ea.decryption_handles_for_testing(),
+        rekey_proof,
+    );
+
+    // The on-chain handle must now be bound to `pk_new` and the token caught up to the account key.
+    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
 
     unit_test::destroy(account_1);
     unit_test::destroy(acc_reg);
@@ -854,11 +850,10 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     scenario.end();
 }
 
-/// A failed `stage_token_rekey` (here: a bad re-key proof, standing in for a raced deposit) must
-/// soft-fail the whole rotation: `finalize_token_rekey` is a no-op, `try_finish_key_rotation_and_unpause` returns
-/// `false`, nothing is committed, and the account is left paused (so a retry is race-free).
-#[test]
-fun test_key_rotation_soft_fails_on_bad_proof() {
+/// `rekey_token` aborts on a bad re-key proof (here a wrong witness, standing in for a raced balance
+/// whose handles no longer match), reverting the PTB — nothing is committed.
+#[test, expected_failure(abort_code = ::contra::contra::EAmountsEqualityProofFailed)]
+fun test_rekey_token_aborts_on_bad_proof() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
 
@@ -913,7 +908,9 @@ fun test_key_rotation_soft_fails_on_bad_proof() {
 
     // A re-key proof built with the wrong witness -- verification fails, standing in for a raced
     // balance the client's handles no longer match.
-    let batch_ddh_dst = account_1.account_derive_dst_for_testing(contra::protocol_id_batch_ddh());
+    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let wrong_w = ristretto255::scalar_from_u64(7);
     let id = ristretto255::g_identity();
@@ -927,121 +924,14 @@ fun test_key_rotation_soft_fails_on_bad_proof() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_accepts_deposits<TestCurrency>(&mut account_1, &auth, false);
-    let rotation = contra::begin_key_rotation(&mut account_1, &auth, pk_new);
-    let rotation = contra::stage_token_rekey<TestCurrency>(
-        rotation,
-        &account_1,
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
+    // Aborts here with `EAmountsEqualityProofFailed`.
+    contra::rekey_token<TestCurrency>(
+        &mut account_1,
+        &auth,
         new_ea.decryption_handles_for_testing(),
+        bad_proof,
     );
-    // The remaining steps no-op on a `Failed` receipt (the PTB is not aborted), then the seal
-    // reports failure.
-    let rotation = contra::finish_staging(rotation, &account_1, bad_proof);
-    let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
-    assert!(!contra::try_finish_key_rotation_and_unpause(rotation, &mut account_1));
-
-    // Nothing committed: key unchanged, balance unchanged, and the account is still paused.
-    assert_eq!(account_1.account_public_key(), pk_old);
-    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
-    assert!(!account_1.account_accepts_deposits());
-
-    unit_test::destroy(account_1);
-    unit_test::destroy(acc_reg);
-    unit_test::destroy(t_cap);
-    unit_test::destroy(_deny_cap);
-    unit_test::destroy(builder);
-    unit_test::destroy(ct_registry);
-    unit_test::destroy(coin_registry);
-    unit_test::destroy(management_cap);
-    unit_test::destroy(ct);
-
-    sui::test_scenario::return_shared(deny_list_obj);
-    sui::test_scenario::return_shared(pool);
-
-    scenario.end();
-}
-
-/// The hard `finish_key_rotation` aborts (reverting the PTB) when the rotation soft-failed, rather than reporting
-/// `false` like `try_finish_key_rotation_and_unpause`.
-#[test, expected_failure(abort_code = ::contra::contra::EKeyRotationFailed)]
-fun test_finish_aborts_on_bad_proof() {
-    let setup_addr = @0x0;
-    let addr1 = @0x100;
-
-    let sk_old = ristretto255::scalar_from_u64(11111);
-    let pk_old = ristretto255::g_mul(&sk_old, &ristretto255::g_generator());
-    let pk_new = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(22222),
-        &ristretto255::g_generator(),
-    );
-
-    let mut scenario = sui::test_scenario::begin(setup_addr);
-    deny_list::create_for_testing(scenario.ctx());
-    scenario.next_tx(setup_addr);
-    let deny_list_obj: deny_list::DenyList = scenario.take_shared();
-
-    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
-    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
-    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
-    let (mut builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
-        8,
-        "_",
-        "_",
-        "_",
-        "_",
-        scenario.ctx(),
-    );
-    let _deny_cap = builder.make_regulated(true, scenario.ctx());
-
-    scenario.next_tx(addr1);
-    let (ct, management_cap) = ct_registry.new<TestCurrency>(
-        &mut t_cap,
-        option::none(),
-        scenario.ctx(),
-    );
-
-    scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_old);
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(&auth);
-    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
-
-    let r = 99999;
-    let r_scalar = ristretto255::scalar_from_u64(r);
-    let balance_under_pk_old = encrypted_amount::new_encrypted_amount(
-        encrypt_trivial_for_testing(50, &pk_old, r),
-        encrypt_zero(),
-        encrypt_zero(),
-        encrypt_zero(),
-    );
-    contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
-    let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
-
-    let batch_ddh_dst = account_1.account_derive_dst_for_testing(contra::protocol_id_batch_ddh());
-    let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
-    let wrong_w = ristretto255::scalar_from_u64(7);
-    let id = ristretto255::g_identity();
-    let bad_proof = nizk::prove_ddh(
-        batch_ddh_dst,
-        &wrong_w,
-        &vector[pk_old, d_old, id, id, id],
-        &vector[pk_new, d_new, id, id, id],
-        &r_scalar,
-    );
-    let new_ea = amount_for_testing(50, &pk_new, r);
-
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_accepts_deposits<TestCurrency>(&mut account_1, &auth, false);
-    let rotation = contra::begin_key_rotation(&mut account_1, &auth, pk_new);
-    let rotation = contra::stage_token_rekey<TestCurrency>(
-        rotation,
-        &account_1,
-        new_ea.decryption_handles_for_testing(),
-    );
-    let rotation = contra::finish_staging(rotation, &account_1, bad_proof);
-    let rotation = contra::finalize_token_rekey<TestCurrency>(rotation, &mut account_1);
-    // Aborts here with `EKeyRotationFailed` (unlike the `try_` variant, which returns `false`).
-    contra::finish_key_rotation(rotation, &mut account_1);
 
     // Unreachable; included so the resource flow type-checks if the abort is removed.
     unit_test::destroy(account_1);
