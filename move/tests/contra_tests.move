@@ -950,6 +950,126 @@ fun test_rekey_token_aborts_on_bad_proof() {
     scenario.end();
 }
 
+/// `try_rekey_token` soft-fails on a bad proof (returns `false`, token left stale — the normal
+/// not-yet-re-keyed state) and succeeds on a good one (returns `true`, token caught up), without
+/// aborting either way. This is what lets a rotation + re-keys ride in one PTB without pausing.
+#[test]
+fun test_try_rekey_token_soft_fails_then_succeeds() {
+    let setup_addr = @0x0;
+    let addr1 = @0x100;
+
+    let sk_old = ristretto255::scalar_from_u64(11111);
+    let pk_old = ristretto255::g_mul(&sk_old, &ristretto255::g_generator());
+    let sk_new = ristretto255::scalar_from_u64(22222);
+    let pk_new = ristretto255::g_mul(&sk_new, &ristretto255::g_generator());
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list_obj: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (mut builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+    let _deny_cap = builder.make_regulated(true, scenario.ctx());
+
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        option::none(),
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(addr1, pk_old);
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+
+    let r = 99999;
+    let r_scalar = ristretto255::scalar_from_u64(r);
+    let balance_under_pk_old = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_old, r),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
+    let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
+    let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
+
+    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
+    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
+    let id = ristretto255::g_identity();
+    let good_proof = nizk::prove_ddh(
+        batch_ddh_dst,
+        &w,
+        &vector[pk_old, d_old, id, id, id],
+        &vector[pk_new, d_new, id, id, id],
+        &r_scalar,
+    );
+    let bad_proof = nizk::prove_ddh(
+        batch_ddh_dst,
+        &ristretto255::scalar_from_u64(7), // wrong witness
+        &vector[pk_old, d_old, id, id, id],
+        &vector[pk_new, d_new, id, id, id],
+        &r_scalar,
+    );
+    let new_ea = amount_for_testing(50, &pk_new, r);
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
+
+    // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
+    assert!(
+        !contra::try_rekey_token<TestCurrency>(
+            &mut account_1,
+            &auth,
+            new_ea.decryption_handles_for_testing(),
+            bad_proof,
+        ),
+    );
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
+    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
+
+    // Good proof: succeeds, token caught up to the account key.
+    assert!(
+        contra::try_rekey_token<TestCurrency>(
+            &mut account_1,
+            &auth,
+            new_ea.decryption_handles_for_testing(),
+            good_proof,
+        ),
+    );
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
+    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(_deny_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list_obj);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
+}
+
 // === Account freeze tests ===
 
 #[test, expected_failure(abort_code = ::contra::contra::EAuthorizationError)]

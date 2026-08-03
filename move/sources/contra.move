@@ -44,7 +44,10 @@
 /// 3. Rotate the account key with `set_account_key` — O(1), it just moves the convergence target
 ///    `Account.pk`. Each token's balance stays under its own `TokenAccount.pk` (deposits keep landing
 ///    there) until the owner catches it up lazily with `rekey_token`, which merges the token first
-///    (`pending` must be empty) and re-keys `active` from `TokenAccount.pk` to `Account.pk`.
+///    (`pending` must be empty) and re-keys `active` from `TokenAccount.pk` to `Account.pk`. Use
+///    `try_rekey_token` to bundle the rotation and several token re-keys into one PTB without pausing:
+///    any token whose re-key raced a deposit just stays stale (its normal not-yet-re-keyed state)
+///    instead of aborting the rotation, to be retried later.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to two or more token accounts. If the token has an auditor key
@@ -401,19 +404,60 @@ public fun rekey_token<T>(
 ) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    assert!(
+        rekey_token_internal<T>(account, new_handles, rekey_proof),
+        EAmountsEqualityProofFailed,
+    );
+}
+
+/// Like `rekey_token` but soft-fails instead of aborting: if the re-key proof does not verify (e.g. a
+/// deposit raced the caller's read), it emits `TryTokenRekeyFailedEvent` and returns `false`, leaving
+/// the token unchanged — i.e. still stale, the normal not-yet-re-keyed state — for a retry. Lets a
+/// caller bundle `set_account_key` and re-keys of several tokens into one PTB without pausing:
+/// whatever races just stays stale rather than reverting the rotation. Returns whether the re-key
+/// succeeded. Still aborts on unmerged pending deposits.
+public fun try_rekey_token<T>(
+    account: &mut Account,
+    auth: &Auth<T>,
+    new_handles: vector<Element<G>>,
+    rekey_proof: DdhProof,
+): bool {
+    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
+    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    let owner = account.owner;
+    if (rekey_token_internal<T>(account, new_handles, rekey_proof)) {
+        true
+    } else {
+        events::emit_try_token_rekey_failed<T>(owner);
+        false
+    }
+}
+
+/// Shared re-key: assert the token's pending is empty, then re-key its active balance from
+/// `TokenAccount.pk` to `account.pk`. On a verifying proof, commits the new handles, sets
+/// `token.pk = account.pk`, emits `TokenRekeyedEvent`, and returns `true`; otherwise leaves the token
+/// unchanged and returns `false`.
+fun rekey_token_internal<T>(
+    account: &mut Account,
+    new_handles: vector<Element<G>>,
+    rekey_proof: DdhProof,
+): bool {
     let owner = account.owner;
     let new_pk = account.pk;
     let token_account = &mut account[TokenAccountKey<T>()];
     assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
     let dst = token_account.session_id.dst(DST_BATCH_DDH);
-    assert!(
+    if (
         token_account
             .active
-            .try_set_public_key(&token_account.pk, &new_pk, new_handles, rekey_proof, dst),
-        EAmountsEqualityProofFailed,
-    );
-    token_account.pk = new_pk;
-    events::emit_token_rekeyed<T>(owner, new_pk);
+            .try_set_public_key(&token_account.pk, &new_pk, new_handles, rekey_proof, dst)
+    ) {
+        token_account.pk = new_pk;
+        events::emit_token_rekeyed<T>(owner, new_pk);
+        true
+    } else {
+        false
+    }
 }
 
 // === Transfer flows ===

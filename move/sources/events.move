@@ -34,6 +34,12 @@ public struct TokenRekeyedEvent<phantom T> has copy, drop {
     new_pk: Element<G>,
 }
 
+/// Emitted when `try_rekey_token` soft-fails (its re-key proof did not verify, e.g. a deposit raced);
+/// token `T` is left stale (unchanged) for a retry.
+public struct TryTokenRekeyFailedEvent<phantom T> has copy, drop {
+    owner: address,
+}
+
 /// A public coin is wrapped into a confidential token, adding to the pending encrypted balance of
 /// an account. `memo` is an opaque caller-supplied blob, empty if none was provided.
 public struct WrapEvent<phantom T> has copy, drop {
@@ -143,6 +149,10 @@ public(package) fun emit_account_key_rotated(owner: address, new_pk: Element<G>)
 
 public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: Element<G>) {
     event::emit(TokenRekeyedEvent<T> { owner, new_pk });
+}
+
+public(package) fun emit_try_token_rekey_failed<T>(owner: address) {
+    event::emit(TryTokenRekeyFailedEvent<T> { owner });
 }
 
 public(package) fun emit_wrap<T>(receiver: address, amount: u64, memo: vector<u8>) {
