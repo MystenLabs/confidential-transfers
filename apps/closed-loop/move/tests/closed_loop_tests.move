@@ -141,7 +141,7 @@ fun closed_loop_roundtrip() {
             option::none(),
             scenario.ctx(),
         )
-        .add<PBU>(&mut bob_account, vector[], &deny_list)
+        .add<PBU>(&mut bob_account, vector[], &deny_list, scenario.ctx())
         .finalize();
 
     // Bob: merge deposits, unwrap 50 pBU back to a public coin.

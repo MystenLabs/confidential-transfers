@@ -375,8 +375,8 @@ fun test_batched_transfer() {
             option::none(),
             scenario.ctx(),
         )
-        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
-        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list, scenario.ctx())
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list, scenario.ctx())
         .finalize();
 
     // Verify balances:
@@ -534,8 +534,8 @@ fun test_batched_transfer_with_auditor() {
             option::some(auditor_proof),
             scenario.ctx(),
         )
-        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
-        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list, scenario.ctx())
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list, scenario.ctx())
         .finalize();
 
     assert_eq!(account_1.balance<TestCurrency>(), new_balance_ea.collapse());
@@ -665,7 +665,7 @@ fun transfer<T>(
             option::none(),
             ctx,
         )
-        .add<T>(receiver, memo, deny_list)
+        .add<T>(receiver, memo, deny_list, ctx)
         .finalize();
 }
 
@@ -819,7 +819,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new, scenario.ctx());
     // The account key is now pk_new, but the token's balance still lags under pk_old.
     assert_eq!(account_1.account_public_key(), pk_new);
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
@@ -924,7 +924,7 @@ fun test_rekey_token_aborts_on_bad_proof() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new, scenario.ctx());
     // Aborts here with `EAmountsEqualityProofFailed`.
     contra::rekey_token<TestCurrency>(
         &mut account_1,
@@ -1028,7 +1028,7 @@ fun test_try_rekey_token_soft_fails_then_succeeds() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new, scenario.ctx());
 
     // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
     assert!(

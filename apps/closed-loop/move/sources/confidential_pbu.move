@@ -127,6 +127,6 @@ public fun set_public_key(
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::set_account_key(account, &auth, new_pk);
+    contra::set_account_key(account, &auth, new_pk, ctx);
     contra::rekey_token(account, &auth, new_handles, rekey_proof);
 }
