@@ -126,7 +126,6 @@ export const Account = new MoveStruct({
 		id: bcs.Address,
 		owner: bcs.Address,
 		pk: group_ops.Element,
-		key_rotation_epoch: bcs.u64(),
 	},
 });
 export const TokenAccount = new MoveStruct({

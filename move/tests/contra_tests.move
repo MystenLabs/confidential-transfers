@@ -375,8 +375,8 @@ fun test_batched_transfer() {
             option::none(),
             scenario.ctx(),
         )
-        .add<TestCurrency>(&mut account_2, vector[], &deny_list, scenario.ctx())
-        .add<TestCurrency>(&mut account_3, vector[], &deny_list, scenario.ctx())
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
         .finalize();
 
     // Verify balances:
@@ -534,8 +534,8 @@ fun test_batched_transfer_with_auditor() {
             option::some(auditor_proof),
             scenario.ctx(),
         )
-        .add<TestCurrency>(&mut account_2, vector[], &deny_list, scenario.ctx())
-        .add<TestCurrency>(&mut account_3, vector[], &deny_list, scenario.ctx())
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
         .finalize();
 
     assert_eq!(account_1.balance<TestCurrency>(), new_balance_ea.collapse());
@@ -665,7 +665,7 @@ fun transfer<T>(
             option::none(),
             ctx,
         )
-        .add<T>(receiver, memo, deny_list, ctx)
+        .add<T>(receiver, memo, deny_list)
         .finalize();
 }
 
@@ -819,7 +819,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new, scenario.ctx());
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
     // The account key is now pk_new, but the token's balance still lags under pk_old.
     assert_eq!(account_1.account_public_key(), pk_new);
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
@@ -924,7 +924,7 @@ fun test_rekey_token_aborts_on_bad_proof() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new, scenario.ctx());
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
     // Aborts here with `EAmountsEqualityProofFailed`.
     contra::rekey_token<TestCurrency>(
         &mut account_1,
@@ -1028,7 +1028,7 @@ fun test_try_rekey_token_soft_fails_then_succeeds() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new, scenario.ctx());
+    contra::set_account_key<TestCurrency>(&mut account_1, &auth, pk_new);
 
     // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
     assert!(
@@ -1458,126 +1458,6 @@ fun test_account_freeze_blocks_add_to_batch() {
         consistency_proof_for_testing(elgamal_dst, 50, &receiver_amount, r, &pk_2),
         consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
     ]);
-    transfer<TestCurrency>(
-        &mut account_1,
-        &mut account_2,
-        vector[],
-        &ct,
-        new_balance_ea,
-        pk_2,
-        receiver_amount,
-        well_formed_proofs,
-        sender_amount,
-        consistency_proof,
-        sum_proof,
-        &deny_list,
-        scenario.ctx(),
-    );
-
-    unit_test::destroy(account_1);
-    unit_test::destroy(account_2);
-    unit_test::destroy(acc_reg);
-    unit_test::destroy(t_cap);
-    unit_test::destroy(builder);
-    unit_test::destroy(management_cap);
-    unit_test::destroy(ct_registry);
-    unit_test::destroy(coin_registry);
-    unit_test::destroy(ct);
-    sui::test_scenario::return_shared(deny_list);
-    sui::test_scenario::return_shared(pool);
-    scenario.end();
-}
-
-/// After an account-key rotation, a still-stale token (not yet re-keyed) accepts encrypted deposits
-/// under its old key only within the `DEPOSIT_REKEY_GRACE_EPOCHS` (7) window; past it, a transfer to
-/// that token aborts until the owner re-keys.
-#[test, expected_failure(abort_code = ::contra::contra::EStaleTokenDepositExpired)]
-fun test_stale_token_deposit_expires_after_grace() {
-    let setup_addr = @0x0;
-    let addr1 = @0x100;
-    let sk_1 = ristretto255::scalar_from_u64(12345);
-    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
-    let addr2 = @0x101;
-    let pk_2 = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(67890),
-        &ristretto255::g_generator(),
-    );
-    let pk_2_new = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(99999),
-        &ristretto255::g_generator(),
-    );
-
-    let mut scenario = sui::test_scenario::begin(setup_addr);
-    deny_list::create_for_testing(scenario.ctx());
-    scenario.next_tx(setup_addr);
-    let deny_list: deny_list::DenyList = scenario.take_shared();
-    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
-    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
-    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
-    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
-        8,
-        "_",
-        "_",
-        "_",
-        "_",
-        scenario.ctx(),
-    );
-
-    scenario.next_tx(setup_addr);
-    let (ct, management_cap) = ct_registry.new<TestCurrency>(
-        &mut t_cap,
-        option::none(),
-        scenario.ctx(),
-    );
-
-    scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(&auth);
-    scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_2.register<TestCurrency>(&auth);
-
-    // Rotate account_2's key but do NOT re-key its token: the token is now stale (still under pk_2).
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_account_key<TestCurrency>(&mut account_2, &auth, pk_2_new, scenario.ctx());
-
-    scenario.next_tx(addr1);
-    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
-    let coins = t_cap.mint(100, scenario.ctx());
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
-    account_1.merge<TestCurrency>(&auth);
-
-    // Advance past the grace window (rotation was at epoch 0; grace is 7 epochs).
-    scenario.skip_to_epoch(8);
-
-    scenario.next_tx(addr1);
-    let r = 32533;
-    let new_balance_ea = encrypted_amount::new_encrypted_amount(
-        encrypt_trivial_for_testing(50, &pk_1, 10097),
-        encrypt_zero(),
-        encrypt_zero(),
-        encrypt_zero(),
-    );
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
-    let receiver_amount = amount_for_testing(50, &pk_2, r);
-    let sender_amount = amount_for_testing(50, &pk_1, r);
-    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r, elgamal_dst);
-    let old_balance = account_1.balance<TestCurrency>();
-    let sum_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
-        &old_balance,
-        &new_balance_ea.collapse(),
-        &sender_amount.collapse(),
-        &sk_1,
-    );
-    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
-        consistency_proof_for_testing(elgamal_dst, 50, &receiver_amount, r, &pk_2),
-        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
-    ]);
-    // Aborts in `add_to_batch` with `EStaleTokenDepositExpired`.
     transfer<TestCurrency>(
         &mut account_1,
         &mut account_2,

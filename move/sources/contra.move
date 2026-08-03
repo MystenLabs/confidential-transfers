@@ -43,8 +43,7 @@
 ///    auditor data needed).
 /// 3. Rotate the account key with `set_account_key` — O(1), it just moves the convergence target
 ///    `Account.pk`. Each token's balance stays under its own `TokenAccount.pk` (deposits keep landing
-///    there, but only for `DEPOSIT_REKEY_GRACE_EPOCHS` epochs after the rotation) until the owner
-///    catches it up lazily with `rekey_token`, which merges the token first
+///    there) until the owner catches it up lazily with `rekey_token`, which merges the token first
 ///    (`pending` must be empty) and re-keys `active` from `TokenAccount.pk` to `Account.pk`. Use
 ///    `try_rekey_token` to bundle the rotation and several token re-keys into one PTB without pausing:
 ///    any token whose re-key raced a deposit just stays stale (its normal not-yet-re-keyed state)
@@ -112,22 +111,14 @@ const EBatchTooLarge: u64 = 12;
 const EMissingAuditorData: u64 = 13;
 const EUnexpectedAuditorData: u64 = 14;
 const EAuditorProofFailed: u64 = 15;
-/// An encrypted deposit was made to a stale token account (its key lags `Account.pk`) after the
-/// post-rotation grace window closed; the owner must re-key it first.
-const EStaleTokenDepositExpired: u64 = 16;
 /// A deposit targeted an unregistered receiver for a token whose registration is permissioned; the
 /// receiver must be registered by the issuer first (only permissionless tokens auto-register).
-const EReceiverNotRegistered: u64 = 17;
+const EReceiverNotRegistered: u64 = 16;
 
 // === Constants ===
 
 /// Maximum receivers in one batched transfer, bounded so the `u8` receiver index (`next_index`) can't overflow.
 const MAX_BATCH_RECIPIENTS: u64 = 255;
-
-/// Epochs after an account key rotation during which a not-yet-re-keyed (stale) token may still
-/// receive encrypted deposits under its old key. Once the window closes, such deposits abort until
-/// the owner re-keys the token, bounding how long value accumulates under a superseded key.
-const DEPOSIT_REKEY_GRACE_EPOCHS: u64 = 7;
 
 /// (Potentially) permissioned operations.
 const PERMISSIONED_REGISTER: u8 = 0;
@@ -181,9 +172,6 @@ public struct Account has key {
     id: UID,
     owner: address,
     pk: Element<G>,
-    /// Epoch of the last `set_account_key`. Bounds the grace window during which a stale token (one
-    /// whose `TokenAccount.pk` still lags `pk`) may keep taking encrypted deposits under its old key.
-    key_rotation_epoch: u64,
 }
 
 /// A user's account for one confidential token. `pk` is the key this token's balances (active and
@@ -341,9 +329,7 @@ public fun new_account(registry: &mut AccountRegistry, owner: address, pk: Eleme
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
     assert!(pk != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    // `key_rotation_epoch = 0`: freshly registered tokens are keyed at `pk`, so they are never stale
-    // and the grace check is vacuous until the first `set_account_key`.
-    Account { id, owner, pk, key_rotation_epoch: 0 }
+    Account { id, owner, pk }
 }
 
 /// Share the account object.
@@ -407,23 +393,16 @@ public fun set_accepts_encrypted_deposits<T>(
     account[TokenAccountKey<T>()].accepts_deposits = accepts_encrypted_deposits;
 }
 
-/// Rotate the account's key to `new_pk`. O(1): sets the convergence target `account.pk` and stamps
-/// `key_rotation_epoch`; it does not touch any token balance. Each token's balance stays under its own
-/// `TokenAccount.pk` (deposits keep landing there) until the owner catches it up with `rekey_token`,
-/// but a stale token only keeps accepting encrypted deposits for `DEPOSIT_REKEY_GRACE_EPOCHS` epochs
-/// after this rotation. Authenticated by `auth`, which must be for the `PERMISSIONED_REGISTER`
-/// operation and may be for any token the account is registered for.
-public fun set_account_key<T>(
-    account: &mut Account,
-    auth: &Auth<T>,
-    new_pk: Element<G>,
-    ctx: &TxContext,
-) {
+/// Rotate the account's key to `new_pk`. O(1): sets the convergence target `account.pk`; it does not
+/// touch any token balance. Each token's balance stays under its own `TokenAccount.pk` (deposits keep
+/// landing there) until the owner catches it up with `rekey_token`. Authenticated by `auth`, which
+/// must be for the `PERMISSIONED_REGISTER` operation and may be for any token the account is
+/// registered for.
+public fun set_account_key<T>(account: &mut Account, auth: &Auth<T>, new_pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(new_pk != g_identity(), EIdentityPublicKey);
     account.pk = new_pk;
-    account.key_rotation_epoch = ctx.epoch();
     events::emit_account_key_rotated(account.owner, new_pk);
 }
 
@@ -683,7 +662,6 @@ public fun add_to_batch<T>(
     receiver: &mut Account,
     memo: vector<u8>,
     deny_list: &DenyList,
-    ctx: &TxContext,
 ): TransferBatch<T> {
     match (batch) {
         // If batch is already failed, nothing should be mutated or emitted and the function should immediately return TransferBatch::BalanceProofFailed.
@@ -703,12 +681,8 @@ public fun add_to_batch<T>(
             let receiver_addr = receiver.owner;
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
 
-            // Read the account-level key + rotation epoch before borrowing the token account field.
-            let account_pk = receiver.pk;
-            let rotation_epoch = receiver.key_rotation_epoch;
-
             // Auto-register the token on first receive when `T` leaves registration permissionless;
-            // the new account is keyed at `account_pk`, matching the key the sender encrypted under.
+            // the new account is keyed at `Account.pk`, matching the key the sender encrypted under.
             // For a permissioned token, an unregistered receiver's deposit aborts instead.
             if (!receiver.has_token<T>()) {
                 assert!(register_permissionless, EReceiverNotRegistered);
@@ -733,13 +707,6 @@ public fun add_to_batch<T>(
             assert!(receiver.accepts_deposits, ETransferDenied);
             assert!(receiver.has_deposit_slot(), EBalancesFull);
             let receiver_pk = receiver.pk;
-            // A stale token (its key lags `Account.pk`) keeps its old key so `active`/`pending` never
-            // mix keys, but only within the post-rotation grace window; afterwards it must be re-keyed
-            // before it can receive again.
-            assert!(
-                receiver_pk == account_pk || ctx.epoch() <= rotation_epoch + DEPOSIT_REKEY_GRACE_EPOCHS,
-                EStaleTokenDepositExpired,
-            );
 
             events::emit_transfer<T>(
                 sender,
