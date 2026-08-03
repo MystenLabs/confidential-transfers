@@ -23,7 +23,7 @@ const EIdentityAuditorPublicKey: u64 = 0;
 /// `update`, the outgoing key is retained as `previous_pk` and stays valid for transfers through
 /// `previous_expiration_epoch` (inclusive), so transfers built against the old key just before a
 /// rotation still verify.
-public struct Auditors has store {
+public struct Auditor has store {
     current_pk: Option<Element<G>>,
     previous_pk: Option<Element<G>>,
     previous_expiration_epoch: u64,
@@ -31,29 +31,29 @@ public struct Auditors has store {
 
 // === Functions ===
 
-public(package) fun new(pk: Option<Element<G>>): Auditors {
+public(package) fun new(pk: Option<Element<G>>): Auditor {
     assert_non_identity(&pk);
-    Auditors { current_pk: pk, previous_pk: option::none(), previous_expiration_epoch: 0 }
+    Auditor { current_pk: pk, previous_pk: option::none(), previous_expiration_epoch: 0 }
 }
 
 /// Rotate the auditor key. The old `current_pk` (if any) becomes `previous_pk` and remains valid for
 /// transfers through `expiration_epoch`. Passing `new_pk = none` disables auditing going forward,
 /// though the previous key still audits in-flight transfers until it expires.
 public(package) fun update(
-    auditors: &mut Auditors,
+    auditor: &mut Auditor,
     new_pk: Option<Element<G>>,
     expiration_epoch: u64,
 ) {
     assert_non_identity(&new_pk);
-    auditors.previous_pk = auditors.current_pk;
-    auditors.previous_expiration_epoch = expiration_epoch;
-    auditors.current_pk = new_pk;
+    auditor.previous_pk = auditor.current_pk;
+    auditor.previous_expiration_epoch = expiration_epoch;
+    auditor.current_pk = new_pk;
 }
 
 /// Whether auditing is currently enabled (a current key is set). Transfers must attach auditor data
 /// iff this is true.
-public(package) fun is_enabled(auditors: &Auditors): bool {
-    auditors.current_pk.is_some()
+public(package) fun is_enabled(auditor: &Auditor): bool {
+    auditor.current_pk.is_some()
 }
 
 /// Verify a batched per-transfer auditor `ElGamalProof` over `encryptions` — the derived u32-limb
@@ -62,29 +62,29 @@ public(package) fun is_enabled(auditors: &Auditors): bool {
 /// `epoch <= previous_expiration_epoch` (the rotation grace window). Returns `false` if neither
 /// verifies or auditing is disabled.
 public(package) fun verify_transfer(
-    auditors: &Auditors,
+    auditor: &Auditor,
     epoch: u64,
     encryptions: &vector<Encryption>,
     proof: &ElGamalProof,
     dst: vector<u8>,
 ): bool {
-    if (auditors.current_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))) {
+    if (auditor.current_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))) {
         return true
     };
-    epoch <= auditors.previous_expiration_epoch &&
-        auditors.previous_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))
+    epoch <= auditor.previous_expiration_epoch &&
+        auditor.previous_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))
 }
 
-public(package) fun current_pk(auditors: &Auditors): Option<Element<G>> {
-    auditors.current_pk
+public(package) fun current_pk(auditor: &Auditor): Option<Element<G>> {
+    auditor.current_pk
 }
 
-public(package) fun previous_pk(auditors: &Auditors): Option<Element<G>> {
-    auditors.previous_pk
+public(package) fun previous_pk(auditor: &Auditor): Option<Element<G>> {
+    auditor.previous_pk
 }
 
-public(package) fun previous_expiration_epoch(auditors: &Auditors): u64 {
-    auditors.previous_expiration_epoch
+public(package) fun previous_expiration_epoch(auditor: &Auditor): u64 {
+    auditor.previous_expiration_epoch
 }
 
 /// Abort with `EIdentityAuditorPublicKey` if `pk` is set to the group identity.

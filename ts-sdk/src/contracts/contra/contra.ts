@@ -111,7 +111,7 @@ export const ConfidentialToken = new MoveStruct({
 		is_active: bcs.bool(),
 		freeze_admins: vec_set.VecSet(bcs.Address),
 		policy: bcs.option(policy.Policy),
-		auditor: auditors.Auditors,
+		auditor: auditors.Auditor,
 	},
 });
 export const Pool = new MoveStruct({
@@ -315,7 +315,7 @@ export interface NewConfidentialTokenOptions {
  * Requires a `&mut TreasuryCap` for authorization, this is to prevent frozen
  * TreasuryCaps from being used.
  *
- * Creates an `Auditors` object for the confidential token using the provided
+ * Creates an `Auditor` object for the confidential token using the provided
  * auditor public key. The auditor key can be `none` initially and updated later by
  * the issuer.
  *

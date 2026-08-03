@@ -63,7 +63,7 @@
 module contra::contra;
 
 use contra::{
-    auditors::{Auditors, new as new_auditors},
+    auditors::{Auditor, new as new_auditors},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
@@ -139,7 +139,7 @@ public struct ConfidentialToken<phantom T> has key {
     is_active: bool, // Global freeze capability.
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
-    auditor: Auditors,
+    auditor: Auditor,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
