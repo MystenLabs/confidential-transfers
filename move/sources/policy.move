@@ -104,6 +104,13 @@ public(package) fun with_witness<T, W: drop>(
     Auth { operations: 1u32 << operation, owner }
 }
 
+/// True iff `operation` is permissionless (not gated by a witness) in `policy`. Aborts if
+/// `operation > MAX_OPERATION_INDEX`.
+public(package) fun is_permissionless(policy: &Option<Policy>, operation: u8): bool {
+    assert!(operation <= MAX_OPERATION_INDEX, EInvalidOperation);
+    permissionless_bitmap(policy) & (1 << operation) != 0
+}
+
 /// True if `auth` authorizes `operation`. Aborts if `operation > MAX_OPERATION_INDEX`.
 public(package) fun is_allowed<T>(auth: &Auth<T>, operation: u8): bool {
     assert!(operation <= MAX_OPERATION_INDEX, EInvalidOperation);

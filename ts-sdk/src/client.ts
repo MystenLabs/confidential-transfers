@@ -143,10 +143,16 @@ export class ContraClient {
 	 * Multi-get version of `#getAccountState`. Issues a single
 	 * `core.getObjects` RPC for all addresses, preserving order. Throws if any
 	 * underlying object fetch returned an `Error` entry.
+	 *
+	 * With `autoRegisterFallback`, a receiver that has no `TokenAccount<T>` yet does not throw:
+	 * its state is taken from the receiver's `Account` (`pk = Account.pk`, deposits accepted, not
+	 * frozen), mirroring the on-chain auto-registration `add_to_batch` performs on first receive for
+	 * permissionless-register tokens. A receiver with no `Account` at all still throws.
 	 */
 	async #getAccountStates(
 		addresses: readonly string[],
 		tokenType: string,
+		{ autoRegisterFallback = false }: { autoRegisterFallback?: boolean } = {},
 	): Promise<AccountState[]> {
 		const objectIds = addresses.map((a) => this.getTokenAccountId(a, tokenType));
 
@@ -157,8 +163,34 @@ export class ContraClient {
 			include: { content: true },
 		});
 
+		// For auto-registration, resolve any missing token accounts from the receiver's `Account`
+		// (created on first receive) in a single follow-up multi-get.
+		const missing = autoRegisterFallback
+			? objects.flatMap((object, i) => (object instanceof Error ? [i] : []))
+			: [];
+		const accountFallback = new Map<number, AccountState>();
+		if (missing.length > 0) {
+			const { objects: accounts } = await this.#suiClient.core.getObjects({
+				objectIds: missing.map((i) => this.getAccountId(addresses[i])),
+				include: { content: true },
+			});
+			accounts.forEach((account, k) => {
+				const i = missing[k];
+				if (account instanceof Error) {
+					throw new TokenAccountDoesNotExistError(addresses[i], account.message);
+				}
+				accountFallback.set(i, {
+					pk: pointFromBcs(contraContracts.Account.parse(account.content).pk),
+					acceptsEncryptedDeposits: true,
+					isFrozen: false,
+				});
+			});
+		}
+
 		return objects.map((object, i) => {
 			if (object instanceof Error) {
+				const fallback = accountFallback.get(i);
+				if (fallback) return fallback;
 				throw new TokenAccountDoesNotExistError(addresses[i], object.message);
 			}
 			const parsed = TokenAccountField.parse(object.content).value;
@@ -1053,6 +1085,7 @@ export class ContraClient {
 		const receiverStates = await this.#getAccountStates(
 			recipients.map((r) => r.receiverAddress),
 			tokenType,
+			{ autoRegisterFallback: true },
 		);
 		const refusing = recipients
 			.map((recipient, i) => ({ recipient, state: receiverStates[i] }))

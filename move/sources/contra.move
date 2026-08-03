@@ -51,9 +51,12 @@
 ///    instead of aborting the rotation, to be retried later.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
-/// 5. Transfer an encrypted amount to two or more token accounts. If the token has an auditor key
-///    set, each transfer additionally carries two u32-limb auditor decryption handles and a proof
-///    that they match the transferred amount.
+/// 5. Transfer an encrypted amount to two or more token accounts. A receiver that has an `Account`
+///    but no `TokenAccount` for this token yet is auto-registered on first receive (keyed at their
+///    `Account.pk`) when the token leaves registration permissionless; a permissioned token still
+///    requires the issuer to register the receiver first. If the token has an auditor key set, each
+///    transfer additionally carries two u32-limb auditor decryption handles and a proof that they
+///    match the transferred amount.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
@@ -112,6 +115,9 @@ const EAuditorProofFailed: u64 = 15;
 /// An encrypted deposit was made to a stale token account (its key lags `Account.pk`) after the
 /// post-rotation grace window closed; the owner must re-key it first.
 const EStaleTokenDepositExpired: u64 = 16;
+/// A deposit targeted an unregistered receiver for a token whose registration is permissioned; the
+/// receiver must be registered by the issuer first (only permissionless tokens auto-register).
+const EReceiverNotRegistered: u64 = 17;
 
 // === Constants ===
 
@@ -213,6 +219,10 @@ public enum TransferBatch<phantom T> {
         seed_point: Element<G>,
         next_index: u8,
         auditor_handles: vector<Element<G>>,
+        /// Whether token `T` leaves `register` permissionless, computed once in `batched_transfer`.
+        /// When true, `add_to_batch` auto-creates a receiver's `TokenAccount` on first deposit;
+        /// otherwise an unregistered receiver's deposit aborts (the issuer gates registration).
+        register_permissionless: bool,
     },
 }
 
@@ -359,7 +369,12 @@ public(package) fun register_internal<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
+    account.add_token_account<T>(session_id);
+}
 
+/// Create a `TokenAccount<T>` on `account`, keyed under the current `account.pk`. The caller is
+/// responsible for any authorization and for ensuring the token is not already registered.
+fun add_token_account<T>(account: &mut Account, session_id: vector<u8>) {
     let pk = account.pk;
     events::emit_new_registration<T>(account.owner, pk);
 
@@ -615,6 +630,7 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_handles,
+            register_permissionless: policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         }
     } else {
         withdrawn.destroy_none();
@@ -656,10 +672,12 @@ fun verify_auditing<T>(
 }
 
 /// Add a receiver to a batched transfer: pop the next receiver-keyed `EncryptedCoin` and credit it
-/// to the receiver's pending deposits. Aborts if:
-///  * the receiver is not registered, frozen, or on the deny list,
+/// to the receiver's pending deposits. If the receiver has no `TokenAccount<T>` yet, one is
+/// auto-created (keyed at their `Account.pk`) when `T` leaves registration permissionless. Aborts if:
+///  * the receiver is unregistered and `T`'s registration is permissioned,
+///  * the receiver is frozen or on the deny list,
 ///  * `add_to_batch` is called more times than there were `receiver_amounts` in `batched_transfer`,
-///  * the coin is not encrypted under the receiver's registered public key.
+///  * the coin is not encrypted under the receiver's public key.
 public fun add_to_batch<T>(
     batch: TransferBatch<T>,
     receiver: &mut Account,
@@ -678,6 +696,7 @@ public fun add_to_batch<T>(
             seed_point,
             next_index,
             mut auditor_handles,
+            register_permissionless,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -687,6 +706,15 @@ public fun add_to_batch<T>(
             // Read the account-level key + rotation epoch before borrowing the token account field.
             let account_pk = receiver.pk;
             let rotation_epoch = receiver.key_rotation_epoch;
+
+            // Auto-register the token on first receive when `T` leaves registration permissionless;
+            // the new account is keyed at `account_pk`, matching the key the sender encrypted under.
+            // For a permissioned token, an unregistered receiver's deposit aborts instead.
+            if (!receiver.has_token<T>()) {
+                assert!(register_permissionless, EReceiverNotRegistered);
+                let session_id = receiver.session_id<T>();
+                receiver.add_token_account<T>(session_id);
+            };
 
             let coin = coins.pop_back();
 
@@ -732,6 +760,7 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index: next_index + 1,
                 auditor_handles,
+                register_permissionless,
             }
         },
     }
