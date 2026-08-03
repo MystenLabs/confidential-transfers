@@ -111,8 +111,6 @@ const EBatchTooLarge: u64 = 12;
 const EMissingAuditorData: u64 = 13;
 const EUnexpectedAuditorData: u64 = 14;
 const EAuditorProofFailed: u64 = 15;
-/// A deposit targeted an unregistered receiver for a token whose registration is permissioned; the
-/// receiver must be registered by the issuer first (only permissionless tokens auto-register).
 const EReceiverNotRegistered: u64 = 16;
 
 // === Constants ===
@@ -164,19 +162,14 @@ public struct Pool<phantom T> has key {
     id: UID,
 }
 
-/// Base account that stores token accounts as dynamic fields. `pk` is the account's current ElGamal
-/// key — the convergence target for key rotation. `set_account_key` updates it (O(1)); each token's
-/// balance catches up lazily via `rekey_token`, which re-keys that token from its own `TokenAccount.pk`
-/// to this one. New token accounts start at this key.
+/// Base account that stores token accounts as dynamic fields.
 public struct Account has key {
     id: UID,
     owner: address,
     pk: Element<G>,
 }
 
-/// A user's account for one confidential token. `pk` is the key this token's balances (active and
-/// pending) are actually encrypted under; it lags `Account.pk` after a rotation until `rekey_token`
-/// brings it current, so senders depositing to this token use `TokenAccount.pk`.
+/// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
     pk: Element<G>,
     session_id: vector<u8>,
