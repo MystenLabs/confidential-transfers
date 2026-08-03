@@ -83,16 +83,15 @@ export async function setupChannelContraAccount(opts: {
 		}),
 	);
 	const account = tx.add(
-		contraContracts.newAccount({
-			package: deployment.contra.packageId,
-			arguments: { registry: deployment.contra.accountRegistryId, owner: channelObjectId },
+		contraClient.newAccount({
+			owner: channelObjectId,
+			publicKey: channelTokenAccount.publicKey,
 		}),
 	);
 	tx.add(
 		await contraClient.register({
 			tokenAccount: channelTokenAccount,
 			account,
-			auditorPublicKeys: [],
 			auth: () => auth,
 		}),
 	);
