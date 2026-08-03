@@ -286,7 +286,7 @@ fun setup_with_channel(s: &mut Scenario, _keypair_seed: u64): Env {
     );
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        option::none<Element<G>>(),
         s.ctx(),
     );
 
