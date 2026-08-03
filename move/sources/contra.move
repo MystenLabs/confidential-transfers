@@ -38,24 +38,13 @@
 ///
 /// ## Key Flows for Users:
 /// 1. Create an account for an address with an initial public key `pk` (needed once for all token
-///    types); `Account.pk` is the current account key and the target that token balances converge to.
-/// 2. Register a token account for a token type `T`; its balances start keyed under `Account.pk` (no
-///    auditor data needed).
-/// 3. Rotate the account key with `set_account_key` — O(1), it just moves the convergence target
-///    `Account.pk`. Each token's balance stays under its own `TokenAccount.pk` (deposits keep landing
-///    there) until the owner catches it up lazily with `rekey_token`, which merges the token first
-///    (`pending` must be empty) and re-keys `active` from `TokenAccount.pk` to `Account.pk`. Use
-///    `try_rekey_token` to bundle the rotation and several token re-keys into one PTB without pausing:
-///    any token whose re-key raced a deposit just stays stale (its normal not-yet-re-keyed state)
-///    instead of aborting the rotation, to be retried later.
+///    types).
+/// 2. Register a token account for a token type `T`; its balances are keyed under `Account.pk`.
+/// 3. Rotate the account key with `set_account_key`; each token catches up lazily via `rekey_token`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
-/// 5. Transfer an encrypted amount to two or more token accounts. A receiver that has an `Account`
-///    but no `TokenAccount` for this token yet is auto-registered on first receive (keyed at their
-///    `Account.pk`) when the token leaves registration permissionless; a permissioned token still
-///    requires the issuer to register the receiver first. If the token has an auditor key set, each
-///    transfer additionally carries two u32-limb auditor decryption handles and a proof that they
-///    match the transferred amount.
+/// 5. Transfer an encrypted amount to two or more token accounts. An unregistered receiver is
+///    auto-registered on first receive for permissionless tokens; auditor data is attached if set.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
