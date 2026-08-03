@@ -7,8 +7,8 @@
 /// the contra entrypoint -- no extra access control is performed.
 module gated::gated;
 
-use contra::{auditors::KeyEncryption, contra::{Self, ConfidentialToken, Account, Pool}};
-use sui::{coin::Coin, deny_list::DenyList, group_ops::Element, ristretto255::G};
+use contra::contra::{Self, ConfidentialToken, Account, Pool};
+use sui::{coin::Coin, deny_list::DenyList};
 
 // Operation indices, mirroring private constants in `contra::contra`.
 const REGISTER_OP: u8 = 0;
@@ -39,14 +39,9 @@ public fun vault_address(vault: &Vault): address {
 
 // === Permissioned ops (`authorize_with_witness`) ===
 
-public fun gated_register<T>(
-    ct: &ConfidentialToken<T>,
-    account: &mut Account,
-    pk: Element<G>,
-    key_encryption: Option<KeyEncryption>,
-) {
+public fun gated_register<T>(ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), GatedWitness {});
-    contra::register(account, &auth, ct, pk, key_encryption);
+    contra::register(account, &auth);
 }
 
 public fun gated_wrap<T>(
@@ -63,15 +58,9 @@ public fun gated_wrap<T>(
 
 // === Object-bound ops (`authorize_as_object`) ===
 
-public fun vault_register<T>(
-    vault: &mut Vault,
-    ct: &ConfidentialToken<T>,
-    account: &mut Account,
-    pk: Element<G>,
-    key_encryption: Option<KeyEncryption>,
-) {
+public fun vault_register<T>(vault: &mut Vault, ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_as_object(&mut vault.id);
-    contra::register(account, &auth, ct, pk, key_encryption);
+    contra::register(account, &auth);
 }
 
 public fun vault_wrap<T>(

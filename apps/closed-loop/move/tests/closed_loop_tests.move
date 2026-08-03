@@ -55,12 +55,12 @@ fun closed_loop_roundtrip() {
     confidential_pbu::add_to_whitelist(&whitelist_cap, &mut whitelist, bob);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
-    confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk_alice, scenario.ctx());
+    let mut alice_account = account_registry.new(alice, pk_alice);
+    confidential_pbu::register(&ct, &whitelist, &mut alice_account, scenario.ctx());
 
     scenario.next_tx(bob);
-    let mut bob_account = account_registry.new(bob);
-    confidential_pbu::register(&ct, &whitelist, &mut bob_account, pk_bob, scenario.ctx());
+    let mut bob_account = account_registry.new(bob, pk_bob);
+    confidential_pbu::register(&ct, &whitelist, &mut bob_account, scenario.ctx());
 
     // Alice: mint BU, swap to pBU, wrap into her confidential balance.
     scenario.next_tx(alice);
@@ -137,6 +137,9 @@ fun closed_loop_roundtrip() {
             ristretto255::g_identity(),
             new_balance,
             sum_proof,
+            option::none(),
+            option::none(),
+            scenario.ctx(),
         )
         .add<PBU>(&mut bob_account, vector[], &deny_list)
         .finalize();
@@ -238,8 +241,8 @@ fun register_requires_whitelist() {
 
     // `mallory` is not on the whitelist -> this aborts.
     scenario.next_tx(mallory);
-    let mut mallory_account = account_registry.new(mallory);
-    confidential_pbu::register(&ct, &whitelist, &mut mallory_account, pk, scenario.ctx());
+    let mut mallory_account = account_registry.new(mallory, pk);
+    confidential_pbu::register(&ct, &whitelist, &mut mallory_account, scenario.ctx());
 
     unit_test::destroy(mallory_account);
     unit_test::destroy(account_registry);
@@ -292,8 +295,8 @@ fun set_public_key_requires_whitelist() {
     confidential_pbu::add_to_whitelist(&whitelist_cap, &mut whitelist, alice);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
-    confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk, scenario.ctx());
+    let mut alice_account = account_registry.new(alice, pk);
+    confidential_pbu::register(&ct, &whitelist, &mut alice_account, scenario.ctx());
 
     // Dummy re-key args so the call type-checks; the whitelist abort fires before any proof
     // verification.

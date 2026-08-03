@@ -138,15 +138,9 @@ fun throttled_unwrap_roundtrip() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
+    let mut alice_account = account_registry.new(alice, pk_alice);
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(
-        &mut alice_account,
-        &auth,
-        &ct,
-        pk_alice,
-        option::none(),
-    );
+    contra::register(&mut alice_account, &auth);
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -237,15 +231,9 @@ fun unwrap_aborts_for_non_owner() {
     let clock = clock::create_for_testing(scenario.ctx());
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
+    let mut alice_account = account_registry.new(alice, pk_alice);
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(
-        &mut alice_account,
-        &auth,
-        &ct,
-        pk_alice,
-        option::none(),
-    );
+    contra::register(&mut alice_account, &auth);
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -325,15 +313,9 @@ fun issuer_can_seize_via_set_pending() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
+    let mut alice_account = account_registry.new(alice, pk_alice);
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(
-        &mut alice_account,
-        &auth,
-        &ct,
-        pk_alice,
-        option::none(),
-    );
+    contra::register(&mut alice_account, &auth);
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -432,15 +414,9 @@ fun set_min_duration_shortens_window() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
+    let mut alice_account = account_registry.new(alice, pk_alice);
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(
-        &mut alice_account,
-        &auth,
-        &ct,
-        pk_alice,
-        option::none(),
-    );
+    contra::register(&mut alice_account, &auth);
 
     wrap_for_alice(
         &mut treasury_cap,

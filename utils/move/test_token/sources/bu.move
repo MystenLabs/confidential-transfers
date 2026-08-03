@@ -7,7 +7,7 @@
 /// manage a per-address denylist and a global pause via
 /// `sui::coin::deny_list_v2_*` — useful for the demos that exercise contra's
 /// freeze hooks. `register_confidential` registers BU as a confidential token
-/// with the supplied auditor public keys (pass `vector[]` for none) and
+/// with the supplied auditor public key (pass `option::none()` for none) and
 /// shares the resulting `ConfidentialToken<BU>`.
 module bu_token::bu;
 
@@ -70,18 +70,18 @@ public fun mint(treasury: &mut BuTreasury, amount: u64, ctx: &mut TxContext): Co
 }
 
 /// Register BU as a confidential token. Shares the `ConfidentialToken<BU>`
-/// and transfers `ManagementCap<BU>` to the caller. Pass `vector[]` for
-/// `auditor_public_keys` to register without auditors.
+/// and transfers `ManagementCap<BU>` to the caller. Pass `option::none()` for
+/// `auditor_pk` to register without auditors.
 public fun register_confidential(
     treasury: &mut BuTreasury,
     registry: &mut contra::TokenRegistry,
-    auditor_public_keys: vector<Element<G>>,
+    auditor_pk: Option<Element<G>>,
     ctx: &mut TxContext,
 ) {
     let (ct, management_cap) = contra::new_confidential_token<BU>(
         registry,
         &mut treasury.cap,
-        auditor_public_keys,
+        auditor_pk,
         ctx,
     );
     contra::share_confidential_token(ct);
