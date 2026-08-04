@@ -60,12 +60,12 @@ import type {
 	RegisterOptions,
 	RegisterPermissionlessOptions,
 	RekeyTokenOptions,
-	RotateKeysOptions,
 	SetDefaultKeyOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
 	TransferOptions,
+	TryRekeyTokensOptions,
 	UnpauseAccountOptions,
 	UnwrapOptions,
 	UpdateBalanceOptions,
@@ -351,15 +351,15 @@ export class ContraClient {
 	 * Report the account's optional default key (`Account.pk`, `undefined` when unset) and, for each
 	 * token, the key that token's balances are currently encrypted under. Pass `tokenTypes` to query
 	 * specific tokens, or omit it to enumerate every token registered on the account (its
-	 * `TokenAccount` dynamic fields). Use this after a `rotateKeys` to decide what to re-key and whether
-	 * an old key can be discarded — any token still reported `stale` is one whose re-key soft-failed
-	 * (e.g. a deposit raced it) and needs a retry:
+	 * `TokenAccount` dynamic fields). Use it to see each token's current key — e.g. after
+	 * `tryRekeyTokens`, compare each token's reported key against the key you intended and retry any
+	 * that didn't take (a soft-failed re-key still reports the old key), and decide whether an old key
+	 * can be discarded:
 	 *
 	 * - `stale === true` for a token means its `TokenAccount.pk` differs from the account's default key
-	 *   (only computed when that key is set). Since `rotateKeys` sets the default key to the
-	 *   convergence target, a stale token is one that has not caught up — call `rekeyToken` (or
-	 *   `rotateKeys`) to re-key it. Its balance can only be re-keyed or decrypted with the key it
-	 *   currently reports (`publicKey`).
+	 *   (computed only when that key is set). This is a convenience for accounts that keep every token
+	 *   on the default key; per-token keys may legitimately differ. A token's balance can only be
+	 *   re-keyed or decrypted with the key it currently reports (`publicKey`).
 	 * - An old private key is safe to delete only once **no** token still reports its public key. Omit
 	 *   `tokenTypes` (enumerate all) to make that determination sound.
 	 *
@@ -1004,7 +1004,7 @@ export class ContraClient {
 	/**
 	 * Emit the `rekey_token` (or `try_rekey_token`) Move call re-keying the token's active balance
 	 * from its current `TokenAccount.pk` to `newPk` (explicit and independent of the account's default
-	 * key). Shared by `rekeyToken`, `tryRekeyToken`, and `rotateKeys`.
+	 * key). Shared by `rekeyToken`, `tryRekeyToken`, and `tryRekeyTokens`.
 	 */
 	#rekeyTokenCall(
 		tx: Transaction,
@@ -1106,44 +1106,43 @@ export class ContraClient {
 	}
 
 	/**
-	 * Optimistically re-key one or more tokens in one PTB, without pausing: for each `(current, new)`
-	 * pair in `rotations`, an optional `merge` then `tryRekeyToken` from the current key to the paired
-	 * new key. Because each re-key soft-fails (it does not abort), any token whose re-key races a
-	 * concurrent deposit is left stale for a later retry while the rest still land — so it never reverts.
+	 * Optimistically re-key one or more tokens in one PTB, without pausing — the batched, soft-failing
+	 * plural of `tryRekeyToken`. For each `(current, new)` pair in `rotations`, an optional `merge` then
+	 * `tryRekeyToken` from the current key to the paired new key. Because each re-key soft-fails (it does
+	 * not abort), any token whose re-key races a concurrent deposit is left stale for a later retry while
+	 * the rest still land — so it never reverts. Different tokens may re-key to different keys.
 	 *
-	 * Different tokens may rotate to different keys. Pass `newDefaultKey` to also set (or `null` to
-	 * clear) the account's default key in the same PTB; omit it to leave the default key unchanged
-	 * (there is no implicit choice, since tokens may go to different keys). All accounts must be for the
-	 * same account (same `address`).
+	 * This does not touch the account's default key (used by `register_permissionless`); set that
+	 * separately with `setDefaultKey` if you want it changed. All accounts must be for the same account
+	 * (same `address`).
 	 *
 	 * There is no SDK-side key check: if a pair's `tokenAccount` key doesn't match the token's real
 	 * on-chain `TokenAccount.pk`, its re-key proof won't verify, so `try_rekey_token` soft-fails and it
-	 * stays stale. After the tx, re-query `getTokenKeys` — any token still `stale` needs a retry.
+	 * stays stale. After the tx, re-query `getTokenKeys` and compare each token's key against the key you
+	 * intended — any that still reports its old key needs a retry.
 	 *
 	 * The returned thunk adds several calls, so apply it directly rather than via `tx.add`.
 	 *
 	 * @example
 	 * ```ts
-	 * const rotate = await client.contra.rotateKeys({
+	 * const rekey = await client.contra.tryRekeyTokens({
 	 *   rotations: [{ tokenAccount, newTokenAccount }],
-	 *   newDefaultKey: newTokenAccount.publicKey,
 	 * });
 	 * const tx = new Transaction();
-	 * rotate(tx);
+	 * rekey(tx);
 	 * ```
 	 */
-	async rotateKeys({
+	async tryRekeyTokens({
 		rotations,
-		newDefaultKey,
 		merge = true,
-	}: RotateKeysOptions): Promise<(tx: Transaction) => void> {
+	}: TryRekeyTokensOptions): Promise<(tx: Transaction) => void> {
 		if (rotations.length === 0) {
-			throw new InvalidArgumentError('rotateKeys: `rotations` must not be empty.');
+			throw new InvalidArgumentError('tryRekeyTokens: `rotations` must not be empty.');
 		}
 		const { address } = rotations[0].tokenAccount;
 		if (rotations.some((r) => r.tokenAccount.address !== address)) {
 			throw new InvalidArgumentError(
-				'rotateKeys: all token accounts must be for the same account.',
+				'tryRekeyTokens: all token accounts must be for the same account.',
 			);
 		}
 		// Re-key material per pair: from the current `tokenAccount`'s key to the paired `newTokenAccount`.
@@ -1151,17 +1150,7 @@ export class ContraClient {
 			rotations.map((r) => this.#buildRekeyMaterial(r.tokenAccount, r.newTokenAccount, merge)),
 		);
 		return (tx: Transaction) => {
-			// Optionally set the account's default key once (explicit, since tokens may go to different
-			// keys); any registered token's `Auth` authorizes it.
-			if (newDefaultKey !== undefined) {
-				const setAuth = this.#asSenderAuth(tx, rotations[0].tokenAccount.tokenType);
-				this.setDefaultKey({
-					tokenAccount: rotations[0].tokenAccount,
-					newDefaultKey,
-					auth: () => setAuth,
-				})(tx);
-			}
-			// Then optimistically merge + re-key each token to its own new key.
+			// Optimistically merge + re-key each token to its own new key.
 			rotations.forEach((r, i) => {
 				const { shouldMerge, newHandles, rekeyProof } = materials[i];
 				const authArg = this.#asSenderAuth(tx, r.tokenAccount.tokenType);

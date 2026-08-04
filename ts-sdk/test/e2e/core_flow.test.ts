@@ -577,7 +577,7 @@ describe('core user flows (devnet)', () => {
 	);
 
 	it(
-		'rotateKeys: sets the default key and re-keys the token, preserving balance and folding pending',
+		'tryRekeyTokens: re-keys the token, preserving balance and folding pending deposits',
 		{ timeout: 300_000 },
 		async () => {
 			// Fresh user. Bootstrap funding + account + register, then wrap + merge so the active
@@ -612,8 +612,8 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 1: no pending deposits. `rotateKeys` sets the default key and re-keys the
-			// token in one PTB (set_default_key is O(1), try_rekey_token catches the token up). ---
+			// --- Rotation 1: no pending deposits. `tryRekeyTokens` re-keys the token in one PTB
+			// (try_rekey_token catches the token up to the new key). ---
 			const oldPrivateKey = userTokenAccount.privateKey;
 			const oldPublicKeyBytes = userTokenAccount.publicKey.toBytes();
 
@@ -623,9 +623,8 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn = await client.contra.rotateKeys({
+			const rotateFn = await client.contra.tryRekeyTokens({
 				rotations: [{ tokenAccount: userTokenAccount, newTokenAccount }],
-				newDefaultKey: newTokenAccount.publicKey,
 			});
 			const rotateTx = new Transaction();
 			rotateFn(rotateTx);
@@ -646,7 +645,7 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 2: with a pending public deposit outstanding so `rotateKeys`' inline merge
+			// --- Rotation 2: with a pending public deposit outstanding so `tryRekeyTokens`' inline merge
 			// runs (rekey_token requires an empty pending). ---
 			const extra = 3n * ONE;
 			await tokenIssuer.mint(userAddress, extra);
@@ -665,9 +664,8 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn2 = await client.contra.rotateKeys({
+			const rotateFn2 = await client.contra.tryRekeyTokens({
 				rotations: [{ tokenAccount: newTokenAccount, newTokenAccount: rotated2 }],
-				newDefaultKey: rotated2.publicKey,
 			});
 			const rotateTx2 = new Transaction();
 			rotateFn2(rotateTx2);

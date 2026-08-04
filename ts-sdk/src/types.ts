@@ -255,10 +255,10 @@ export interface TokenKeyStatus {
 	publicKey?: RistrettoPoint;
 	/**
 	 * True when the token's key differs from the account's default key (`Account.pk`), computed only
-	 * when that key is set. Since `rotateKeys` sets the default key to the convergence target, a
-	 * stale token is one that has not caught up: it still needs `rekeyToken`, and its balance can only
-	 * be re-keyed or decrypted with the key it currently reports here. While any token reports an old
-	 * key, that old private key must be retained.
+	 * when that key is set. A convenience for accounts that keep every token on the default key;
+	 * per-token keys may legitimately differ. A token's balance can only be re-keyed or decrypted with
+	 * the key it currently reports here, so while any token still reports an old key, that old private
+	 * key must be retained.
 	 */
 	stale: boolean;
 }
@@ -386,7 +386,7 @@ export interface RekeyTokenOptions {
 	auth?: AuthThunk;
 }
 
-/** A single re-key in `ContraClient.rotateKeys`: the token's current account and its new one. */
+/** A single re-key in `ContraClient.tryRekeyTokens`: the token's current account and its new one. */
 export interface KeyRotation {
 	/** The token's current account — its `address`, `tokenType`, and current key. */
 	tokenAccount: TokenAccount;
@@ -398,22 +398,16 @@ export interface KeyRotation {
 }
 
 /**
- * Arguments to `ContraClient.rotateKeys`: optimistically re-key one or more tokens in one PTB, each to
- * its own new key.
+ * Arguments to `ContraClient.tryRekeyTokens`: optimistically re-key one or more tokens in one PTB, each
+ * to its own new key (the batched, soft-failing plural of `tryRekeyToken`).
  */
-export interface RotateKeysOptions {
+export interface TryRekeyTokensOptions {
 	/**
 	 * The tokens to re-key, as (current, new) pairs. Each token re-keys from its `tokenAccount`'s key
 	 * to the paired `newTokenAccount`'s key; different tokens may go to different keys. All accounts
 	 * must be for the same account (same `address`).
 	 */
 	rotations: readonly KeyRotation[];
-	/**
-	 * Optionally also set the account's default key (used by `register_permissionless`) in the same
-	 * PTB: pass a key to set it, `null` to clear it, or omit to leave it unchanged. Because tokens may
-	 * rotate to different keys there is no implicit choice, so set it explicitly if you want it changed.
-	 */
-	newDefaultKey?: RistrettoPoint | null;
 	/**
 	 * When `true` (the default), a `merge` is prepended before each token's re-key so it can proceed
 	 * against the merged active balance (re-key requires an empty pending balance).
