@@ -1055,56 +1055,67 @@ export class ContraClient {
 	}
 
 	/**
-	 * Optimistically rotate the account key and re-key ALL given tokens in a single PTB, without
-	 * pausing: `setAccountKey` once, then for each token an optional `merge` + `tryRekeyToken`. Because
-	 * each re-key soft-fails (it does not abort), any token whose re-key races a concurrent deposit is
-	 * simply left stale for a later retry while the rest still land — so the rotation never reverts.
+	 * Optimistically rotate the account key and re-key many tokens in a single PTB, without pausing:
+	 * `setAccountKey` once, then for each token an optional `merge` + `tryRekeyToken`. Because each
+	 * re-key soft-fails (it does not abort), any token whose re-key races a concurrent deposit is left
+	 * stale for a later retry while the rest still land — so the rotation never reverts.
 	 *
-	 * All tokens converge to a single new `Account.pk`: pass the same new key in every
-	 * `newTokenAccount`. There is no SDK-side check — if a `newTokenAccount` carries a different key,
-	 * the account key is set from the first rotation and that token's re-key proof won't verify against
-	 * it, so its `try_rekey_token` soft-fails on chain (the token stays stale). Pair with `getTokenKeys`
-	 * to find the stale tokens to feed in.
+	 * All rotated tokens are assumed to be under one shared current key (`tokenAccount`'s key) and
+	 * converge to one new key (`newTokenAccount`'s key) — the norm, since a caught-up account keys
+	 * every token under `Account.pk`. `tokenTypes` selects which tokens to re-key; omit it to re-key
+	 * every token on the account (enumerated via `getTokenKeys`). Only the keys and address of
+	 * `tokenAccount` / `newTokenAccount` are used; their own `tokenType` is ignored.
+	 *
+	 * There is no SDK-side key check: a token actually under a different current key (e.g. one left
+	 * stale by an earlier partial rotation) gets a re-key proof that won't verify against its real
+	 * `TokenAccount.pk`, so its `try_rekey_token` soft-fails on chain and it stays stale. After the tx,
+	 * re-query `getTokenKeys` — any token still `stale` needs a retry (with the right current key).
 	 *
 	 * The returned thunk adds several calls, so apply it directly rather than via `tx.add`.
 	 *
 	 * @example
 	 * ```ts
-	 * const rotations = staleTokenTypes.map((tokenType) => ({
-	 *   tokenAccount: currentTokenAccounts[tokenType],
-	 *   newTokenAccount: new TokenAccount(address, tokenType, packageConfig, newPrivateKey),
-	 * }));
-	 * const rotateAll = await client.contra.rotateKeyAll({ rotations });
+	 * const newTokenAccount = new TokenAccount(address, anyTokenType, packageConfig, newPrivateKey);
+	 * const rotateAll = await client.contra.rotateKeyAll({ tokenAccount, newTokenAccount }); // all tokens
 	 * const tx = new Transaction();
 	 * rotateAll(tx);
 	 * ```
 	 */
 	async rotateKeyAll({
-		rotations,
+		tokenAccount,
+		newTokenAccount,
+		tokenTypes,
 		merge = true,
 	}: RotateKeyAllOptions): Promise<(tx: Transaction) => void> {
-		if (rotations.length === 0) {
-			throw new InvalidArgumentError('rotateKeyAll: `rotations` must not be empty.');
+		const { address } = tokenAccount;
+		const types = tokenTypes ?? (await this.#listTokenTypes(address));
+		if (types.length === 0) {
+			throw new InvalidArgumentError(
+				'rotateKeyAll: the account has no registered tokens to re-key.',
+			);
 		}
-		// Build the re-key material (reads each token's current handles) for every token up front.
+		// All tokens share one current key (`tokenAccount`) and one new key (`newTokenAccount`); build a
+		// current/new `TokenAccount` per type from those keys, then its re-key material.
+		const perToken = types.map((tokenType) => ({
+			current: new TokenAccount(address, tokenType, this.#packageConfig, tokenAccount.privateKey),
+			next: new TokenAccount(address, tokenType, this.#packageConfig, newTokenAccount.privateKey),
+		}));
 		const materials = await Promise.all(
-			rotations.map((r) => this.#buildRekeyMaterial(r.tokenAccount, r.newTokenAccount, merge)),
+			perToken.map((p) => this.#buildRekeyMaterial(p.current, p.next, merge)),
 		);
-		const newPublicKey = rotations[0].newTokenAccount.publicKey;
+		const newPublicKey = newTokenAccount.publicKey;
 		return (tx: Transaction) => {
 			// Rotate the account key once; any registered token's `Auth` authorizes it.
-			const setAuth = this.#asSenderAuth(tx, rotations[0].tokenAccount.tokenType);
-			this.setAccountKey({
-				tokenAccount: rotations[0].tokenAccount,
-				newPublicKey,
-				auth: () => setAuth,
-			})(tx);
+			const setAuth = this.#asSenderAuth(tx, types[0]);
+			this.setAccountKey({ tokenAccount: perToken[0].current, newPublicKey, auth: () => setAuth })(
+				tx,
+			);
 			// Then optimistically merge + re-key each token.
-			rotations.forEach((r, i) => {
+			perToken.forEach((p, i) => {
 				const { shouldMerge, newHandles, rekeyProof } = materials[i];
-				const authArg = this.#asSenderAuth(tx, r.tokenAccount.tokenType);
-				if (shouldMerge) tx.add(this.#merge({ tokenAccount: r.tokenAccount, auth: authArg }));
-				this.#rekeyTokenCall(tx, r.tokenAccount, newHandles, rekeyProof, authArg, true);
+				const authArg = this.#asSenderAuth(tx, p.current.tokenType);
+				if (shouldMerge) tx.add(this.#merge({ tokenAccount: p.current, auth: authArg }));
+				this.#rekeyTokenCall(tx, p.current, newHandles, rekeyProof, authArg, true);
 			});
 		};
 	}
