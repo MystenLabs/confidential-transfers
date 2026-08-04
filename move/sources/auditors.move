@@ -50,10 +50,20 @@ public(package) fun update(
     auditor.current_pk = new_pk;
 }
 
-/// Whether auditing is currently enabled (a current key is set). Transfers must attach auditor data
-/// iff this is true.
+/// Whether auditing is currently enabled (a current key is set). A transfer MUST attach auditor data
+/// when this is true.
 public(package) fun is_enabled(auditor: &Auditor): bool {
     auditor.current_pk.is_some()
+}
+
+/// Whether a transfer's auditor data can be verified at `epoch`: either a current key is set, or the
+/// previous key is still within its grace window. When a token is disabled (`current_pk == none`) but
+/// the previous key is still in grace, auditor data is OPTIONAL — a transfer may still attach it (so
+/// in-flight transfers built against the old key remain auditable), but need not. When this is false,
+/// a transfer must carry no auditor data.
+public(package) fun accepts_at(auditor: &Auditor, epoch: u64): bool {
+    auditor.current_pk.is_some() ||
+        (epoch <= auditor.previous_expiration_epoch && auditor.previous_pk.is_some())
 }
 
 /// Verify a batched per-transfer auditor `ElGamalProof` over `encryptions` — the derived u32-limb

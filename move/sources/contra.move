@@ -612,8 +612,11 @@ public fun batched_transfer<T>(
 }
 
 /// Verify the per-transfer auditor data. Returns the flattened auditor handles to attach to events
-/// (empty when auditing is disabled). Aborts if the presence requirement (data iff enabled) or the
-/// batched auditor `ElGamalProof` (under an accepted key at `epoch`) is not met.
+/// (empty when none is carried). Auditor data is required when auditing is enabled (a current key is
+/// set), forbidden when the token is fully off (no current key and no previous key in grace), and
+/// optional in between (a disable grace window: data, if present, is verified under the previous key
+/// so in-flight transfers stay auditable). Aborts if that presence rule or the batched auditor
+/// `ElGamalProof` (under an accepted key at `epoch`) is not met.
 fun verify_auditing<T>(
     ct: &ConfidentialToken<T>,
     session_id: vector<u8>,
@@ -622,11 +625,16 @@ fun verify_auditing<T>(
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
 ): vector<Element<G>> {
-    if (!ct.auditor.is_enabled()) {
-        assert!(auditor_handles.is_none() && auditor_proof.is_none(), EUnexpectedAuditorData);
+    if (auditor_handles.is_none() && auditor_proof.is_none()) {
+        // No auditor data. Allowed only when there is no current key. During a disable grace window
+        // (current key none, previous still in grace) auditor data is optional, so omitting it is fine.
+        assert!(!ct.auditor.is_enabled(), EMissingAuditorData);
         return vector[]
     };
+    // Auditor data attached: require both parts, and that some key can still verify it (the current
+    // key, or the previous key within its grace window); then it must actually verify.
     assert!(auditor_handles.is_some() && auditor_proof.is_some(), EMissingAuditorData);
+    assert!(ct.auditor.accepts_at(ctx.epoch()), EUnexpectedAuditorData);
     let handles = auditor_handles.destroy_some();
     let proof = auditor_proof.destroy_some();
     let encryptions = encrypted_amount::batch_auditor_encryptions(receiver_amounts, &handles);

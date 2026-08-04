@@ -559,6 +559,163 @@ fun test_batched_transfer_with_auditor() {
     scenario.end();
 }
 
+/// Disable-grace: after the issuer disables auditing (`update_auditor(none, expiration)`), a transfer
+/// carrying auditor data built under the now-`previous` key still succeeds while `epoch <= expiration`
+/// (so in-flight transfers stay auditable). Auditor data is optional in this window; here it is
+/// present and must verify under the previous key.
+#[test]
+fun test_batched_transfer_auditor_disable_grace() {
+    let setup_addr = @0x0;
+
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+    let addr3 = @0x102;
+    let pk_3 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(11111),
+        &ristretto255::g_generator(),
+    );
+
+    let auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xA1),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    // Token created with an auditor key enabled, then disabled with a grace window.
+    scenario.next_tx(addr1);
+    let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        option::some(auditor_pk),
+        scenario.ctx(),
+    );
+    // Disable auditing but keep the outgoing key valid through epoch 100 (current epoch is 0).
+    ct.update_auditor(&management_cap, option::none(), 100);
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth);
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_2.register<TestCurrency>(&auth);
+    scenario.next_tx(addr3);
+    let mut account_3 = acc_reg.new(pk_3, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_3.register<TestCurrency>(&auth);
+
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+    scenario.next_tx(addr1);
+
+    let r_a = 32533;
+    let r_b = 17000;
+    let new_balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
+    let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
+    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
+        consistency_proof_for_testing(elgamal_dst, 30, &taken_a_ea, r_a, &pk_2),
+        consistency_proof_for_testing(elgamal_dst, 20, &taken_b_ea, r_b, &pk_3),
+        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
+    ]);
+
+    let taken_a_sender = amount_for_testing(30, &pk_1, r_a);
+    let taken_b_sender = amount_for_testing(20, &pk_1, r_b);
+    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r_a + r_b, elgamal_dst);
+    let old_balance = account_1.balance<TestCurrency>();
+    let total_sender = taken_a_sender.collapse().add(&taken_b_sender.collapse());
+    let total_sender_handle = *total_sender.decryption_handle();
+    let balance_proof = nizk::sum_proof_for_testing(
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        &old_balance,
+        &new_balance_ea.collapse(),
+        &total_sender,
+        &sk_1,
+    );
+
+    // Auditor data built under `auditor_pk` — now the previous key. It must verify within the grace.
+    let (auditor_handles, auditor_proof) = build_auditor_data(
+        vector[30, 20],
+        vector[r_a, r_b],
+        &auditor_pk,
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
+    );
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1
+        .batched_transfer<TestCurrency>(
+            &auth,
+            &ct,
+            &deny_list,
+            vector[pk_2, pk_3],
+            vector[taken_a_ea, taken_b_ea],
+            well_formed_proofs,
+            total_sender_handle,
+            consistency_proof,
+            ristretto255::g_identity(),
+            new_balance_ea,
+            balance_proof,
+            option::some(auditor_handles),
+            option::some(auditor_proof),
+            scenario.ctx(),
+        )
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
+        .finalize();
+
+    assert_eq!(account_1.balance<TestCurrency>(), new_balance_ea.collapse());
+    assert_eq!(account_2.pending_encrypted_balance<TestCurrency>(), taken_a_ea.collapse());
+    assert_eq!(account_3.pending_encrypted_balance<TestCurrency>(), taken_b_ea.collapse());
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(account_3);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
+}
+
 #[test, expected_failure]
 fun test_deny_list() {
     let setup_addr = @0x0;
