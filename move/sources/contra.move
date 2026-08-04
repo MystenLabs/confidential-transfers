@@ -1052,6 +1052,19 @@ public fun register_guardian_enclave<T>(
     ct.update_guardian_enclaves(option::some(document), option::none(), option::none(), ctx);
 }
 
+/// Register an enclave key without attestation, for localnet dev runs against a
+/// `non-enclave-dev` guardian. Operator-only. NOT for production.
+public fun register_guardian_enclave_for_dev<T>(
+    ct: &mut ConfidentialToken<T>,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+    ctx: &TxContext,
+) {
+    let policy = ct.guardian.borrow_mut();
+    let signing_pk = policy.register_guardian_enclave_key_for_dev(signing_pk, enc_pk, ctx);
+    events::emit_guardian_enclave_update<T>(true, signing_pk, policy.version());
+}
+
 /// Remove a registered enclave key. Operator-only.
 public fun remove_guardian_enclave<T>(
     ct: &mut ConfidentialToken<T>,

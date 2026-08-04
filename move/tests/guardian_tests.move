@@ -154,10 +154,8 @@ fun live_guardian_enclave_keys_filters_stale_versions() {
 
 #[test]
 fun parse_user_data_round_trips() {
-    // `user_data` wire format: the BCS pair of two length-prefixed 32-byte vectors.
-    let mut user_data = vector[32u8];
-    user_data.append(FIXTURE_PK);
-    user_data.push_back(32u8);
+    // `user_data` is the two keys concatenated, no length prefixes.
+    let mut user_data = FIXTURE_PK;
     user_data.append(ENC_PK);
     let (signing_pk, enc_pk) = guardian::parse_user_data_for_testing(user_data);
     assert_eq!(*signing_pk.bytes(), FIXTURE_PK);
@@ -165,19 +163,10 @@ fun parse_user_data_round_trips() {
 }
 
 #[test, expected_failure(abort_code = contra::guardian::EInvalidUserData)]
-fun parse_user_data_rejects_trailing_bytes() {
-    let mut user_data = vector[32u8];
-    user_data.append(FIXTURE_PK);
-    user_data.push_back(32u8);
+fun parse_user_data_rejects_wrong_length() {
+    let mut user_data = FIXTURE_PK;
     user_data.append(ENC_PK);
     user_data.push_back(0);
-    guardian::parse_user_data_for_testing(user_data);
-}
-
-#[test, expected_failure(abort_code = contra::guardian::EInvalidKeyLength)]
-fun parse_user_data_rejects_short_key() {
-    let mut user_data = vector[4u8, 1, 2, 3, 4, 32u8];
-    user_data.append(ENC_PK);
     guardian::parse_user_data_for_testing(user_data);
 }
 

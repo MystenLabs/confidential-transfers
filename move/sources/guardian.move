@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Guardian module.
+/// Guardian module (design: `guardian/README.md`).
 ///
 /// When a `GuardianPolicy` is set on a `ConfidentialToken<T>`, every transfer and
 /// unwrap must carry an approval signed by a registered enclave.
@@ -287,35 +287,29 @@ fun register_key(self: &mut GuardianPolicy, document: &NitroAttestationDocument)
     signing_pk
 }
 
-/// Parse `(signing_pk, enc_pk)` from the attestation's `user_data`.
+/// `user_data`: `signing_pk || enc_pk`, 32 bytes each.
 fun parse_user_data(user_data: vector<u8>): (Ed25519PublicKey, X25519PublicKey) {
-    let mut reader = sui::bcs::new(user_data);
-    let signing_pk = reader.peel_vec_u8();
-    let enc_pk = reader.peel_vec_u8();
-    assert!(reader.into_remainder_bytes().is_empty(), EInvalidUserData);
-    assert!(signing_pk.length() == KEY_LENGTH && enc_pk.length() == KEY_LENGTH, EInvalidKeyLength);
-    (Ed25519PublicKey(signing_pk), X25519PublicKey(enc_pk))
+    assert!(user_data.length() == 2 * KEY_LENGTH, EInvalidUserData);
+    (Ed25519PublicKey(user_data.take(KEY_LENGTH)), X25519PublicKey(user_data.skip(KEY_LENGTH)))
 }
 
-// === Test Helpers ===
+// === Dev Helpers ===
 
-#[test_only]
-public fun contains_guardian_enclave_key(self: &GuardianPolicy, signing_pk: vector<u8>): bool {
-    self.guardian_enclave_keys.contains(&Ed25519PublicKey(signing_pk))
-}
-
-/// Bypasses the attestation document (Move tests cannot produce a verifiable Nitro
-/// attestation); still stamps the current version.
-#[test_only]
-public fun register_guardian_enclave_key_for_testing(
+/// Register an enclave key without an attestation document, for localnet dev runs
+/// against a `non-enclave-dev` guardian (whose mock document cannot verify). Gated on
+/// the operator like the real path. NOT for production.
+public fun register_guardian_enclave_key_for_dev(
     self: &mut GuardianPolicy,
     signing_pk: vector<u8>,
     enc_pk: vector<u8>,
-) {
+    ctx: &TxContext,
+): Ed25519PublicKey {
+    assert!(ctx.sender() == self.operator, ENotOperator);
     assert!(
         self.guardian_enclave_keys.length() < MAX_GUARDIAN_ENCLAVE_KEYS,
         ETooManyGuardianEnclaveKeys,
     );
+    assert!(signing_pk.length() == KEY_LENGTH && enc_pk.length() == KEY_LENGTH, EInvalidKeyLength);
     let signing_pk = Ed25519PublicKey(signing_pk);
     self
         .guardian_enclave_keys
@@ -327,6 +321,28 @@ public fun register_guardian_enclave_key_for_testing(
                 version: self.version,
             },
         );
+    signing_pk
+}
+
+// === Test Helpers ===
+
+#[test_only]
+public fun contains_guardian_enclave_key(self: &GuardianPolicy, signing_pk: vector<u8>): bool {
+    self.guardian_enclave_keys.contains(&Ed25519PublicKey(signing_pk))
+}
+
+/// Register the enclave without the attestation document.
+#[test_only]
+public fun register_guardian_enclave_key_for_testing(
+    self: &mut GuardianPolicy,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+) {
+    let ctx = tx_context::dummy();
+    let operator = self.operator;
+    self.operator = ctx.sender();
+    self.register_guardian_enclave_key_for_dev(signing_pk, enc_pk, &ctx);
+    self.operator = operator;
 }
 
 #[test_only]
