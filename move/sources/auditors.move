@@ -16,8 +16,8 @@ const EIdentityAuditorPublicKey: u64 = 0;
 /// single auditor public key, plus a grace window on rotation.
 ///
 /// Auditing is per-transfer — every transfer carries auditor-readable ciphertexts of the amount
-/// (see `verify_transfer`) — so unlike the earlier per-account escrow, the auditor never learns the
-/// user's viewing key and balances are encrypted only under the user's own key.
+/// (see `verify_transfer`) — so the auditor never learns the user's viewing key and balances are
+/// encrypted only under the user's own key.
 ///
 /// `current_pk == none` means auditing is disabled: transfers must carry no auditor data. On
 /// `update`, the outgoing key is retained as `previous_pk` and stays valid for transfers through

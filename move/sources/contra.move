@@ -19,14 +19,14 @@
 ///    both the public and the private coin; to freeze only the private coin, see items 2 and 3.
 /// 6. Rotate or disable the auditor key via `update_auditor` (using the ManagementCap). The
 ///    outgoing key stays valid for transfers through a caller-set `expiration_epoch` (a grace
-///    window for in-flight transfers); passing `none` disables auditing going forward. Auditing is
-///    per-transfer: each transfer carries auditor-readable ciphertexts of the amount, so the auditor
+///    window for in-flight transfers). Passing `none` disables auditing going forward. Auditing is
+///    per-transfer and each transfer carries auditor-readable ciphertexts of the amount, so the auditor
 ///    never learns users' viewing keys.
 /// 7. [Advanced] Set the policy for the confidential token (using the TreasuryCap). Policies define
 ///    which operations are permissioned. Currently supported permissioned operations are:
 ///    - `register`: Register a token account for a token type `T`. E.g., caller ensures the user is
-///      KYCed before registering an account. When set, also setting the public key for an account
-///      is permissioned.
+///      KYCed before registering an account. When set, setting the public key for an account
+///      is also permissioned.
 ///    - `wrap`: Wrap a public coin into a private balance. E.g., caller ensures the funds passed
 ///      screening before wrapping.
 ///    - `unwrap`: Unwrap a private balance into a public coin. E.g., caller enforces rate limit on
@@ -39,17 +39,17 @@
 /// ## Key Flows for Users:
 /// 1. Create an account for an address with an initial public key `pk` (needed once for all token
 ///    types).
-/// 2. Register a token account for a token type `T`; its balances are keyed under `Account.pk`.
-/// 3. Rotate the account key with `set_account_key`; each token catches up lazily via `rekey_token`.
+/// 2. Register a token account for a token type `T`. Its balances are keyed under `Account.pk`.
+/// 3. Rotate the account key with `set_account_key`. Each token catches up lazily via `rekey_token`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
-/// 5. Transfer an encrypted amount to two or more token accounts. An unregistered receiver is
-///    auto-registered on first receive for permissionless tokens; auditor data is attached if set.
+/// 5. Transfer an encrypted amount to one or more token accounts. An unregistered receiver is
+///    auto-registered on first receive for permissionless tokens. Auditor data is attached if set.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
-/// Some functions require authorization via an `&Auth<T>` argument. Under the default
-/// permissionless policy any `Auth<T>` is accepted; permissioning narrows which constructors
+/// Some functions require authorization via an `Auth<T>` argument. Under the default
+/// permissionless policy any `Auth<T>` is accepted. Permissioning narrows which constructors
 /// produce a valid `Auth<T>`. The caller constructs the `Auth<T>` via one of three constructors:
 /// - `authorize_as_sender`: authenticates `ctx.sender()`. The standard path for end-user wallets
 ///   and permissionless operations.
@@ -63,7 +63,7 @@
 module contra::contra;
 
 use contra::{
-    auditors::{Auditor, new as new_auditors},
+    auditors::{Auditor, new as new_auditor},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
@@ -282,7 +282,7 @@ public fun new_confidential_token<T>(
             is_active: true,
             freeze_admins: vec_set::empty(),
             policy: policy::permissionless(),
-            auditor: new_auditors(auditor_pk),
+            auditor: new_auditor(auditor_pk),
         },
         ManagementCap { id: object::new(ctx) },
     )
@@ -337,18 +337,10 @@ public fun share_account(account: Account) {
 /// Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
 /// `account.owner`. Under per-transfer auditing, registration carries no auditor data.
 public fun register<T>(account: &mut Account, auth: &Auth<T>) {
-    let session_id = account.session_id<T>();
-    register_internal(account, auth, session_id);
-}
-
-public(package) fun register_internal<T>(
-    account: &mut Account,
-    auth: &Auth<T>,
-    session_id: vector<u8>,
-) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
+    let session_id = account.session_id<T>();
     account.add_token_account<T>(session_id);
 }
 
@@ -387,9 +379,8 @@ public fun set_accepts_encrypted_deposits<T>(
     account[TokenAccountKey<T>()].accepts_deposits = accepts_encrypted_deposits;
 }
 
-/// Rotate the account's key to `new_pk`. O(1): sets the convergence target `account.pk`; it does not
-/// touch any token balance. Each token's balance stays under its own `TokenAccount.pk` (deposits keep
-/// landing there) until the owner catches it up with `rekey_token`. Authenticated by `auth`, which
+/// Rotate the account's key to `new_pk`. Each token's balance stays under its own `TokenAccount.pk` (deposits keep
+/// landing there) until the owner calls `rekey_token`. Authenticated by `auth`, which
 /// must be for the `PERMISSIONED_REGISTER` operation and may be for any token the account is
 /// registered for.
 public fun set_account_key<T>(account: &mut Account, auth: &Auth<T>, new_pk: Element<G>) {
@@ -419,12 +410,9 @@ public fun rekey_token<T>(
     );
 }
 
-/// Like `rekey_token` but soft-fails instead of aborting: if the re-key proof does not verify (e.g. a
-/// deposit raced the caller's read), it emits `TryTokenRekeyFailedEvent` and returns `false`, leaving
-/// the token unchanged — i.e. still stale, the normal not-yet-re-keyed state — for a retry. Lets a
-/// caller bundle `set_account_key` and re-keys of several tokens into one PTB without pausing:
-/// whatever races just stays stale rather than reverting the rotation. Returns whether the re-key
-/// succeeded. Still aborts on unmerged pending deposits.
+/// Like `rekey_token` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
+/// deposit raced the caller's read). In that case, it instead emits `TryTokenRekeyFailedEvent` and returns `false`, leaving
+/// the token unchanged for a retry. Still aborts on unmerged pending deposits.
 public fun try_rekey_token<T>(
     account: &mut Account,
     auth: &Auth<T>,
@@ -442,9 +430,9 @@ public fun try_rekey_token<T>(
     }
 }
 
-/// Shared re-key: assert the token's pending is empty, then re-key its active balance from
+/// Shared re-key: Assert the token's pending is empty, then re-key its active balance from
 /// `TokenAccount.pk` to `account.pk`. On a verifying proof, commits the new handles, sets
-/// `token.pk = account.pk`, emits `TokenRekeyedEvent`, and returns `true`; otherwise leaves the token
+/// `token.pk = account.pk`, emits `TokenRekeyedEvent`, and returns `true`. Otherwise leaves the token
 /// unchanged and returns `false`.
 fun rekey_token_internal<T>(
     account: &mut Account,
@@ -489,7 +477,7 @@ public fun wrap<T>(
         !is_receiver_denied<T>(deny_list, receiver.owner),
         ETransferDenied,
     );
-    // Auto-register the token on first receive when `T` leaves registration permissionless.
+    // Auto-register the token on first receive if `T` has permissionless registration.
     if (!receiver.has_token<T>()) {
         assert!(
             policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
@@ -687,7 +675,7 @@ public fun add_to_batch<T>(
             let receiver_addr = receiver.owner;
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
 
-            // Auto-register the token on first receive when `T` leaves registration permissionless.
+            // Auto-register the token on first receive if `T` has  permissionless registration.
             if (!receiver.has_token<T>()) {
                 assert!(can_register_permissionless, EReceiverNotRegistered);
                 let session_id = receiver.session_id<T>();
@@ -695,9 +683,7 @@ public fun add_to_batch<T>(
             };
 
             let coin = coins.pop_back();
-
-            // This receiver's two auditor handles (empty when auditing is disabled), popped in
-            // submission order like `coins`.
+            
             let receiver_auditor_handles = if (auditor_handles.is_empty()) {
                 vector[]
             } else {
