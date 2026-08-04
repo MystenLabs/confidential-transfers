@@ -101,7 +101,7 @@ const EBalancesFull: u64 = 10;
 const EIdentityPublicKey: u64 = 11;
 const EBatchTooLarge: u64 = 12;
 /// The token has a guardian policy but the transfer or unwrap carried no valid
-/// enclave approval.
+/// `GuardianApproval`.
 const EGuardianApprovalInvalid: u64 = 13;
 
 // === Constants ===
@@ -592,7 +592,7 @@ public fun batched_transfer<T>(
     assert!(!sender.is_frozen, ETransferDenied);
     ct.assert_guardian_approval(
         &guardian_approval,
-        &guardian::new_transfer_approval_payload(
+        &guardian::new_transfer_request_payload(
             sender.pk,
             receiver_pks,
             sender.active.collapse(),
@@ -877,7 +877,7 @@ fun try_unwrap_internal<T>(
     assert!(!account.is_frozen, ETransferDenied);
     ct.assert_guardian_approval(
         &guardian_approval,
-        &guardian::new_unwrap_approval_payload(
+        &guardian::new_unwrap_request_payload(
             account.pk,
             account.active.collapse(),
             new_balance.collapse(),
