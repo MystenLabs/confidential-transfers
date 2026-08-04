@@ -245,6 +245,30 @@ export interface NewAccountOptions {
 	publicKey: RistrettoPoint;
 }
 
+/** The key a single token's balances are currently encrypted under (see `ContraClient.getTokenKeys`). */
+export interface TokenKeyStatus {
+	/** The fully-qualified Move token type. */
+	tokenType: string;
+	/** Whether a `TokenAccount<T>` is registered for this token under the account. */
+	registered: boolean;
+	/** The key this token's balances are currently under, or `undefined` when not registered. */
+	publicKey?: RistrettoPoint;
+	/**
+	 * True when the token's key lags the account key (`Account.pk`): it still needs `rekeyToken`, and
+	 * its balance can only be re-keyed or decrypted with the key it currently reports here. While any
+	 * token reports an old key, that old private key must be retained.
+	 */
+	stale: boolean;
+}
+
+/** Result of `ContraClient.getTokenKeys`: the account key plus each queried token's current key. */
+export interface AccountTokenKeys {
+	/** The account key (`Account.pk`) — the convergence target for key rotation. */
+	accountPublicKey: RistrettoPoint;
+	/** One entry per queried token type, in the same order. */
+	tokens: TokenKeyStatus[];
+}
+
 /** Arguments to `ContraClient.register`. */
 export interface RegisterOptions {
 	/** The token account holding address, tokenType, and private key. */

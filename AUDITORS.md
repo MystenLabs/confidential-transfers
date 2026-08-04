@@ -89,7 +89,7 @@ To rotate the auditor set:
 1. Increment `i`.
 2. Derive `msk_i` by hashing from `msk_N` down to index `i`.
 3. Share `msk_i` with the next auditor set off-chain.
-4. After a setup period (e.g., two days, to give the auditors time to bring their infrastructure online), call `update_auditors` with `pk_i` to switch the on-chain auditor set.
+4. After a setup period (e.g., two days, to give the auditors time to bring their infrastructure online), call `update_auditor` with `pk_i` to switch the on-chain auditor key.
 
 Given `msk_i`, an auditor can derive `msk_j` and `sk_j` for every `j < i`, and therefore decrypt anything encrypted under any earlier auditor public key. They cannot derive `msk_j` for `j > i`, so future rotations remain confidential to them.
 

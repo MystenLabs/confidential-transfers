@@ -14,6 +14,7 @@ import { getBulletproofs, type BatchRangeProver, type Bulletproofs } from './bp.
 import * as contraContracts from './contracts/contra/contra.js';
 import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
 import {
+	AccountDoesNotExistError,
 	InsufficientBalanceError,
 	InvalidArgumentError,
 	ReceiverDoesNotAcceptDepositsError,
@@ -47,6 +48,7 @@ import type { DiscreteLogTable, PublicKey } from './twisted_elgamal.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from './twisted_elgamal.js';
 import type {
 	AccountStatus,
+	AccountTokenKeys,
 	BatchedTransferOptions,
 	ContraClientOptions,
 	ContraCompatibleClient,
@@ -325,6 +327,57 @@ export class ContraClient {
 	 */
 	async getPublicKey(address: string, tokenType: string): Promise<PublicKey> {
 		return (await this.#getAccountState(address, tokenType)).pk;
+	}
+
+	/**
+	 * Report the account key (`Account.pk`) and, for each of the given `tokenTypes`, the key that
+	 * token's balances are currently encrypted under. Use this after a `setAccountKey`/`rotateKey` to
+	 * decide what to re-key and whether an old key can be discarded:
+	 *
+	 * - `stale === true` for a token means its `TokenAccount.pk` lags the account key — call
+	 *   `rekeyToken` (or `rotateKey`) to catch it up. Its balance can only be re-keyed or decrypted
+	 *   with the key it currently reports (`publicKey`).
+	 * - An old private key is safe to delete only once **no** queried token still reports its public
+	 *   key. Pass every token the account has ever registered (including any it may have been
+	 *   auto-registered for) to make that determination sound.
+	 *
+	 * @example
+	 * ```ts
+	 * const { accountPublicKey, tokens } = await client.getTokenKeys(address, [buType, otherType]);
+	 * const stale = tokens.filter((t) => t.stale); // need rekeyToken
+	 * const oldKeyStillUsed = tokens.some((t) => t.publicKey?.equals(oldPublicKey));
+	 * ```
+	 *
+	 * Throws `AccountDoesNotExistError` if `address` has no `Account`.
+	 */
+	async getTokenKeys(address: string, tokenTypes: readonly string[]): Promise<AccountTokenKeys> {
+		const objectIds = [
+			this.getAccountId(address),
+			...tokenTypes.map((t) => this.getTokenAccountId(address, t)),
+		];
+		const {
+			objects: [accountObject, ...tokenObjects],
+		} = await this.#suiClient.core.getObjects({ objectIds, include: { content: true } });
+
+		if (accountObject instanceof Error) {
+			throw new AccountDoesNotExistError(address, accountObject.message);
+		}
+		const accountPublicKey = pointFromBcs(contraContracts.Account.parse(accountObject.content).pk);
+
+		const tokens = tokenObjects.map((object, i) => {
+			if (object instanceof Error) {
+				return { tokenType: tokenTypes[i], registered: false, stale: false };
+			}
+			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk);
+			return {
+				tokenType: tokenTypes[i],
+				registered: true,
+				publicKey,
+				stale: !publicKey.equals(accountPublicKey),
+			};
+		});
+
+		return { accountPublicKey, tokens };
 	}
 
 	/**
@@ -757,6 +810,11 @@ export class ContraClient {
 	 * Rotate the account key (`Account.pk`) to `newPublicKey`. O(1): sets the convergence target
 	 * without touching any token balance. Each token's balance stays under its own `TokenAccount.pk`
 	 * (deposits keep landing there) until the owner catches it up with `rekeyToken`.
+	 *
+	 * IMPORTANT: retain the OLD private key until every token has been re-keyed. A still-stale token's
+	 * balance remains encrypted under the old key, and both re-keying it (the proof witness is
+	 * `newSk * oldSk^-1`) and decrypting it require the old key. Discarding the old key while any token
+	 * is still stale makes that token's balance permanently unrecoverable.
 	 *
 	 * @example
 	 * ```ts

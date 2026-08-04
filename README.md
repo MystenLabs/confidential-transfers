@@ -7,7 +7,7 @@ Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances a
 - **Privacy** -- token balances and transfer amounts are encrypted on-chain; only the account holder can decrypt them.
 - **Correctness without trust** -- zero-knowledge proofs guarantee that encrypted operations are valid (no overdrafts, no inflation) without revealing the underlying values.
 - **Composability** -- any Sui `Coin<T>` can be wrapped into a confidential token and unwrapped back, so the system layers on top of existing token standards.
-- **Compliance ready** -- issuers can attach auditor keys so designated parties can decrypt balances and transfers for oversight, and retain freeze and seize controls to pause accounts or recover funds when required. Also, an account holder can produce a zero-knowledge proof of their balance, or of the amount of a transfer they sent or received, convincing any verifier holding their public key without exposing the private key.
+- **Compliance ready** -- issuers can attach an auditor key so a designated party can decrypt the amount of every transfer for oversight, and retain freeze and seize controls to pause accounts or recover funds when required. Also, an account holder can produce a zero-knowledge proof of their balance, or of the amount of a transfer they sent or received, convincing any verifier holding their public key without exposing the private key.
 
 > **Privacy boundary:** privacy holds for activity *inside* the confidential domain — transfers between registered accounts hide the amount, leaving only sender, receiver, and timing visible. Crossing the boundary into or out of the domain — wrapping a public `Coin<T>` in, or unwrapping back to a public `Coin<T>` — touches the public coin layer and therefore reveals the amount and counterparties of that single operation, like any other Sui coin transaction.
 
@@ -15,7 +15,7 @@ Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances a
 
 Yellow nodes live in the public domain (amounts visible on-chain), blue nodes live in the confidential domain (amounts encrypted).
 
-**1. Register** — one-time setup per `(user, token T)` pair. Alice publishes a public key `pk` and (if the token has auditors) her key encrypted to the current auditor set, creating her `TokenAccount<T>`.
+**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under her account key `pk`. Registration carries no auditor data (auditing is per-transfer).
 
 ```mermaid
 flowchart LR
@@ -77,8 +77,8 @@ flowchart LR
   - **[`twisted_elgamal.move`](move/sources/twisted_elgamal.move)** -- the Twisted ElGamal encryption scheme used on-chain.
 - **[`ts-sdk/`](ts-sdk/)** -- TypeScript SDKs that mirror the Move modules:
   - **[`ContraClient`](ts-sdk/src/client.ts)** -- client SDK, including all the user flows.
-  - **[`ContraAuditor`](ts-sdk/src/auditor.ts)** -- auditor SDK: recovers user viewing keys from on-chain registration data.
-- **[`apps/kaisho/`](apps/kaisho/)** -- example wallet demonstrating the full user flow (including wrap, transfer, unwrap). Also includes an issuer setup page that deploys the BU test token and Contra contracts to Sui devnet or testnet, and an auditor view that uses the auditor SDK to inspect any token account's decrypted balance and history. Check out the deployed [Kaisho Wallet](https://kaisho-wallet.vercel.app/)!
+  - **[`ContraAuditor`](ts-sdk/src/auditor.ts)** -- auditor SDK: decrypts a transfer's amount from its `TransferEvent` using the token's auditor key.
+- **[`apps/kaisho/`](apps/kaisho/)** -- example wallet demonstrating the full user flow (including wrap, transfer, unwrap). Also includes an issuer setup page that deploys the BU test token and Contra contracts to Sui devnet or testnet, and an auditor view that uses the auditor SDK to decrypt the amounts of the token's transfers. Check out the deployed [Kaisho Wallet](https://kaisho-wallet.vercel.app/)!
 - **[`apps/closed-loop/`](apps/closed-loop/)** -- example of a permissioned confidential token: a third-party token (BU) is wrapped 1:1 into a pool-backed token (pBU), with registration gated by a whitelist. Useful as a reference for B2B settlement setups among a closed group of participants who mutually trust each other to handle compliance off-chain.
 - **[`apps/throttler/`](apps/throttler/)** -- example of a permissioned confidential token whose `unwrap` is delayed: calls go through a wrapper that parks the unwrapped coin in a shared `ThrottledPool` and appends a per-address pending entry; the user can `take` the coin only after a configurable `min_duration` has elapsed. The issuer can adjust the delay or overwrite any per-address queue to seize tokens. Useful as a reference for compliance flows that require a withdrawal window for review or seize.
 - **[`apps/payment-channel/`](apps/payment-channel/)** -- example of **a unidirectional payment channel built on top of confidential tokens**. A `Channel<T>` shared object owns a confidential `Account` via object-owner auth (`as_object()`); the sender funds it once and signs off-chain a sequence of monotonically-increasing transfers paying a fixed receiver. The receiver settles the latest transfer as a sponsored transaction, and an inactivity timeout lets the sender reclaim the residual. Every transfer amount, the locked balance, and the sender's residual remain encrypted on chain — even from the receiver, who only learns the per-transfer amount they decrypt with their own viewing key. Bundles both the Move contract ([`payment_channel.move`](apps/payment-channel/move/payment_channel/sources/payment_channel.move)) and a TypeScript package (`sender` / `receiver` / `setup` / `deploy` / `client` modules plus an e2e test), and serves as a canonical reference for the `as_object()` auth constructor.
@@ -133,6 +133,12 @@ The TS-SDK's `transfer` and `unwrap` methods default to `merge: true`, which pre
 - If a new deposit arrives in that window, the pending balance the SDK assumed is stale. The chain executes the `merge` successfully (folding the old pending into active), but then fails the transfer/unwrap proof and emits a `TryTransferFailedEvent` (or `TryUnwrapFailedEvent`) instead of aborting — leaving the user's funds intact.
 
 In the failure case, a second attempt with `merge: false` will succeed immediately, because the previously-pending deposits have already been folded into the active balance by the first transaction's `merge` call, so the proof now only needs to match the active balance and is unaffected by any further deposits that may have arrived in the meantime.
+
+### Key rotation
+
+The account's key (`Account.pk`) can be rotated with `setAccountKey`. Rotation is **lazy and O(1)**: it just moves the account key and touches no balance. Each token's balance stays encrypted under its own `TokenAccount.pk` and catches up independently when the owner calls `rekeyToken` (or the `rotateKey` convenience, which merges and re-keys one token in a single PTB). A not-yet-re-keyed token is a normal, decryptable state — deposits keep landing under its current key until it is re-keyed.
+
+> **Retain the old key until every token is re-keyed.** A not-yet-re-keyed token's balance is still encrypted under the _old_ key, and both re-keying it (the proof witness is `newSk · oldSk⁻¹`) and decrypting it require that old key. Discarding the old private key while any token is still stale makes that token's balance permanently unrecoverable. Use `ContraClient.getTokenKeys(address, tokenTypes)` to list each token's current key and whether it is stale — an old key is safe to delete only once no token still reports it.
 
 ## For Token Issuers
 
@@ -208,24 +214,21 @@ By default `register`, `wrap`, and `unwrap` are open to any holder of `T`. The i
 
 ## For Auditors
 
-An auditor is a passive reader of confidential balances and transfers for a given confidential token: they hold a or more secret keys whose public counterparts are registered on-chain by the issuer, and use them off-chain to decrypt user data. Auditors never sign protocol transactions.
+An auditor is a passive reader of transfer amounts for a given confidential token: they hold the token's auditor secret key, whose public counterpart the issuer registers on-chain, and use it off-chain to decrypt the amount of each transfer. Auditors never sign protocol transactions, and never learn a user's viewing key or standing balance.
 
-The contract implements **per-transaction auditing**: the sender attaches an auditor-readable copy of each transfer amount (two u32-limb decryption handles plus one batched proof) to every transfer, and the auditor never learns the user's viewing key. Balances stay encrypted only under the user's own key, so the same account key can be reused across tokens. See [Auditor Support in Confidential Transfers](AUDITORS.md) for the design and the alternatives considered.
-
-> **Note:** The on-chain contract implements per-transfer auditing; the TypeScript auditor tooling described below (`ContraAuditor`, the version-map onboarding) still reflects the earlier per-account escrow design and is being migrated to match.
+The contract implements **per-transfer auditing**: the sender attaches an auditor-readable copy of each transfer amount (two u32-limb decryption handles plus one batched proof) to every transfer, derived from the same range-proven commitments the receiver gets. Balances stay encrypted only under the user's own key, so the same account key can be reused across tokens. See [Auditor Support in Confidential Transfers](AUDITORS.md) for the design and the alternatives considered.
 
 ### Onboarding flow
 
-1. **Generate an auditor keypair off-chain.** Auditors generate a Twisted ElGamal keypair `(sk, pk)` over Ristretto255 and hand the **public key** to the token issuer.
-2. **Issuer rotates the on-chain key set.** The issuer calls [`update_auditor`](move/sources/contra.move) with the new set of public keys (typically the existing set plus the new auditor's `pk`). Each rotation bumps the on-chain `version` counter on the token's `Auditors` struct, and records this auditor's index within the new `pks` vector. The auditor needs that `(version, index)` pair to know where its handle lives in every user's `VerifiedKeyEncryption`.
-3. **Collect historical secrets.** The auditor assembles a `Map<version, (index, secretKey)>` covering every on-chain version it wants to be able to decrypt for. For versions that the auditor itself generated, the secret is its own. For older versions (set up before this auditor existed), the issuer or prior auditors must hand over the corresponding secrets — otherwise accounts that registered against those older versions remain opaque to this auditor.
-4. **Initialize [`ContraAuditor`](ts-sdk/src/auditor.ts).** Construct the SDK with that version map plus a precomputed discrete-log table (the larger `numBits` is, the faster decryption will be).
+1. **Generate an auditor keypair off-chain.** The auditor generates a Twisted ElGamal keypair `(sk, pk)` over Ristretto255 and hands the **public key** to the token issuer.
+2. **Issuer sets the on-chain auditor key.** The issuer calls [`update_auditor`](move/sources/contra.move) with the new `pk` (or `none` to disable auditing) and an `expiration_epoch`. There is a single current key per token — no versions and no per-user escrow. On rotation the outgoing key is retained as `previous_pk` and stays valid for transfers through `expiration_epoch`, a grace window so in-flight transfers built against the old key still verify.
+3. **Initialize [`ContraAuditor`](ts-sdk/src/auditor.ts).** Construct the SDK with `{ tokenType, privateKey, table }` — the auditor secret key plus a precomputed discrete-log table (the larger `numBits` is, the faster decryption will be).
 
-### Reading a user's data
+### Reading transfer amounts
 
-Once initialized, the auditor can call `getTokenAccount(address)` on the SDK. It fetches the on-chain `TokenAccount<T>`, decrypts the user's secret key, and returns a fully-keyed `TokenAccount` object. That object can then be passed to `ContraClient.getBalance` (active and pending balances) or to `EncryptedAmount.decrypt` for amounts that appear in event payloads encrypted to that user.
+Auditing is per transfer, not per account. For each [`TransferEvent`](move/sources/events.move), the auditor calls `decryptTransferAmount(encryptedAmountReceiver, auditorHandles)`: it regroups the receiver's four u16 limbs into the two u32-limb commitments (mirroring `encrypted_amount::auditor_commitments`), pairs each with the event's matching handle, and BSGS-decrypts to recover that transfer's amount. The auditor sees each transfer's amount, sender, and receiver — but never a user's viewing key or account balance.
 
-See the auditor cases in [`core_flow.test.ts`](ts-sdk/test/e2e/core_flow.test.ts) for end-to-end examples of constructing a `ContraAuditor` and using it to decrypt user balances across auditor key rotations.
+See the auditor case in [`core_flow.test.ts`](ts-sdk/test/e2e/core_flow.test.ts) for an end-to-end example of constructing a `ContraAuditor` and decrypting a transfer amount from its `TransferEvent`.
 
 ## Status
 

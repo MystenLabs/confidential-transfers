@@ -20,6 +20,7 @@ export { point } from './helpers.js';
 export { DdhNizk, ElGamalNizk } from './nizk.js';
 export type {
 	AccountStatus,
+	AccountTokenKeys,
 	BalanceEntry,
 	BatchedTransferOptions,
 	BatchedTransferRecipient,
@@ -37,6 +38,7 @@ export type {
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
+	TokenKeyStatus,
 	TransferOptions,
 	UnpauseAccountOptions,
 	UnwrapOptions,
