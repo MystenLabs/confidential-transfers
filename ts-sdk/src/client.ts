@@ -58,6 +58,7 @@ import type {
 	PauseAccountOptions,
 	RegisterOptions,
 	RekeyTokenOptions,
+	RotateKeyAllOptions,
 	RotateKeyOptions,
 	SetAccountKeyOptions,
 	ShareAccountOptions,
@@ -1024,6 +1025,61 @@ export class ContraClient {
 			})(tx);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
 			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, false);
+		};
+	}
+
+	/**
+	 * Optimistically rotate the account key and re-key ALL given tokens in a single PTB, without
+	 * pausing: `setAccountKey` once, then for each token an optional `merge` + `tryRekeyToken`. Because
+	 * each re-key soft-fails (it does not abort), any token whose re-key races a concurrent deposit is
+	 * simply left stale for a later retry while the rest still land — so the rotation never reverts.
+	 *
+	 * All tokens converge to a single new `Account.pk`: pass the same new key in every
+	 * `newTokenAccount`. There is no SDK-side check — if a `newTokenAccount` carries a different key,
+	 * the account key is set from the first rotation and that token's re-key proof won't verify against
+	 * it, so its `try_rekey_token` soft-fails on chain (the token stays stale). Pair with `getTokenKeys`
+	 * to find the stale tokens to feed in.
+	 *
+	 * The returned thunk adds several calls, so apply it directly rather than via `tx.add`.
+	 *
+	 * @example
+	 * ```ts
+	 * const rotations = staleTokenTypes.map((tokenType) => ({
+	 *   tokenAccount: currentTokenAccounts[tokenType],
+	 *   newTokenAccount: new TokenAccount(address, tokenType, packageConfig, newPrivateKey),
+	 * }));
+	 * const rotateAll = await client.contra.rotateKeyAll({ rotations });
+	 * const tx = new Transaction();
+	 * rotateAll(tx);
+	 * ```
+	 */
+	async rotateKeyAll({
+		rotations,
+		merge = true,
+	}: RotateKeyAllOptions): Promise<(tx: Transaction) => void> {
+		if (rotations.length === 0) {
+			throw new InvalidArgumentError('rotateKeyAll: `rotations` must not be empty.');
+		}
+		// Build the re-key material (reads each token's current handles) for every token up front.
+		const materials = await Promise.all(
+			rotations.map((r) => this.#buildRekeyMaterial(r.tokenAccount, r.newTokenAccount, merge)),
+		);
+		const newPublicKey = rotations[0].newTokenAccount.publicKey;
+		return (tx: Transaction) => {
+			// Rotate the account key once; any registered token's `Auth` authorizes it.
+			const setAuth = this.#asSenderAuth(tx, rotations[0].tokenAccount.tokenType);
+			this.setAccountKey({
+				tokenAccount: rotations[0].tokenAccount,
+				newPublicKey,
+				auth: () => setAuth,
+			})(tx);
+			// Then optimistically merge + re-key each token.
+			rotations.forEach((r, i) => {
+				const { shouldMerge, newHandles, rekeyProof } = materials[i];
+				const authArg = this.#asSenderAuth(tx, r.tokenAccount.tokenType);
+				if (shouldMerge) tx.add(this.#merge({ tokenAccount: r.tokenAccount, auth: authArg }));
+				this.#rekeyTokenCall(tx, r.tokenAccount, newHandles, rekeyProof, authArg, true);
+			});
 		};
 	}
 

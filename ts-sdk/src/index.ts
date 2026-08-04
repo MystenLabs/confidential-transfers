@@ -33,6 +33,7 @@ export type {
 	PauseAccountOptions,
 	RegisterOptions,
 	RekeyTokenOptions,
+	RotateKeyAllOptions,
 	RotateKeyOptions,
 	SetAccountKeyOptions,
 	ShareAccountOptions,

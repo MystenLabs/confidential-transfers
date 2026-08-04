@@ -377,6 +377,25 @@ export interface RekeyTokenOptions {
 /** Arguments to `ContraClient.rotateKey`: set the account key and re-key one token in one PTB. */
 export interface RotateKeyOptions extends RekeyTokenOptions {}
 
+/**
+ * Arguments to `ContraClient.rotateKeyAll`: set the account key once and optimistically re-key every
+ * listed token in one PTB.
+ */
+export interface RotateKeyAllOptions {
+	/**
+	 * One entry per token to re-key. `tokenAccount` is the token's current account (its current key);
+	 * `newTokenAccount` carries the new key. Every `newTokenAccount` must use the same new key — the
+	 * account key is set from the first entry, and any token whose `newTokenAccount` disagrees will
+	 * soft-fail its on-chain re-key (left stale).
+	 */
+	rotations: Array<{ tokenAccount: TokenAccount; newTokenAccount: TokenAccount }>;
+	/**
+	 * When `true` (the default), a `merge` is prepended before each token's re-key so it can proceed
+	 * against the merged active balance (re-key requires an empty pending balance).
+	 */
+	merge?: boolean;
+}
+
 /** Arguments to `ContraClient.shareAccount`. */
 export interface ShareAccountOptions {
 	/**
