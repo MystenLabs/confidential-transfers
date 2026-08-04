@@ -22,7 +22,7 @@ const SHIFT_32 = 1n << 32n;
  * `auditor_handles`, this recovers the transferred amount with the auditor's private key.
  *
  * The two u32-limb commitments are regrouped from the receiver limbs on the fly
- * (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`), mirroring on-chain `encrypted_amount::auditor_commitments`,
+ * (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`), mirroring on-chain `encrypted_amount::ciphertexts_as_u32_limbs`,
  * and paired with the matching handle to form a twisted ElGamal ciphertext the auditor decrypts.
  */
 export class ContraAuditor {

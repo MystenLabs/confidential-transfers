@@ -268,7 +268,7 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
 
 /// The two u32-limb commitments `[C_0 + 2^16 C_1, C_2 + 2^16 C_3]` regrouped from `ea`'s four
 /// u16-limb ciphertext components.
-public(package) fun auditor_commitments(ea: &EncryptedAmount): vector<Element<G>> {
+public(package) fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
     let shift = scalar_from_u64(1 << 16);
     vector[
         g_add(ea.l0.ciphertext(), &g_mul(&shift, ea.l1.ciphertext())),
@@ -276,7 +276,7 @@ public(package) fun auditor_commitments(ea: &EncryptedAmount): vector<Element<G>
     ]
 }
 
-/// Pair each amount's two `auditor_commitments` with the matching two `handles`, flattened in amount
+/// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching two `handles`, flattened in amount
 /// order, into `2 * amounts.length()` `Encryption`s. Aborts unless the lengths match.
 public(package) fun batch_auditor_encryptions(
     amounts: &vector<WellFormedEncryptedAmount>,
@@ -285,7 +285,7 @@ public(package) fun batch_auditor_encryptions(
     assert!(handles.length() == AUDITOR_LIMBS * amounts.length(), EMismatchedBatchLength);
     let mut out = vector[];
     amounts.length().do!(|i| {
-        let commitments = amounts[i].amount.auditor_commitments();
+        let commitments = amounts[i].amount.ciphertexts_as_u32_limbs();
         out.push_back(twisted_elgamal::new(commitments[0], handles[AUDITOR_LIMBS * i]));
         out.push_back(twisted_elgamal::new(commitments[1], handles[AUDITOR_LIMBS * i + 1]));
     });

@@ -57,7 +57,7 @@ public struct WrapEvent<phantom T> has copy, drop {
 ///
 /// `auditor_handles` are the two u32-limb auditor decryption handles for this transfer (empty when
 /// auditing is disabled). Paired with the two commitments an auditor derives from
-/// `encrypted_amount_receiver` (`encrypted_amount::auditor_commitments`), they let the auditor
+/// `encrypted_amount_receiver` (`encrypted_amount::ciphertexts_as_u32_limbs`), they let the auditor
 /// recover the amount off-chain. `memo` is an opaque caller-supplied blob, empty if none was
 /// provided.
 public struct TransferEvent<phantom T> has copy, drop {

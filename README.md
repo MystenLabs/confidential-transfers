@@ -226,7 +226,7 @@ The contract implements **per-transfer auditing**: the sender attaches an audito
 
 ### Reading transfer amounts
 
-Auditing is per transfer, not per account. For each [`TransferEvent`](move/sources/events.move), the auditor calls `decryptTransferAmount(encryptedAmountReceiver, auditorHandles)`: it regroups the receiver's four u16 limbs into the two u32-limb commitments (mirroring `encrypted_amount::auditor_commitments`), pairs each with the event's matching handle, and BSGS-decrypts to recover that transfer's amount. The auditor sees each transfer's amount, sender, and receiver — but never a user's viewing key or account balance.
+Auditing is per transfer, not per account. For each [`TransferEvent`](move/sources/events.move), the auditor calls `decryptTransferAmount(encryptedAmountReceiver, auditorHandles)`: it regroups the receiver's four u16 limbs into the two u32-limb commitments (mirroring `encrypted_amount::ciphertexts_as_u32_limbs`), pairs each with the event's matching handle, and BSGS-decrypts to recover that transfer's amount. The auditor sees each transfer's amount, sender, and receiver — but never a user's viewing key or account balance.
 
 See the auditor case in [`core_flow.test.ts`](ts-sdk/test/e2e/core_flow.test.ts) for an end-to-end example of constructing a `ContraAuditor` and decrypting a transfer amount from its `TransferEvent`.
 

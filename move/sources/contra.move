@@ -512,7 +512,7 @@ public fun wrap<T>(
 /// u32-limb decryption handles per receiver (flattened, in `receiver_amounts` order) and
 /// `auditor_proof` a single batched `ElGamalProof` over the derived `(commitment, handle)` pairs;
 /// the derived commitments come from `receiver_amounts` itself (see
-/// `encrypted_amount::auditor_commitments`). The proof is accepted under the current or (in grace)
+/// `encrypted_amount::ciphertexts_as_u32_limbs`). The proof is accepted under the current or (in grace)
 /// previous auditor key at `ctx.epoch()`. When auditing is disabled both must be `none`.
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts
