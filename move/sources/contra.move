@@ -683,7 +683,7 @@ public fun add_to_batch<T>(
             };
 
             let coin = coins.pop_back();
-            
+
             let receiver_auditor_handles = if (auditor_handles.is_empty()) {
                 vector[]
             } else {
