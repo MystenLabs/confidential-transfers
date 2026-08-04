@@ -80,12 +80,6 @@ public(package) fun sub(e1: &Encryption, e2: &Encryption): Encryption {
     }
 }
 
-/// In-place version of `add`: `e1` becomes the homomorphic sum `e1 + e2`.
-public(package) fun add_assign(e1: &mut Encryption, e2: &Encryption) {
-    e1.ciphertext = g_add(&e1.ciphertext, &e2.ciphertext);
-    e1.decryption_handle = g_add(&e1.decryption_handle, &e2.decryption_handle);
-}
-
 /// In-place version of `sub`: `e1` becomes the homomorphic difference `e1 - e2`.
 /// Beware of plaintext-side overflow in the scalar field.
 public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
@@ -103,16 +97,6 @@ public(package) fun add_assign_u64(e: &mut Encryption, amount: u64) {
 public(package) fun sub_assign_u64(e: &mut Encryption, amount: u64) {
     if (amount == 0) return;
     e.ciphertext = g_sub(&e.ciphertext, &g_mul(&scalar_from_u64(amount), &h()));
-}
-
-/// Return an encryption of the same plaintext as the input but where the plaintext is multiplied by 2^bits.
-/// The result is an encryption of the plaintext in the scalar field.
-public(package) fun shift_left(e: &Encryption, bits: u8): Encryption {
-    let factor = scalar_from_u64(1 << bits);
-    Encryption {
-        ciphertext: g_mul(&factor, &e.ciphertext),
-        decryption_handle: g_mul(&factor, &e.decryption_handle),
-    }
 }
 
 /// Trivial encryption of zero without randomness.
@@ -140,11 +124,6 @@ public(package) fun encrypt_trivial(amount: u64): Encryption {
 #[test_only]
 public fun encrypt_zero_for_testing(): Encryption {
     encrypt_zero()
-}
-
-#[test_only]
-public fun ciphertext_for_testing(e: &Encryption): Element<G> {
-    *e.ciphertext()
 }
 
 #[test_only]

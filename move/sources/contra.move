@@ -1131,9 +1131,6 @@ public fun protocol_id_ddh(): u8 { DST_DDH }
 public fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
 
 #[test_only]
-public fun protocol_id_range_proof_16(): u8 { DST_RANGE_PROOF_16 }
-
-#[test_only]
 public fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 
 #[test_only]

@@ -789,8 +789,7 @@ export class ContraClient {
 
 	/**
 	 * Helper composing `buildEncryptedAmountAndProof` + `buildDdhProof` with the
-	 * generated `contra::update_active_balance` Move call for `tokenAccount`.
-	 * Reused by `updateBalance` and the rotate-key flow.
+	 * generated `contra::update_active_balance` Move call for `tokenAccount`. Used by `updateBalance`.
 	 */
 	#updateActiveBalance(
 		batchRangeProver: BatchRangeProver,

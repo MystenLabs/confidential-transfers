@@ -455,11 +455,6 @@ public fun decryption_handles_for_testing(ea: &EncryptedAmount): vector<Element<
 }
 
 #[test_only]
-public fun limb_for_testing(ea: &EncryptedAmount, i: u64): Encryption {
-    *ea.limb(i)
-}
-
-#[test_only]
 public fun consistency_proof_for_testing(
     dst: vector<u8>,
     amount: u16,

@@ -7,7 +7,6 @@ use contra::twisted_elgamal::{Self, Encryption};
 use std::bcs;
 use sui::{
     group_ops::Element,
-    hash,
     ristretto255::{
         Self,
         G,
@@ -274,27 +273,6 @@ public fun zero_proof_for_testing(
         &vector[g, *ea.ciphertext()],
         &vector[pk, *ea.decryption_handle()],
         &scalar_from_u64(12345), // randomness
-    )
-}
-
-/// Build a DDH proof of knowledge of `r` such that `d_1 = r*pk_1` and `d_2 = r*pk_2` — i.e. the
-/// same blinding `r` was used to produce both decryption handles, under (possibly) different
-/// public keys.
-#[test_only]
-public fun handle_eq_proof_for_testing(
-    dst: vector<u8>,
-    pk_1: &Element<G>,
-    pk_2: &Element<G>,
-    d_1: &Element<G>,
-    d_2: &Element<G>,
-    r: &Element<Scalar>,
-): DdhProof {
-    prove_ddh(
-        dst,
-        r,
-        &vector[*pk_1, *pk_2],
-        &vector[*d_1, *d_2],
-        &scalar_from_u64(123456), // randomness
     )
 }
 

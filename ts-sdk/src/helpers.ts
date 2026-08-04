@@ -24,19 +24,6 @@ import { type RistrettoPoint } from './ristretto255.js';
 import type { Ciphertext } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
 
-/** Concatenate one or more byte arrays into a single `Uint8Array`. */
-export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-	let total = 0;
-	for (const a of arrays) total += a.length;
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const a of arrays) {
-		out.set(a, offset);
-		offset += a.length;
-	}
-	return out;
-}
-
 /** BCS layout of the Fiat-Shamir transcript: an ordered list of length-prefixed byte chunks. */
 const FIAT_SHAMIR_TRANSCRIPT = bcs.vector(bcs.vector(bcs.u8()));
 
