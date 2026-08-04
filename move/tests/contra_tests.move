@@ -850,7 +850,7 @@ fun total_consistency_proof_for_testing(
 /// Build the flattened per-transfer auditor handles and the batched auditor `ElGamalProof` for a
 /// batch of limb-0-only receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`).
 /// Each amount contributes two u32-limb auditor encryptions matching
-/// `encrypted_amount::batch_auditor_encryptions`: the low half `(r*g + v*h, r*aud_pk)` and the high
+/// `encrypted_amount::u32_limb_encryptions`: the low half `(r*g + v*h, r*aud_pk)` and the high
 /// half `(identity, identity)` (its committed value and blinding are both zero).
 fun build_auditor_data(
     values: vector<u64>,

@@ -278,7 +278,7 @@ public(package) fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Eleme
 
 /// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching two `handles`, flattened in amount
 /// order, into `2 * amounts.length()` `Encryption`s. Aborts unless the lengths match.
-public(package) fun batch_auditor_encryptions(
+public(package) fun u32_limb_encryptions(
     amounts: &vector<WellFormedEncryptedAmount>,
     handles: &vector<Element<G>>,
 ): vector<Encryption> {

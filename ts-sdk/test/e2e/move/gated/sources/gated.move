@@ -41,7 +41,9 @@ public fun vault_address(vault: &Vault): address {
 
 public fun gated_register<T>(ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), GatedWitness {});
-    contra::register(account, &auth);
+    // Key the token account under the account's default key (set at account creation).
+    let pk = *contra::account_public_key(account).borrow();
+    contra::register(account, &auth, pk);
 }
 
 public fun gated_wrap<T>(
@@ -58,19 +60,21 @@ public fun gated_wrap<T>(
 
 // === Object-bound ops (`authorize_as_object`) ===
 
-/// Create the contra `Account` owned by `vault`'s address, with account key `pk`. Only this module
+/// Create the contra `Account` owned by `vault`'s address, with default key `pk`. Only this module
 /// can supply the vault's `&mut UID`, so it self-authenticates as the object owner.
 public fun vault_new_account(
     vault: &mut Vault,
     registry: &mut AccountRegistry,
     pk: Element<G>,
 ): Account {
-    contra::new_account_for_object(registry, &mut vault.id, pk)
+    contra::new_account_for_object(registry, &mut vault.id, option::some(pk))
 }
 
 public fun vault_register<T>(vault: &mut Vault, ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_as_object(&mut vault.id);
-    contra::register(account, &auth);
+    // Key the token account under the account's default key (set at account creation).
+    let pk = *contra::account_public_key(account).borrow();
+    contra::register(account, &auth, pk);
 }
 
 public fun vault_wrap<T>(

@@ -670,7 +670,7 @@ fun verify_auditing<T>(
     assert!(ct.auditor.accepts_at(ctx.epoch()), EUnexpectedAuditorData);
     let handles = auditor_handles.destroy_some();
     let proof = auditor_proof.destroy_some();
-    let encryptions = encrypted_amount::batch_auditor_encryptions(receiver_amounts, &handles);
+    let encryptions = encrypted_amount::u32_limb_encryptions(receiver_amounts, &handles);
     assert!(
         ct
             .auditor
