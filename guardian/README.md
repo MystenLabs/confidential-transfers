@@ -17,8 +17,8 @@ transfer or unwrap checks:
   breaking both the ZK layer and AWS Nitro isolation.
 - **Not required for liveness.** The enclave holds no funds and no user state. If the
   fleet disappears, the issuer can disable guardian mode.
-- **The enclave only checks the math.** There is no replay/expiry protection or domain 
-  separation, as they come other components of the confidential transfer system. 
+- **The enclave only checks the math.** There is no replay/expiry protection or domain
+  separation, as they come from other components of the confidential transfer system.
 
 On-chain counterpart: `../move/sources/guardian.move`.
 
@@ -60,7 +60,29 @@ GuardianEnclaveKey {
 
 ## Enclave Scaling
 
-- **Offchain option: provision the fleet of enclaves to the same pk**
+- **Onchain option (implemented): each enclave registers with attestation against
+  `policy.pcrs` and adds its own `{ enc_pk, signing_pk }` to the policy**
+  - Client fetches all live `enc_pk`s onchain and encrypts the request to all keys;
+    the LB forwards it to an instance and gets a response identified by `signing_pk`.
+  - Onchain the client submits `enclave_sig, signing_pk`. Checks: 1) look up
+    `signing_pk` in `guardian_enclave_keys`, 2) verify the sig, 3)
+    `key.version >= policy.min_version`.
+  - Provision new instances:
+    - Each instance deploys and exposes `/attestation`.
+    - Registers with its own `{ enc_pk, signing_pk }`.
+  - Rotate keys:
+    - Boot a new instance with its own keys; add it to the LB (if the LB routes a
+      request to it early, it just fails and round-robins to the next).
+    - One PTB: remove the old key + register the new key.
+    - LB terminates the old instance.
+  - Proxy:
+    - Simple round robin: if a request (encrypted under a set of pks) is forwarded to
+      a freshly registered instance not in that set, the instance returns failure and
+      the LB tries the next.
+    - Recipient-aware: only forward to instances whose key the request is encrypted
+      under.
+- **Offchain option (design alternative, not implemented): provision the fleet of
+  enclaves to the same pk**
   - Client sends the request encrypted under the single `enc_key`.
   - Onchain the client submits `enclave_sig` only. Checks: 1) `enclave_sig` verifies
     against `enclave.active.signing_pk`, 2) `enclave.version >= policy.min_version`.
@@ -88,27 +110,6 @@ GuardianEnclaveKey {
     - Provision new child instances the same way.
     - Safe to remove the standby onchain once the old fleet drains.
   - Proxy: simple round robin.
-- **Onchain option: each enclave registers with attestation against `policy.pcrs` and
-  adds its own `{ enc_pk, signing_pk }` to the policy**
-  - Client fetches all live `enc_pk`s onchain and encrypts the request to all keys;
-    the LB forwards it to an instance and gets a response identified by `signing_pk`.
-  - Onchain the client submits `enclave_sig, signing_pk`. Checks: 1) look up
-    `signing_pk` in `guardian_enclave_keys`, 2) verify the sig, 3)
-    `key.version >= policy.min_version`.
-  - Provision new instances:
-    - Each instance deploys and exposes `/attestation`.
-    - Registers with its own `{ enc_pk, signing_pk }`.
-  - Rotate keys:
-    - Boot a new instance with its own keys; add it to the LB (if the LB routes a
-      request to it early, it just fails and round-robins to the next).
-    - One PTB: remove the old key + register the new key.
-    - LB terminates the old instance.
-  - Proxy:
-    - Simple round robin: if a request (encrypted under a set of pks) is forwarded to
-      a freshly registered instance not in that set, the instance returns failure and
-      the LB tries the next.
-    - Recipient-aware: only forward to instances whose key the request is encrypted
-      under.
 - Scale up / down never involves the issuer: the operator registers a booting
   instance's key (stamped with the current `policy.version`) and removes keys at
   leisure — a dead instance's key can never sign again, so removal is hygiene, not
@@ -118,7 +119,7 @@ GuardianEnclaveKey {
   it is up to the issuer which keys to keep:
   - **Routine upgrade**: `update_pcrs`, register the new fleet, let both images serve
     while the old fleet drains, remove old keys when convenient. `min_version` never
-    moves; in-flight approvals survive and there is no downtime — `update_pcrs` is
+    moves; in-flight signed requests survive and there is no downtime — `update_pcrs` is
     not a revocation, so the old fleet serves until the new one is registered.
   - **Security fix**: bump `min_version` in the same PTB as the new registrations —
     every old-image signature dies at that instant; clients retry, but there is no
@@ -134,74 +135,85 @@ GuardianEnclaveKey {
 
 ## Transfer Flow
 
-- Alice calls the enclave with the request encrypted under all `enc_pk`s. Ciphertexts
-  are collapses of the onchain 4-limb structures.
+- Alice calls the enclave with an `EnclaveRequest` encrypted under all `enc_pk`s.
+  Ciphertexts are collapses of the onchain 4-limb structures.
 
 ```
 {
-  pk_B[],
-  enc_bal_A_old: (C_1_A, C_2_A),
-  enc_bal_A_new: (C_1_A_new, C_2_A_new),
-  enc_tx_amt[]: (C_1_tx_i, C_2_tx_i),
+  old_encrypted_balance: (C_1_A, C_2_A),
+  new_encrypted_balance: (C_1_A_new, C_2_A_new),
+  recipients[]: {
+    receiver_pk,
+    encrypted_amount: (C_1_tx_i, C_2_tx_i),
+    // private witnesses
+    amount,
+    blinding       // proves encrypted_amount well-formed to receiver_pk
+  },
 
   // private witnesses
-  x_A,           // opens both balances, whose blindings are unknowable
-  bal_A_old,     // the plaintext m is sent so the enclave never solves a discrete log
-  tx_amount[],
-  r_tx[]         // proves each enc_tx_amt[i] well-formed to pk_B[i]
+  x_a,             // opens both balances, whose blindings are unknowable
+  old_balance      // sent so the enclave never solves a discrete log
 }
 ```
 
 - Enclave checks conditions and signs the payload:
 
 ```
-derive pk_A = x_A * G
+derive sender_pk = x_a * G
 
-check enc_bal_A_old opening:
-  C_1_A - C_2_A / x_A == bal_A_old*H
+checks run cheapest first, so a bad request is rejected before the per-recipient
+curve operations:
+
+total_txn_amount = sum of recipients[i].amount           // checked u64 add
+new_balance = old_balance - total_txn_amount
+  an overflow or underflow in either is an overdraft, caught with no curve operations
+
+check old_encrypted_balance opens to old_balance under x_a
+check new_encrypted_balance opens to new_balance under x_a
+  (Ciphertext::verify_opening, two operations whatever the batch size)
 
 for each recipient i:
-  check enc_tx_amt[i] == (r_tx[i]*G + tx_amount[i]*H,  r_tx[i]*pk_B_i)
+  check recipients[i].encrypted_amount encrypts .amount to .receiver_pk under .blinding
+  (Ciphertext::verify)
 
-compute bal_A_new = bal_A_old - sum of tx_amount[i]
-check bal_A_new >= 0
-check C_1_A_new - C_2_A_new / x_A == bal_A_new*H
-
-enclave signs payload (an enum; the variant tag separates transfers from unwraps):
+enclave signs `RequestPayload` (an enum; the variant tag separates transfers from unwraps):
 
 Transfer {
-  pk_A,
-  pk_B[],
-  enc_bal_A_old,
-  enc_bal_A_new,
-  enc_tx_amt[]
+  sender_pk,
+  receiver_pks[],
+  old_encrypted_balance,
+  new_encrypted_balance,
+  encrypted_amounts[]
 }
 
 Unwrap {
-  pk_A,
-  enc_bal_A_old,
-  enc_bal_A_new,
+  sender_pk,
+  old_encrypted_balance,
+  new_encrypted_balance,
   amount
 }
 ```
 
-- Returns `{ enclave_sig, signing_pk }`.
+- Returns an `EnclaveResponse`: `{ signing_pk, signature }` on success, or a
+  `{ error }` naming the failed check — the sender already knows every value in its
+  own request, so the reason leaks nothing and saves a debugging round trip.
 - Wallet sends onchain:
 
 ```move
-fun batch_transfer(..., guardian_sig, signing_pk) {
+fun batched_transfer(..., approval: Option<GuardianApproval>) { // { signing_pk, signature }
   if (ct.guardian_policy.is_none()) return;   // guardian off: ZK proofs only
   let policy = ct.guardian_policy.borrow();
-  let key = policy.guardian_enclave_keys.get(&signing_pk); // aborts if unknown
+  let key = policy.guardian_enclave_keys.get(&approval.signing_pk); // aborts if unknown
   assert!(key.version >= policy.min_version);
-  let payload = { ... }; // rebuilt onchain, never passed
-  assert!(ed25519_verify(&guardian_sig, &signing_pk, &bcs::to_bytes(payload)));
+  let payload = { ... }; // RequestPayload, rebuilt onchain, never passed
+  assert!(ed25519_verify(&approval.signature, &approval.signing_pk, &bcs::to_bytes(payload)));
 }
 ```
 
-Approvals are single-use: they bind `enc_bal_A_old`, which every transfer overwrites —
+A signed request is single-use: it binds `old_encrypted_balance`, which every transfer
+overwrites —
 valid exactly until the sender's active balance changes, no TTL needed. (Deposits land
-in `pending`, so they don't invalidate an in-flight approval.)
+in `pending`, so they don't invalidate an in-flight signed request.)
 
 ## DDoS protection for enclave
 
@@ -210,7 +222,7 @@ in `pending`, so they don't invalidate an in-flight approval.)
 
 ## Code layout
 
-- `core/` — wire types, plaintext checks, approval signing. No Nitro, no networking.
+- `core/` — wire types, plaintext checks, response signing. No Nitro, no networking.
 - `enclave/` — the binary: key generation at boot, `/attestation`, `/health` +
   `/ready`, and `/approve` for sealed requests.
 
@@ -229,7 +241,7 @@ cargo test --workspace --no-default-features --features contra-guardian-enclave/
 outside an enclave; everything else — HPKE unseal, checks, signing — is the
 production path, and the binary warns once so a dev build is never mistaken for a
 real enclave. `enclave/tests/e2e.rs` serves a guardian in-process and verifies each
-approval against the payload the chain would rebuild.
+response against the payload the chain would rebuild.
 
 ## Local fleet
 
