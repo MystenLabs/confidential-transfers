@@ -24,3 +24,6 @@ next-env.d.ts
 .vite/
 
 .claude/
+
+guardian/.fleet/
+/target

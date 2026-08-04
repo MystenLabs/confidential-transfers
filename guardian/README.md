@@ -234,7 +234,8 @@ which is Envoy config, not app logic.
 ## Test
 
 ```
-cargo test --workspace --no-default-features --features contra-guardian-enclave/non-enclave-dev
+cargo test --workspace --all-features   # or: --features contra-guardian-enclave/non-enclave-dev
+cargo fmt && cargo xclippy              # lint
 ```
 
 `--features non-enclave-dev` stubs the NSM attestation call so the guardian runs

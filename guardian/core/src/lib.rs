@@ -146,7 +146,6 @@ mod tests {
             BytesRepresentation([0xaa; 32]),
         );
         let x_a = PrivateKey::new(RistrettoScalar::from(12345u64));
-        let pk_a = PublicKey::from(&x_a);
         // Claims 200 while the balance ciphertext encrypts 100.
         let req = EnclaveRequest::UnwrapRequest {
             old_encrypted_balance: Ciphertext::new(
@@ -161,7 +160,6 @@ mod tests {
             x_a,
             old_balance: 200,
         };
-        let _ = pk_a;
         let EnclaveResponse::Error { error } = guardian.approve(&req) else {
             panic!("bad request must be refused")
         };
