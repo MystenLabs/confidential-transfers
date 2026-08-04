@@ -5,7 +5,7 @@ import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { executeOrThrow } from 'contra-utils';
-import { ContraClient, contraContracts, TokenAccount } from 'ts-sdk';
+import { ContraClient, contraContracts, point, TokenAccount } from 'ts-sdk';
 
 import { PaymentChannelClient } from './client.ts';
 import { type Deployment } from './deploy.ts';
@@ -82,12 +82,17 @@ export async function setupChannelContraAccount(opts: {
 			tokenType: deployment.buType,
 		}),
 	);
-	const account = tx.add(
-		contraClient.newAccount({
-			owner: channelObjectId,
-			publicKey: channelTokenAccount.publicKey,
-		}),
-	);
+	// Account creation is owner-only; the channel self-authenticates via its `&mut UID` inside
+	// `payment_channel::new_account`, so the account is created there rather than via `newAccount`.
+	const account = tx.moveCall({
+		target: `${deployment.packageId}::payment_channel::new_account`,
+		typeArguments: [deployment.buType],
+		arguments: [
+			channelArg,
+			tx.object(deployment.contra.accountRegistryId),
+			point(channelTokenAccount.publicKey.toBytes()),
+		],
+	});
 	tx.add(
 		await contraClient.register({
 			tokenAccount: channelTokenAccount,

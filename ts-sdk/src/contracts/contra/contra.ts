@@ -362,36 +362,60 @@ export function shareConfidentialToken(options: ShareConfidentialTokenOptions) {
 }
 export interface NewAccountArguments {
 	registry: RawTransactionArgument<string>;
-	owner: RawTransactionArgument<string>;
 	pk: TransactionArgument;
 }
 export interface NewAccountOptions {
 	package?: string;
 	arguments:
 		| NewAccountArguments
-		| [
-				registry: RawTransactionArgument<string>,
-				owner: RawTransactionArgument<string>,
-				pk: TransactionArgument,
-		  ];
+		| [registry: RawTransactionArgument<string>, pk: TransactionArgument];
 }
 /**
- * Create a new account for the given address. Can only happen once per address.
- *
- * Note: the `owner` argument is not tied to `ctx.sender()` — anyone can create an
- * `Account` on behalf of any address. Since `Account` has `key` only (no `store`),
- * the only way to dispose of it outside this module is via `share_account`, and
- * all authenticated operations still gate on `account.owner == ctx.sender()`.
+ * Create a new account for `ctx.sender()` with account key `pk`. Can only happen once per address.
+ * Creation is restricted to the owner: only the sender can set their own account key. For an account
+ * owned by a Move object, use `new_account_for_object`.
  */
 export function newAccount(options: NewAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, 'address', null] satisfies (string | null)[];
-	const parameterNames = ['registry', 'owner', 'pk'];
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['registry', 'pk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
 			function: 'new_account',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface NewAccountForObjectArguments {
+	registry: RawTransactionArgument<string>;
+	uid: RawTransactionArgument<string>;
+	pk: TransactionArgument;
+}
+export interface NewAccountForObjectOptions {
+	package?: string;
+	arguments:
+		| NewAccountForObjectArguments
+		| [
+				registry: RawTransactionArgument<string>,
+				uid: RawTransactionArgument<string>,
+				pk: TransactionArgument,
+		  ];
+}
+/**
+ * Create a new account owned by the object identified by `uid`, with account key `pk`. Holding
+ * `&mut UID` proves custody of the object, so it self-authenticates as its own owner. Can only happen
+ * once per object address.
+ */
+export function newAccountForObject(options: NewAccountForObjectOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null, null] satisfies (string | null)[];
+	const parameterNames = ['registry', 'uid', 'pk'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'new_account_for_object',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

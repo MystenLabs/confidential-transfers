@@ -167,9 +167,9 @@ export function createOperations(
 	}
 
 	/**
-	 * Fund `count` fresh addresses and create+share their `Account`s in one
-	 * PTB (no `TokenAccount`s yet). Folding the funding into a single
-	 * issuer-signed transaction avoids serializing one tx per user.
+	 * Fund `count` fresh addresses from the issuer in one PTB, then have each user create+share its
+	 * own `Account` (no `TokenAccount`s yet). Account creation is restricted to the owner, so it can't
+	 * be folded into the issuer tx — each user signs its own creation (run in parallel).
 	 */
 	async function setupFreshAccounts(count: number): Promise<FreshUser[]> {
 		const users: FreshUser[] = Array.from({ length: count }, () => {
@@ -182,20 +182,25 @@ export function createOperations(
 			};
 		});
 
-		const setupTx = new Transaction();
+		const fundTx = new Transaction();
 		for (const user of users) {
-			const [coin] = setupTx.splitCoins(setupTx.gas, [FUNDING_AMOUNT]);
-			setupTx.transferObjects([coin], user.address);
-			const account = setupTx.add(
-				client.contra.newAccount({
-					owner: user.address,
-					publicKey: user.tokenAccount.publicKey,
-				}),
-			);
-			setupTx.add(client.contra.shareAccount({ account }));
+			const [coin] = fundTx.splitCoins(fundTx.gas, [FUNDING_AMOUNT]);
+			fundTx.transferObjects([coin], user.address);
 		}
-		setupTx.setSender(contraInit.address);
-		await exec(setupTx, contraInit.keypair);
+		fundTx.setSender(contraInit.address);
+		await exec(fundTx, contraInit.keypair);
+
+		await Promise.all(
+			users.map(async (user) => {
+				const tx = new Transaction();
+				const account = tx.add(
+					client.contra.newAccount({ publicKey: user.tokenAccount.publicKey }),
+				);
+				tx.add(client.contra.shareAccount({ account }));
+				tx.setSender(user.address);
+				await exec(tx, user.keypair);
+			}),
+		);
 
 		return users;
 	}

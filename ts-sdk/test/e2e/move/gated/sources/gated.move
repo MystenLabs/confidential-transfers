@@ -7,8 +7,8 @@
 /// the contra entrypoint -- no extra access control is performed.
 module gated::gated;
 
-use contra::contra::{Self, ConfidentialToken, Account, Pool};
-use sui::{coin::Coin, deny_list::DenyList};
+use contra::contra::{Self, ConfidentialToken, Account, AccountRegistry, Pool};
+use sui::{coin::Coin, deny_list::DenyList, group_ops::Element, ristretto255::G};
 
 // Operation indices, mirroring private constants in `contra::contra`.
 const REGISTER_OP: u8 = 0;
@@ -57,6 +57,16 @@ public fun gated_wrap<T>(
 }
 
 // === Object-bound ops (`authorize_as_object`) ===
+
+/// Create the contra `Account` owned by `vault`'s address, with account key `pk`. Only this module
+/// can supply the vault's `&mut UID`, so it self-authenticates as the object owner.
+public fun vault_new_account(
+    vault: &mut Vault,
+    registry: &mut AccountRegistry,
+    pk: Element<G>,
+): Account {
+    contra::new_account_for_object(registry, &mut vault.id, pk)
+}
 
 public fun vault_register<T>(vault: &mut Vault, ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_as_object(&mut vault.id);

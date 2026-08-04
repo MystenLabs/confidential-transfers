@@ -93,7 +93,6 @@ const EAllAmountsMustBeUsed: u64 = 6;
 const EAmountsEqualityProofFailed: u64 = 7;
 const EEmptyTransferBatch: u64 = 8;
 const ETooManyReceivers: u64 = 9;
-/// Recovery: transfer or update active balance.
 const EBalancesFull: u64 = 10;
 const EIdentityPublicKey: u64 = 11;
 const EBatchTooLarge: u64 = 12;
@@ -262,7 +261,7 @@ public use fun share_confidential_token as ConfidentialToken.share;
 /// TreasuryCaps from being used.
 ///
 /// Sets the token's auditor key to `auditor_pk` (per-transfer auditing). Pass `none` to start with
-/// auditing disabled; the issuer can enable or rotate it later via `update_auditor`.
+/// auditing disabled. The issuer can enable or rotate it later via `update_auditor`.
 ///
 /// Returns the created `ConfidentialToken` and a `ManagementCap` that can be used to perform
 /// administrative operations for this token.
@@ -298,13 +297,29 @@ public fun share_confidential_token<T>(ct: ConfidentialToken<T>) {
 
 public use fun new_account as AccountRegistry.new;
 
-/// Create a new account for the given address. Can only happen once per address.
-///
-/// Note: the `owner` argument is not tied to `ctx.sender()` — anyone can create an
-/// `Account` on behalf of any address. Since `Account` has `key` only (no `store`),
-/// the only way to dispose of it outside this module is via `share_account`, and
-/// all authenticated operations still gate on `account.owner == ctx.sender()`.
-public fun new_account(registry: &mut AccountRegistry, owner: address, pk: Element<G>): Account {
+/// Create a new account for `ctx.sender()` with account key `pk`. Can only happen once per address.
+/// Since `pk` is the key every token balance under this account converges to, creation is restricted
+/// to the owner: only the sender can set their own account key. For an account owned by a Move object,
+/// use `new_account_for_object`.
+public fun new_account(registry: &mut AccountRegistry, pk: Element<G>, ctx: &TxContext): Account {
+    new_account_internal(registry, ctx.sender(), pk)
+}
+
+/// Create a new account owned by the object identified by `uid`, with account key `pk`. Holding
+/// `&mut UID` proves custody of the object, so it self-authenticates as its own owner (the address
+/// derived from the `UID`) — mirroring `authorize_as_object`. Can only happen once per object address.
+#[allow(unused_mut_parameter)]
+public fun new_account_for_object(
+    registry: &mut AccountRegistry,
+    uid: &mut UID,
+    pk: Element<G>,
+): Account {
+    new_account_internal(registry, uid.to_inner().to_address(), pk)
+}
+
+/// Claim the derived account for `owner` and initialize it with key `pk`. Aborts if `owner` already
+/// has an account or `pk` is the group identity.
+fun new_account_internal(registry: &mut AccountRegistry, owner: address, pk: Element<G>): Account {
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
     assert!(pk != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
@@ -474,6 +489,15 @@ public fun wrap<T>(
         !is_receiver_denied<T>(deny_list, receiver.owner),
         ETransferDenied,
     );
+    // Auto-register the token on first receive when `T` leaves registration permissionless.
+    if (!receiver.has_token<T>()) {
+        assert!(
+            policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
+            EReceiverNotRegistered,
+        );
+        let session_id = receiver.session_id<T>();
+        receiver.add_token_account<T>(session_id);
+    };
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
@@ -663,9 +687,7 @@ public fun add_to_batch<T>(
             let receiver_addr = receiver.owner;
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
 
-            // Auto-register the token on first receive when `T` leaves registration permissionless;
-            // the new account is keyed at `Account.pk`, matching the key the sender encrypted under.
-            // For a permissioned token, an unregistered receiver's deposit aborts instead.
+            // Auto-register the token on first receive when `T` leaves registration permissionless.
             if (!receiver.has_token<T>()) {
                 assert!(can_register_permissionless, EReceiverNotRegistered);
                 let session_id = receiver.session_id<T>();
@@ -676,7 +698,7 @@ public fun add_to_batch<T>(
 
             // This receiver's two auditor handles (empty when auditing is disabled), popped in
             // submission order like `coins`.
-            let receiver_handles = if (auditor_handles.is_empty()) {
+            let receiver_auditor_handles = if (auditor_handles.is_empty()) {
                 vector[]
             } else {
                 let lo = auditor_handles.pop_back();
@@ -698,7 +720,7 @@ public fun add_to_batch<T>(
                 receiver_addr,
                 receiver_pk,
                 *coin.amount().amount(),
-                receiver_handles,
+                receiver_auditor_handles,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver_pk, coin);

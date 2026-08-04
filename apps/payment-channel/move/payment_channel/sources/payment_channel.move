@@ -103,8 +103,8 @@
 /// 5. From `Closed`, the sender uses `get_auth` to sweep / withdraw.
 module payment_channel::payment_channel;
 
-use contra::{contra::{Self, ConfidentialToken}, policy::Auth};
-use sui::clock::Clock;
+use contra::{contra::{Self, Account, AccountRegistry, ConfidentialToken}, policy::Auth};
+use sui::{clock::Clock, group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
@@ -130,8 +130,8 @@ public struct Channel<phantom T> has key {
 
 /// Create and share an empty `Channel<T>`. The channel's `sender` is set to
 /// `ctx.sender()` and state starts as `Initialized`. The contra account that
-/// will back the channel is *not* created here — the sender creates and
-/// registers it themselves via `get_auth` + `contra::new_account` +
+/// will back the channel is *not* created here — the sender creates it via
+/// `new_account` (object-bound) and registers it via `get_auth` +
 /// `contra::register` (passing the channel auth).
 public fun new<T>(ctx: &mut TxContext) {
     let c = Channel<T> {
@@ -140,6 +140,19 @@ public fun new<T>(ctx: &mut TxContext) {
         state: State::Initialized,
     };
     transfer::share_object(c);
+}
+
+/// Create the contra `Account` owned by the channel's address, with account key `pk`. Restricted to
+/// the channel `sender`, and object-bound (the channel self-authenticates via its own `&mut UID`), so
+/// no one else can squat the channel's account with a key they control.
+public fun new_account<T>(
+    c: &mut Channel<T>,
+    registry: &mut AccountRegistry,
+    pk: Element<G>,
+    ctx: &TxContext,
+): Account {
+    assert!(ctx.sender() == c.sender, EUnauthorized);
+    contra::new_account_for_object(registry, &mut c.id, pk)
 }
 
 // === Operations ===

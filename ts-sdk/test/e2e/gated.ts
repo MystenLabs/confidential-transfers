@@ -24,6 +24,7 @@ import {
 } from 'contra-utils/node';
 
 import * as contraContracts from '../../src/contracts/contra/contra.js';
+import { point } from '../../src/helpers.js';
 import type { TokenAccount } from '../../src/token_account.js';
 import type { ContraTestClient, FreshUser, Harness, Signer } from './harness.js';
 import type { TokenIssuer } from './token_issuer.js';
@@ -135,9 +136,16 @@ export class Gated {
 	 */
 	async vaultRegister(vault: string, tokenAccount: TokenAccount, signer: Signer): Promise<void> {
 		const tx = new Transaction();
-		const account = tx.add(
-			this.client.contra.newAccount({ owner: vault, publicKey: tokenAccount.publicKey }),
-		);
+		// Account creation is owner-only; the vault self-authenticates via its `&mut UID` inside
+		// `gated::vault_new_account`, so the account is created there rather than via `newAccount`.
+		const account = tx.moveCall({
+			target: `${this.packageId}::gated::vault_new_account`,
+			arguments: [
+				tx.object(vault),
+				tx.object(this.client.contra.accountRegistryId),
+				point(tokenAccount.publicKey.toBytes()),
+			],
+		});
 		tx.moveCall({
 			target: `${this.packageId}::gated::vault_register`,
 			typeArguments: [this.tokenIssuer.tokenType],

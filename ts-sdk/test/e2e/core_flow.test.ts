@@ -76,24 +76,17 @@ describe('core user flows (devnet)', () => {
 		// Single tx: fund both users and create+share their accounts. The
 		// initializer's keypair is used for all three ops so they're bundled
 		// together to save two round-trips.
-		const fundAndSetupTx = new Transaction();
-		const [coin1] = fundAndSetupTx.splitCoins(fundAndSetupTx.gas, [FUNDING_AMOUNT]);
-		const [coin2] = fundAndSetupTx.splitCoins(fundAndSetupTx.gas, [FUNDING_AMOUNT]);
-		fundAndSetupTx.transferObjects([coin1], user1Address);
-		fundAndSetupTx.transferObjects([coin2], user2Address);
-		for (const tokenAccount of [user1TokenAccount, user2TokenAccount]) {
-			const account = fundAndSetupTx.add(
-				client.contra.newAccount({
-					owner: tokenAccount.address,
-					publicKey: tokenAccount.publicKey,
-				}),
-			);
-			fundAndSetupTx.add(client.contra.shareAccount({ account }));
-		}
-		fundAndSetupTx.setSender(contraInit.address);
-		await exec(fundAndSetupTx, contraInit.keypair);
+		// Fund both users from the issuer in one tx. Account creation is restricted to the owner, so
+		// each user creates, shares, and registers their own account below (signed by themselves).
+		const fundTx = new Transaction();
+		const [coin1] = fundTx.splitCoins(fundTx.gas, [FUNDING_AMOUNT]);
+		const [coin2] = fundTx.splitCoins(fundTx.gas, [FUNDING_AMOUNT]);
+		fundTx.transferObjects([coin1], user1Address);
+		fundTx.transferObjects([coin2], user2Address);
+		fundTx.setSender(contraInit.address);
+		await exec(fundTx, contraInit.keypair);
 
-		// Register both users in parallel. Each user signs their own tx.
+		// Each user creates + shares + registers their own account, in parallel. Each signs their own tx.
 		await Promise.all(
 			(
 				[
@@ -102,7 +95,9 @@ describe('core user flows (devnet)', () => {
 				] as [Ed25519Keypair, string, TokenAccount][]
 			).map(async ([keypair, address, tokenAccount]) => {
 				const regTx = new Transaction();
-				regTx.add(await client.contra.register({ tokenAccount }));
+				const account = regTx.add(client.contra.newAccount({ publicKey: tokenAccount.publicKey }));
+				regTx.add(await client.contra.register({ tokenAccount, account }));
+				regTx.add(client.contra.shareAccount({ account }));
 				regTx.setSender(address);
 				await exec(regTx, keypair);
 			}),
@@ -594,7 +589,7 @@ describe('core user flows (devnet)', () => {
 			await contraInit.fund(userAddress, FUNDING_AMOUNT);
 			const setupTx = new Transaction();
 			const account = setupTx.add(
-				client.contra.newAccount({ owner: userAddress, publicKey: userTokenAccount.publicKey }),
+				client.contra.newAccount({ publicKey: userTokenAccount.publicKey }),
 			);
 			setupTx.add(client.contra.shareAccount({ account }));
 			setupTx.setSender(userAddress);

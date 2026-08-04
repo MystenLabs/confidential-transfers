@@ -235,13 +235,12 @@ export interface UpdateBalanceOptions {
 
 /** Arguments to `ContraClient.newAccount`. */
 export interface NewAccountOptions {
-	/** The address that will own the newly created account. */
-	owner: string;
 	/**
 	 * The account key — the single per-account public key shared by all of the owner's token
 	 * balances (per-transfer auditing removed the per-token key). Every `TokenAccount<T>` registered
 	 * under this account starts keyed under it, so the caller's `TokenAccount` private keys for this
-	 * owner must all correspond to this key.
+	 * owner must all correspond to this key. The account is created for the transaction sender, so the
+	 * transaction must be signed by the intended owner.
 	 */
 	publicKey: RistrettoPoint;
 }

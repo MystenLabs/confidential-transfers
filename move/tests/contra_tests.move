@@ -29,11 +29,11 @@ public struct Witness has drop {}
 
 #[test]
 fun create_account() {
-    let owner = @0x100;
     let pk = ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator());
     let ctx = &mut tx_context::dummy();
+    let owner = ctx.sender();
     let mut acc_reg = contra::new_account_registry_for_testing(ctx);
-    let account = acc_reg.new(owner, pk);
+    let account = acc_reg.new(pk, ctx);
 
     assert_eq!(account.owner(), owner);
 
@@ -109,13 +109,13 @@ fun test_simple_flow() {
     ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_with_witness<TestCurrency, Witness>(0u8, addr1, Witness {});
     account_1.register<TestCurrency>(&auth);
 
     // Register second account and deposit
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
     let auth = ct.authorize_with_witness<TestCurrency, Witness>(0u8, addr2, Witness {});
     account_2.register<TestCurrency>(&auth);
 
@@ -285,17 +285,17 @@ fun test_batched_transfer() {
 
     // Register all three accounts.
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
 
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth);
 
     scenario.next_tx(addr3);
-    let mut account_3 = acc_reg.new(addr3, pk_3);
+    let mut account_3 = acc_reg.new(pk_3, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_3.register<TestCurrency>(&auth);
 
@@ -457,15 +457,15 @@ fun test_batched_transfer_with_auditor() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth);
     scenario.next_tx(addr3);
-    let mut account_3 = acc_reg.new(addr3, pk_3);
+    let mut account_3 = acc_reg.new(pk_3, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_3.register<TestCurrency>(&auth);
 
@@ -593,7 +593,7 @@ fun test_deny_list() {
         option::none(),
         scenario.ctx(),
     );
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
 
@@ -778,7 +778,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_old);
+    let mut account_1 = acc_reg.new(pk_old, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -890,7 +890,7 @@ fun test_rekey_token_aborts_on_bad_proof() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_old);
+    let mut account_1 = acc_reg.new(pk_old, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -989,7 +989,7 @@ fun test_try_rekey_token_soft_fails_then_succeeds() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_old);
+    let mut account_1 = acc_reg.new(pk_old, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1105,7 +1105,7 @@ fun test_account_freeze_rejects_non_admin() {
     );
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(user_addr, pk);
+    let mut account_user = acc_reg.new(pk, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_user.register<TestCurrency>(&auth);
 
@@ -1159,7 +1159,7 @@ fun test_account_freeze_blocks_wrap() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(user_addr, pk);
+    let mut account_user = acc_reg.new(pk, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_user.register<TestCurrency>(&auth);
 
@@ -1227,7 +1227,7 @@ fun test_account_unfreeze_restores_wrap() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(user_addr, pk);
+    let mut account_user = acc_reg.new(pk, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_user.register<TestCurrency>(&auth);
 
@@ -1302,11 +1302,11 @@ fun test_account_freeze_blocks_batched_transfer() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth);
 
@@ -1415,11 +1415,11 @@ fun test_account_freeze_blocks_add_to_batch() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth);
 
@@ -1526,13 +1526,13 @@ fun test_transfer_auto_registers_receiver() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
 
     // account_2 has an `Account` but is NOT registered for TestCurrency.
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2, pk_2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
 
     scenario.next_tx(addr1);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1631,7 +1631,7 @@ fun test_account_freeze_blocks_unwrap() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1, pk_1);
+    let mut account_1 = acc_reg.new(pk_1, scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
 
@@ -1725,11 +1725,10 @@ fun verify_well_formed_proof_dst_match_succeeds() {
 
 #[test, expected_failure(abort_code = ::contra::contra::EIdentityPublicKey)]
 fun new_account_rejects_identity_pk() {
-    let owner = @0x100;
     let ctx = &mut tx_context::dummy();
     let mut acc_reg = contra::new_account_registry_for_testing(ctx);
     // Identity pk: account creation must reject this.
-    let account = acc_reg.new(owner, ristretto255::g_identity());
+    let account = acc_reg.new(ristretto255::g_identity(), ctx);
 
     unit_test::destroy(account);
     unit_test::destroy(acc_reg);

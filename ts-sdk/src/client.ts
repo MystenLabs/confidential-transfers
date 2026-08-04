@@ -202,6 +202,11 @@ export class ContraClient {
 		});
 	}
 
+	/** The shared `AccountRegistry` object ID accounts are derived from. */
+	get accountRegistryId(): string {
+		return this.#packageConfig.accountRegistryId;
+	}
+
 	/** Return the account object ID for the given owner address. */
 	getAccountId(address: string): string {
 		return getAccountId(this.#packageConfig, address);
@@ -216,27 +221,27 @@ export class ContraClient {
 	}
 
 	/**
-	 * Create a new account for the given owner.
+	 * Create a new account for the transaction sender with account key `publicKey`. Creation is
+	 * restricted to the owner — the account is created for `ctx.sender()`, so the transaction must be
+	 * signed by the intended owner. For an account owned by a Move object, that object's module must
+	 * call `contra::new_account_for_object` with the object's `&mut UID`.
 	 *
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * const account = tx.add(
-	 *   contraClient.newAccount({ owner: senderAddress, publicKey: tokenAccount.publicKey }),
-	 * );
+	 * const account = tx.add(contraClient.newAccount({ publicKey: tokenAccount.publicKey }));
 	 * tx.add(contraClient.shareAccount({ account }));
 	 * ```
 	 *
 	 * On-chain aborts:
-	 * - `EAccountAlreadyRegistered` — `owner` already has an account (one per address).
+	 * - `EAccountAlreadyRegistered` — the sender already has an account (one per address).
 	 * - `EIdentityPublicKey` — `publicKey` is the group identity.
 	 */
-	newAccount({ owner, publicKey }: NewAccountOptions) {
+	newAccount({ publicKey }: NewAccountOptions) {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
 			arguments: {
 				registry: this.#packageConfig.accountRegistryId,
-				owner,
 				pk: point(publicKey.toBytes()),
 			},
 		});
