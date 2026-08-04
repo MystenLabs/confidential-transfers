@@ -213,10 +213,7 @@ export function totalConfidentialBalanceBu(balance: TokenBalance): number {
 }
 
 /** Fetch the on-chain auditor config (current/previous key + grace) for the given token. */
-export function fetchAuditor(
-	contraClient: ContraClient,
-	tokenType: string,
-): Promise<TokenAuditor> {
+export function fetchAuditor(contraClient: ContraClient, tokenType: string): Promise<TokenAuditor> {
 	return contraClient.getAuditor(tokenType);
 }
 

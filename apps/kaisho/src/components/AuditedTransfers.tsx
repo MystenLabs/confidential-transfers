@@ -36,9 +36,7 @@ export function AuditedTransfers({
 					const decoded = TransferEventBcs.parse(e.bcs);
 					sender = decoded.sender;
 					receiver = decoded.receiver;
-					memo = decoded.memo.length
-						? new TextDecoder().decode(Uint8Array.from(decoded.memo))
-						: '';
+					memo = decoded.memo.length ? new TextDecoder().decode(Uint8Array.from(decoded.memo)) : '';
 				} catch {
 					/* leave fields blank; amount decrypt below still handles bad payloads */
 				}
