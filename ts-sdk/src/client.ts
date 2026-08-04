@@ -331,30 +331,33 @@ export class ContraClient {
 	}
 
 	/**
-	 * Report the account key (`Account.pk`) and, for each of the given `tokenTypes`, the key that
-	 * token's balances are currently encrypted under. Use this after a `setAccountKey`/`rotateKey` to
-	 * decide what to re-key and whether an old key can be discarded:
+	 * Report the account key (`Account.pk`) and, for each token, the key that token's balances are
+	 * currently encrypted under. Pass `tokenTypes` to query specific tokens, or omit it to enumerate
+	 * every token registered on the account (its `TokenAccount` dynamic fields). Use this after a
+	 * `setAccountKey`/`rotateKey`/`rotateKeyAll` to decide what to re-key and whether an old key can be
+	 * discarded — after `rotateKeyAll`, any token still reported `stale` is one whose re-key soft-failed
+	 * (e.g. a deposit raced it) and needs a retry:
 	 *
 	 * - `stale === true` for a token means its `TokenAccount.pk` lags the account key — call
 	 *   `rekeyToken` (or `rotateKey`) to catch it up. Its balance can only be re-keyed or decrypted
 	 *   with the key it currently reports (`publicKey`).
-	 * - An old private key is safe to delete only once **no** queried token still reports its public
-	 *   key. Pass every token the account has ever registered (including any it may have been
-	 *   auto-registered for) to make that determination sound.
+	 * - An old private key is safe to delete only once **no** token still reports its public key. Omit
+	 *   `tokenTypes` (enumerate all) to make that determination sound.
 	 *
 	 * @example
 	 * ```ts
-	 * const { accountPublicKey, tokens } = await client.getTokenKeys(address, [buType, otherType]);
+	 * const { accountPublicKey, tokens } = await client.getTokenKeys(address); // every token
 	 * const stale = tokens.filter((t) => t.stale); // need rekeyToken
 	 * const oldKeyStillUsed = tokens.some((t) => t.publicKey?.equals(oldPublicKey));
 	 * ```
 	 *
 	 * Throws `AccountDoesNotExistError` if `address` has no `Account`.
 	 */
-	async getTokenKeys(address: string, tokenTypes: readonly string[]): Promise<AccountTokenKeys> {
+	async getTokenKeys(address: string, tokenTypes?: readonly string[]): Promise<AccountTokenKeys> {
+		const types = tokenTypes ?? (await this.#listTokenTypes(address));
 		const objectIds = [
 			this.getAccountId(address),
-			...tokenTypes.map((t) => this.getTokenAccountId(address, t)),
+			...types.map((t) => this.getTokenAccountId(address, t)),
 		];
 		const {
 			objects: [accountObject, ...tokenObjects],
@@ -367,11 +370,11 @@ export class ContraClient {
 
 		const tokens = tokenObjects.map((object, i) => {
 			if (object instanceof Error) {
-				return { tokenType: tokenTypes[i], registered: false, stale: false };
+				return { tokenType: types[i], registered: false, stale: false };
 			}
 			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk);
 			return {
-				tokenType: tokenTypes[i],
+				tokenType: types[i],
 				registered: true,
 				publicKey,
 				stale: !publicKey.equals(accountPublicKey),
@@ -379,6 +382,29 @@ export class ContraClient {
 		});
 
 		return { accountPublicKey, tokens };
+	}
+
+	/**
+	 * Enumerate the token types registered on `address`'s account by listing its dynamic fields (an
+	 * `Account` stores only `TokenAccount<T>`s as dynamic fields, so the field `valueType`s carry every
+	 * `T`). Returns `[]` when the account has no token accounts (or does not exist).
+	 */
+	async #listTokenTypes(address: string): Promise<string[]> {
+		const parentId = this.getAccountId(address);
+		const marker = '::contra::TokenAccount<';
+		const types: string[] = [];
+		let cursor: string | null = null;
+		do {
+			const page = await this.#suiClient.core.listDynamicFields({ parentId, cursor });
+			for (const field of page.dynamicFields) {
+				const start = field.valueType.indexOf(marker);
+				if (start >= 0 && field.valueType.endsWith('>')) {
+					types.push(field.valueType.slice(start + marker.length, -1));
+				}
+			}
+			cursor = page.hasNextPage ? page.cursor : null;
+		} while (cursor);
+		return types;
 	}
 
 	/**
