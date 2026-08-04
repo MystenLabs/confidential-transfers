@@ -4,7 +4,7 @@
 /// Guardian module (design: `guardian/README.md`).
 ///
 /// When a `GuardianPolicy` is set on a `ConfidentialToken<T>`, every transfer and
-/// unwrap must carry an approval signed by a registered enclave.
+/// unwrap must carry a `GuardianApproval` signed by a registered enclave.
 ///
 /// The issuer (`ManagementCap`) owns the policy, its `pcrs`, `min_version`, and the
 /// operator address. The operator runs one serving endpoint (`url`) backed by
@@ -81,26 +81,26 @@ public struct GuardianEnclaveKey has copy, drop, store {
     version: u16,
 }
 
-/// An enclave's ed25519 signature over the BCS `ApprovalPayload`, together with the
+/// An enclave's ed25519 signature over the BCS `RequestPayload`, together with the
 /// `signing_pk` that produced it.
 public struct GuardianApproval has copy, drop {
     signing_pk: Ed25519PublicKey,
     signature: Ed25519Signature,
 }
 
-/// The approval payload that the enclave signature is verified against.
-public enum ApprovalPayload has copy, drop {
+/// The request payload that the enclave signature is verified against.
+public enum RequestPayload has copy, drop {
     Transfer {
         sender_pk: Element<G>,
         receiver_pks: vector<Element<G>>,
-        old_balance: Encryption,
-        new_balance: Encryption,
-        amounts: vector<Encryption>,
+        old_encrypted_balance: Encryption,
+        new_encrypted_balance: Encryption,
+        encrypted_amounts: vector<Encryption>,
     },
     Unwrap {
         sender_pk: Element<G>,
-        old_balance: Encryption,
-        new_balance: Encryption,
+        old_encrypted_balance: Encryption,
+        new_encrypted_balance: Encryption,
         amount: u64,
     },
 }
@@ -173,29 +173,29 @@ public(package) fun new(pcrs: Pcrs, operator: address, url: String): GuardianPol
     }
 }
 
-public(package) fun new_transfer_approval_payload(
+public(package) fun new_transfer_request_payload(
     sender_pk: Element<G>,
     receiver_pks: vector<Element<G>>,
-    old_balance: Encryption,
-    new_balance: Encryption,
-    amounts: vector<Encryption>,
-): ApprovalPayload {
-    ApprovalPayload::Transfer {
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
+    encrypted_amounts: vector<Encryption>,
+): RequestPayload {
+    RequestPayload::Transfer {
         sender_pk,
         receiver_pks,
-        old_balance,
-        new_balance,
-        amounts,
+        old_encrypted_balance,
+        new_encrypted_balance,
+        encrypted_amounts,
     }
 }
 
-public(package) fun new_unwrap_approval_payload(
+public(package) fun new_unwrap_request_payload(
     sender_pk: Element<G>,
-    old_balance: Encryption,
-    new_balance: Encryption,
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
     amount: u64,
-): ApprovalPayload {
-    ApprovalPayload::Unwrap { sender_pk, old_balance, new_balance, amount }
+): RequestPayload {
+    RequestPayload::Unwrap { sender_pk, old_encrypted_balance, new_encrypted_balance, amount }
 }
 
 // Issuer operations (ManagementCap-gated by the wrappers in contra.move).
@@ -388,22 +388,28 @@ public fun set_operator_for_testing(self: &mut GuardianPolicy, operator: address
 }
 
 #[test_only]
-public fun new_unwrap_approval_payload_for_testing(
+public fun new_unwrap_request_payload_for_testing(
     sender_pk: Element<G>,
-    old_balance: Encryption,
-    new_balance: Encryption,
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
     amount: u64,
-): ApprovalPayload {
-    new_unwrap_approval_payload(sender_pk, old_balance, new_balance, amount)
+): RequestPayload {
+    new_unwrap_request_payload(sender_pk, old_encrypted_balance, new_encrypted_balance, amount)
 }
 
 #[test_only]
-public fun new_transfer_approval_payload_for_testing(
+public fun new_transfer_request_payload_for_testing(
     sender_pk: Element<G>,
     receiver_pks: vector<Element<G>>,
-    old_balance: Encryption,
-    new_balance: Encryption,
-    amounts: vector<Encryption>,
-): ApprovalPayload {
-    new_transfer_approval_payload(sender_pk, receiver_pks, old_balance, new_balance, amounts)
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
+    encrypted_amounts: vector<Encryption>,
+): RequestPayload {
+    new_transfer_request_payload(
+        sender_pk,
+        receiver_pks,
+        old_encrypted_balance,
+        new_encrypted_balance,
+        encrypted_amounts,
+    )
 }

@@ -170,11 +170,11 @@ fun parse_user_data_rejects_wrong_length() {
     guardian::parse_user_data_for_testing(user_data);
 }
 
-/// Pins the BCS layout of `ApprovalPayload` — the enclave (guardian-core) and
+/// Pins the BCS layout of `RequestPayload` — the enclave (guardian-core) and
 /// ts-sdk must produce these exact bytes for the same inputs.
 #[test]
-fun approval_payload_serde() {
-    let payload = guardian::new_transfer_approval_payload_for_testing(
+fun request_payload_serde() {
+    let payload = guardian::new_transfer_request_payload_for_testing(
         ristretto255::g_generator(),
         vector[ristretto255::g_identity()],
         encrypt_zero_for_testing(),
@@ -239,8 +239,8 @@ fun update_with_all_none_is_a_noop() {
 
 /// Pins the BCS layout of the `Unwrap` variant (tag 1).
 #[test]
-fun unwrap_approval_payload_serde() {
-    let payload = guardian::new_unwrap_approval_payload_for_testing(
+fun unwrap_request_payload_serde() {
+    let payload = guardian::new_unwrap_request_payload_for_testing(
         ristretto255::g_generator(),
         encrypt_zero_for_testing(),
         encrypt_zero_for_testing(),

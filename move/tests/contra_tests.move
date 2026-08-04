@@ -1936,7 +1936,7 @@ fun guardian_policy_set_and_unset() {
 // === Guardian transfer matrix ===
 
 // Deterministic enclave fixture (fastcrypto ed25519, seed 0x00..1f). `GUARDED_TRANSFER_SIG`
-// signs the exact `TransferApprovalPayload` that `run_guarded_transfer` produces (fixed
+// signs the exact `RequestPayload::Transfer` that `run_guarded_transfer` produces (fixed
 // session id below, sender sk 12345, receiver sk 67890, 100 wrapped and merged, 50
 // transferred with limb-0 blindings r_xfer=32533 / r_balance=10097). Regenerate with the
 // ed25519-fixture tool if any of those inputs change.
@@ -1944,8 +1944,8 @@ const GUARDIAN_ENCLAVE_PK: vector<u8> =
     x"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8";
 const GUARDED_TRANSFER_SIG: vector<u8> =
     x"7118ad4962063ce9f9bd3460ab0d361ec7ae3ade7571089c93ed0d5d6794ac3baec5c3546d4209bdfcf2c666cd4a36ac1b74a7e6f17ecbf99142380ad940c700";
-const GUARDIAN_SESSION_ID: vector<u8> = x"0102030405060708090a0b0c0d0e0f1011121314";
-// Signs the `UnwrapApprovalPayload` that `run_guarded_unwrap` produces (same account
+const FIXED_ACCOUNT_SESSION_ID: vector<u8> = x"0102030405060708090a0b0c0d0e0f1011121314";
+// Signs the `RequestPayload::Unwrap` that `run_guarded_unwrap` produces (same account
 // state, unwrap 40 leaving 60 with limb-0 blinding r=76520).
 const GUARDED_UNWRAP_SIG: vector<u8> =
     x"57dbb435c7705d49c4914f6b557f124e23323d1baf6e0e07b0cc39f1b496f71b0d10285e75f2294623c7192d5c098d786b766da4ac799556667cdf884efd9f07";
@@ -1986,7 +1986,7 @@ fun guardian_disabled_valid_proofs_pass() {
 }
 
 /// One deterministic 100-wrap / 50-transfer flow, parameterized over the guardian matrix.
-/// The sender registers with the fixed `GUARDIAN_SESSION_ID` (via `register_internal`) so
+/// The sender registers with `FIXED_ACCOUNT_SESSION_ID` (via `register_internal`) so
 /// the approval payload -- and therefore `GUARDED_TRANSFER_SIG` -- is reproducible offline.
 /// An invalid balance proof is one built with the wrong secret key; the payload (and thus
 /// the signature) is unchanged by it, isolating the two failure modes.
@@ -2041,16 +2041,16 @@ fun run_guarded_transfer(
         );
     };
 
-    // Sender registers under the fixed session id so the approval payload is deterministic.
+    // Sender registers under the fixed session id so the signed payload is deterministic.
     scenario.next_tx(addr1);
     let mut account_1 = acc_reg.new(addr1);
     let auth = ct.authorize_as_sender(scenario.ctx());
-    let kc_dst = contra::dst(GUARDIAN_SESSION_ID, contra::protocol_id_key_consistency());
+    let kc_dst = contra::dst(FIXED_ACCOUNT_SESSION_ID, contra::protocol_id_key_consistency());
     account_1.register_internal<TestCurrency>(
         &auth,
         pk_1,
         ct.verify_key_encryption_for_testing(&pk_1, option::none(), kc_dst),
-        GUARDIAN_SESSION_ID,
+        FIXED_ACCOUNT_SESSION_ID,
     );
 
     scenario.next_tx(addr2);
@@ -2076,14 +2076,14 @@ fun run_guarded_transfer(
         encrypt_zero(),
         encrypt_zero(),
     );
-    let elgamal_dst = contra::dst(GUARDIAN_SESSION_ID, contra::protocol_id_elgamal());
+    let elgamal_dst = contra::dst(FIXED_ACCOUNT_SESSION_ID, contra::protocol_id_elgamal());
     let receiver_amount = amount_for_testing(50, &pk_2, r_xfer);
     let sender_amount = amount_for_testing(50, &pk_1, r_xfer);
     let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r_xfer, elgamal_dst);
     let old_balance = account_1.balance<TestCurrency>();
     let balance_sk = if (valid_balance_proof) { sk_1 } else { sk_2 };
     let sum_proof = nizk::sum_proof_for_testing(
-        contra::dst(GUARDIAN_SESSION_ID, contra::protocol_id_ddh()),
+        contra::dst(FIXED_ACCOUNT_SESSION_ID, contra::protocol_id_ddh()),
         &old_balance,
         &new_balance_ea.collapse(),
         &sender_amount.collapse(),
@@ -2201,12 +2201,12 @@ fun run_guarded_unwrap(enable_guardian: bool, approval: Option<guardian::Guardia
     scenario.next_tx(addr1);
     let mut account_1 = acc_reg.new(addr1);
     let auth = ct.authorize_as_sender(scenario.ctx());
-    let kc_dst = contra::dst(GUARDIAN_SESSION_ID, contra::protocol_id_key_consistency());
+    let kc_dst = contra::dst(FIXED_ACCOUNT_SESSION_ID, contra::protocol_id_key_consistency());
     account_1.register_internal<TestCurrency>(
         &auth,
         pk_1,
         ct.verify_key_encryption_for_testing(&pk_1, option::none(), kc_dst),
-        GUARDIAN_SESSION_ID,
+        FIXED_ACCOUNT_SESSION_ID,
     );
 
     scenario.next_tx(addr1);
@@ -2229,11 +2229,11 @@ fun run_guarded_unwrap(enable_guardian: bool, approval: Option<guardian::Guardia
     zero.add_assign_u64(taken_amount);
     zero.sub_assign(&account_1.balance<TestCurrency>());
     let sum_proof = nizk::zero_proof_for_testing(
-        contra::dst(GUARDIAN_SESSION_ID, contra::protocol_id_ddh()),
+        contra::dst(FIXED_ACCOUNT_SESSION_ID, contra::protocol_id_ddh()),
         &zero,
         &sk_1,
     );
-    let elgamal_dst = contra::dst(GUARDIAN_SESSION_ID, contra::protocol_id_elgamal());
+    let elgamal_dst = contra::dst(FIXED_ACCOUNT_SESSION_ID, contra::protocol_id_elgamal());
     let new_balance_proof = encrypted_amount::new_well_formed_proof_singleton_for_testing(
         consistency_proof_for_testing(elgamal_dst, 60, &new_balance, 76520, &pk_1),
     );
