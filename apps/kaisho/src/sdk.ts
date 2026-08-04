@@ -10,7 +10,7 @@
  *   2. Read state (chain queries)         — balances, account status, auditors, pause/deny.
  *   3. End-user transactions              — mint, register, wrap, unwrap, transfer.
  *   4. Issuer transactions                — deny list, global pause, freeze admins.
- *   5. Auditor flow                       — recover an account and decrypt.
+ *   5. Auditor flow                       — decrypt a transfer's amount from its event.
  *   6. Faucet                             — testnet SUI for gas.
  *   7. Deployment                         — publish bytecodes and register BU.
  *   8. Tx helpers                         — execute and check for merge-failure events.
@@ -42,10 +42,9 @@ import {
 	TransferEventBcs,
 } from 'ts-sdk';
 import type {
-	AuditorVersionEntry,
 	ContraCompatibleClient,
 	ContraPackageConfig,
-	TokenAuditors,
+	TokenAuditor,
 	TokenBalance,
 } from 'ts-sdk';
 
@@ -132,23 +131,16 @@ export function createContraClient(
 	});
 }
 
-/** Build a `ContraAuditor`. The auditor decrypts ~32-bit limbs of the
- *  user's twisted-ElGamal private key, so it uses a larger DLog table
- *  than the user. */
+/** Build a per-transfer `ContraAuditor` from the token's auditor private key. It decrypts a
+ *  transfer's amount from a `TransferEvent` (the two u32-limb auditor handles + the receiver's
+ *  commitments) — it never recovers a user's viewing key. Uses a larger DLog table than the user
+ *  because each auditor limb is up to 32 bits. */
 export function createContraAuditor(
-	suiClient: ContraCompatibleClient,
-	packageConfig: ContraPackageConfig,
 	tokenType: string,
+	privateKey: bigint,
 	table: DiscreteLogTable,
-	auditorKeyForVersion: Map<number, AuditorVersionEntry>,
 ): ContraAuditor {
-	return new ContraAuditor({
-		suiClient,
-		packageConfig,
-		tokenType,
-		table,
-		auditorKeyForVersion,
-	});
+	return new ContraAuditor({ tokenType, privateKey, table });
 }
 
 /** Helper for callers that already have a `TokenConfig`. */
@@ -220,12 +212,12 @@ export function totalConfidentialBalanceBu(balance: TokenBalance): number {
 	return Number(total) / 1e9;
 }
 
-/** Fetch the on-chain auditor public-key set for the given token. */
-export function fetchAuditors(
+/** Fetch the on-chain auditor config (current/previous key + grace) for the given token. */
+export function fetchAuditor(
 	contraClient: ContraClient,
 	tokenType: string,
-): Promise<TokenAuditors> {
-	return contraClient.getAuditors(tokenType);
+): Promise<TokenAuditor> {
+	return contraClient.getAuditor(tokenType);
 }
 
 /** BCS layout of the `bu_token::token_config::TokenConfig` Move struct.
@@ -359,10 +351,13 @@ export function buildMintTx(config: TokenConfig): Transaction {
  *  `newAccount` when only the per-token TokenAccount is missing.
  *
  *  Calls (in order):
- *    1. `contraClient.newAccount`        — only when no Account exists yet.
- *    2. `contraClient.register`          — proves the viewing key under the auditor pubkeys.
+ *    1. `contraClient.newAccount`        — only when no Account exists yet (creates for the sender,
+ *                                          keyed at the token account's public key).
+ *    2. `contraClient.register`          — registers the per-token TokenAccount under `Account.pk`.
  *    3. `contraClient.shareAccount`      — only when newAccount was used.
  *    4. `bu::mint_10`                    — fund the new account so the user can play.
+ *
+ *  Under per-transfer auditing, registration carries no auditor data.
  */
 export async function buildRegisterAccountTx(opts: {
 	contraClient: ContraClient;
@@ -372,16 +367,15 @@ export async function buildRegisterAccountTx(opts: {
 	tokenType: string;
 	accountStatus: 'needs-account' | 'needs-token-account';
 }): Promise<Transaction> {
-	const { contraClient, config, tokenAccount, accountStatus, tokenType } = opts;
-	const { pks: auditorPublicKeys } = await contraClient.getAuditors(tokenType);
+	const { contraClient, config, tokenAccount, accountStatus } = opts;
 
 	const tx = new Transaction();
 	if (accountStatus === 'needs-account') {
-		const account = tx.add(contraClient.newAccount({ owner: opts.address }));
-		tx.add(await contraClient.register({ tokenAccount, account, auditorPublicKeys }));
+		const account = tx.add(contraClient.newAccount({ publicKey: tokenAccount.publicKey }));
+		tx.add(await contraClient.register({ tokenAccount, account }));
 		tx.add(contraClient.shareAccount({ account }));
 	} else {
-		tx.add(await contraClient.register({ tokenAccount, auditorPublicKeys }));
+		tx.add(await contraClient.register({ tokenAccount }));
 	}
 	tx.moveCall({
 		target: `${config.buPackage}::bu::mint_10`,
@@ -636,20 +630,26 @@ export async function executeIssuerTx(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// 5. Auditor flow
+// 5. Auditor flow (per-transfer)
 // ─────────────────────────────────────────────────────────────────────
 
-/** Recover a `TokenAccount` from a target address using the auditor's
- *  knowledge of the encrypted viewing key, then decrypt that account's
- *  balance. */
-export async function auditAccount(
-	auditor: ContraAuditor,
-	contraClient: ContraClient,
-	address: string,
-): Promise<{ tokenAccount: TokenAccount; balance: TokenBalance }> {
-	const tokenAccount = await auditor.getTokenAccount(address);
-	const balance = await contraClient.getBalance(tokenAccount);
-	return { tokenAccount, balance };
+/** Decrypt the amount of a single transfer from its `TransferEvent`, from the auditor's
+ *  perspective. Regroups the receiver's four u16 limbs into the two u32-limb commitments and pairs
+ *  them with the event's two `auditor_handles`, then BSGS-decrypts with the auditor key. Returns
+ *  `null` if the event isn't a valid `TransferEvent`, carried no auditor data, or is out of range. */
+export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array): bigint | null {
+	try {
+		const decoded = TransferEventBcs.parse(eventBcs);
+		if (decoded.auditor_handles.length !== 2) return null;
+		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
+		return auditor.decryptTransferAmount(
+			encryptedAmount,
+			decoded.auditor_handles.map((h) => pointFromBcs(h)),
+		);
+	} catch (e) {
+		console.error('[sdk] failed to audit-decrypt TransferEvent', e);
+		return null;
+	}
 }
 
 /** Decrypt the encrypted amount carried inside a `TransferEvent` from
@@ -710,8 +710,6 @@ export function requestSui(network: Network, address: string): Promise<unknown> 
 // 7. Deployment (issuer setup)
 // ─────────────────────────────────────────────────────────────────────
 
-const NUM_AUDITORS = 2;
-
 function bytesToHex(bytes: Uint8Array): string {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -740,29 +738,31 @@ export async function createTokenFromBytecodes(
 	log(`AccountRegistry: ${accountRegistryId}`);
 	log(`DenyCap: ${denyCapId}`);
 
-	log(`Generating ${NUM_AUDITORS} auditor keypair(s)...`);
-	const auditorKeys: AuditorKey[] = Array.from({ length: NUM_AUDITORS }, () => {
-		const sk = randomScalar();
-		const pk = G.multiply(sk).toBytes();
-		return { privateKey: sk.toString(16), publicKey: bytesToHex(pk) };
-	});
-	auditorKeys.forEach((k, i) => log(`Auditor ${i + 1} pubkey: ${k.publicKey}`));
+	log('Generating auditor keypair...');
+	const auditorSk = randomScalar();
+	const auditorKey: AuditorKey = {
+		privateKey: auditorSk.toString(16),
+		publicKey: bytesToHex(G.multiply(auditorSk).toBytes()),
+	};
+	// Per-transfer auditing uses a single auditor key. Kept as a one-element array so the stored
+	// deployment shape (`auditorKeys[0]`) is unchanged.
+	const auditorKeys: AuditorKey[] = [auditorKey];
+	log(`Auditor pubkey: ${auditorKey.publicKey}`);
 
 	log('Registering BU as confidential token...');
 	const regTx = new Transaction();
-	const auditorPubKeyArgs = auditorKeys.map((k) =>
-		point(Uint8Array.from(k.publicKey.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
-	);
+	const elementType = `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`;
+	// `register_confidential` takes `Option<Element>`; wrap the auditor pk in `option::some`.
+	const auditorPkArg = regTx.moveCall({
+		target: '0x1::option::some',
+		typeArguments: [elementType],
+		arguments: [
+			point(Uint8Array.from(auditorKey.publicKey.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
+		],
+	});
 	regTx.moveCall({
 		target: `${packageId}::bu::register_confidential`,
-		arguments: [
-			regTx.object(buTreasuryId),
-			regTx.object(tokenRegistryId),
-			regTx.makeMoveVec({
-				type: `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`,
-				elements: auditorPubKeyArgs,
-			}),
-		],
+		arguments: [regTx.object(buTreasuryId), regTx.object(tokenRegistryId), auditorPkArg],
 	});
 	const regCreated = await signExecuteAndWait(regTx, keypair, client);
 	const confidentialTokenId = findObject(regCreated, 'ConfidentialToken');

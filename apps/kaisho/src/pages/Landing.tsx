@@ -121,7 +121,6 @@ export function Landing() {
 				secretKey,
 				address,
 				auditorPrivateKey: tokenResult.auditorKeys[0].privateKey,
-				auditorIndex: 0,
 				denyCapId: tokenResult.denyCapId,
 				managementCapId: tokenResult.managementCapId,
 				confidentialTokenId: tokenResult.confidentialTokenId,
