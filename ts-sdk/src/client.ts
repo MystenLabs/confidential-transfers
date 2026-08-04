@@ -49,7 +49,6 @@ import type { DiscreteLogTable, PublicKey } from './twisted_elgamal.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from './twisted_elgamal.js';
 import type {
 	AccountStatus,
-	AccountTokenKeys,
 	BatchedTransferOptions,
 	ContraClientOptions,
 	ContraCompatibleClient,
@@ -64,6 +63,7 @@ import type {
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
+	TokenKeyStatus,
 	TransferOptions,
 	TryRekeyTokensOptions,
 	UnpauseAccountOptions,
@@ -348,10 +348,9 @@ export class ContraClient {
 	}
 
 	/**
-	 * Report the account's optional default key (`Account.pk`, `undefined` when unset) and, for each
-	 * token, the key that token's balances are currently encrypted under. Pass `tokenTypes` to query
-	 * specific tokens, or omit it to enumerate every token registered on the account (its
-	 * `TokenAccount` dynamic fields). Use it to see each token's current key — e.g. after
+	 * Report, for each token, the key that token's balances are currently encrypted under. Pass
+	 * `tokenTypes` to query specific tokens, or omit it to enumerate every token registered on the
+	 * account (its `TokenAccount` dynamic fields). Use it to see each token's current key — e.g. after
 	 * `tryRekeyTokens`, compare each token's reported key against the key you intended and retry any
 	 * that didn't take (a soft-failed re-key still reports the old key). A token's balance can only be
 	 * re-keyed or decrypted with the key it currently reports (`publicKey`), so an old private key is
@@ -359,13 +358,13 @@ export class ContraClient {
 	 *
 	 * @example
 	 * ```ts
-	 * const { accountPublicKey, tokens } = await client.getTokenKeys(address); // every token
+	 * const tokens = await client.getTokenKeys(address); // every token
 	 * const oldKeyStillUsed = tokens.some((t) => t.publicKey?.equals(oldPublicKey));
 	 * ```
 	 *
 	 * Throws `AccountDoesNotExistError` if `address` has no `Account`.
 	 */
-	async getTokenKeys(address: string, tokenTypes?: readonly string[]): Promise<AccountTokenKeys> {
+	async getTokenKeys(address: string, tokenTypes?: readonly string[]): Promise<TokenKeyStatus[]> {
 		const types = tokenTypes ?? (await this.#listTokenTypes(address));
 		const objectIds = [
 			this.getAccountId(address),
@@ -378,18 +377,14 @@ export class ContraClient {
 		if (accountObject instanceof Error) {
 			throw new AccountDoesNotExistError(address, accountObject.message);
 		}
-		const accountPkBcs = contraContracts.Account.parse(accountObject.content).pk;
-		const accountPublicKey = accountPkBcs ? pointFromBcs(accountPkBcs) : undefined;
 
-		const tokens = tokenObjects.map((object, i) => {
+		return tokenObjects.map((object, i) => {
 			if (object instanceof Error) {
 				return { tokenType: types[i], registered: false };
 			}
 			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk);
 			return { tokenType: types[i], registered: true, publicKey };
 		});
-
-		return { accountPublicKey, tokens };
 	}
 
 	/**

@@ -245,7 +245,10 @@ export interface NewAccountOptions {
 	defaultKey?: RistrettoPoint;
 }
 
-/** The key a single token's balances are currently encrypted under (see `ContraClient.getTokenKeys`). */
+/**
+ * One token's key status, as reported by `ContraClient.getTokenKeys` (one per queried token type, in
+ * the same order).
+ */
 export interface TokenKeyStatus {
 	/** The fully-qualified Move token type. */
 	tokenType: string;
@@ -253,14 +256,6 @@ export interface TokenKeyStatus {
 	registered: boolean;
 	/** The key this token's balances are currently under, or `undefined` when not registered. */
 	publicKey?: RistrettoPoint;
-}
-
-/** Result of `ContraClient.getTokenKeys`: the account's default key plus each queried token's key. */
-export interface AccountTokenKeys {
-	/** The account's optional default key (`Account.pk`), or `undefined` when unset. */
-	accountPublicKey?: RistrettoPoint;
-	/** One entry per queried token type, in the same order. */
-	tokens: TokenKeyStatus[];
 }
 
 /** Arguments to `ContraClient.register`. */
