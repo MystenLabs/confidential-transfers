@@ -29,6 +29,7 @@ export type {
 	ContraCompatibleClient,
 	ContraOptions,
 	ContraPackageConfig,
+	KeyRotation,
 	NewAccountOptions,
 	PauseAccountOptions,
 	RegisterOptions,

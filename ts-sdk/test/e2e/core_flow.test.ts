@@ -624,8 +624,8 @@ describe('core user flows (devnet)', () => {
 				randomScalar(),
 			);
 			const rotateFn = await client.contra.rotateKeys({
-				tokenAccounts: [userTokenAccount],
-				newTokenAccount,
+				rotations: [{ tokenAccount: userTokenAccount, newTokenAccount }],
+				newDefaultKey: newTokenAccount.publicKey,
 			});
 			const rotateTx = new Transaction();
 			rotateFn(rotateTx);
@@ -666,8 +666,8 @@ describe('core user flows (devnet)', () => {
 				randomScalar(),
 			);
 			const rotateFn2 = await client.contra.rotateKeys({
-				tokenAccounts: [newTokenAccount],
-				newTokenAccount: rotated2,
+				rotations: [{ tokenAccount: newTokenAccount, newTokenAccount: rotated2 }],
+				newDefaultKey: rotated2.publicKey,
 			});
 			const rotateTx2 = new Transaction();
 			rotateFn2(rotateTx2);
