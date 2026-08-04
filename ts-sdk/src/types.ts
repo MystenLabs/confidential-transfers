@@ -253,14 +253,6 @@ export interface TokenKeyStatus {
 	registered: boolean;
 	/** The key this token's balances are currently under, or `undefined` when not registered. */
 	publicKey?: RistrettoPoint;
-	/**
-	 * True when the token's key differs from the account's default key (`Account.pk`), computed only
-	 * when that key is set. A convenience for accounts that keep every token on the default key;
-	 * per-token keys may legitimately differ. A token's balance can only be re-keyed or decrypted with
-	 * the key it currently reports here, so while any token still reports an old key, that old private
-	 * key must be retained.
-	 */
-	stale: boolean;
 }
 
 /** Result of `ContraClient.getTokenKeys`: the account's default key plus each queried token's key. */

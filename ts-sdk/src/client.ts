@@ -353,20 +353,13 @@ export class ContraClient {
 	 * specific tokens, or omit it to enumerate every token registered on the account (its
 	 * `TokenAccount` dynamic fields). Use it to see each token's current key — e.g. after
 	 * `tryRekeyTokens`, compare each token's reported key against the key you intended and retry any
-	 * that didn't take (a soft-failed re-key still reports the old key), and decide whether an old key
-	 * can be discarded:
-	 *
-	 * - `stale === true` for a token means its `TokenAccount.pk` differs from the account's default key
-	 *   (computed only when that key is set). This is a convenience for accounts that keep every token
-	 *   on the default key; per-token keys may legitimately differ. A token's balance can only be
-	 *   re-keyed or decrypted with the key it currently reports (`publicKey`).
-	 * - An old private key is safe to delete only once **no** token still reports its public key. Omit
-	 *   `tokenTypes` (enumerate all) to make that determination sound.
+	 * that didn't take (a soft-failed re-key still reports the old key). A token's balance can only be
+	 * re-keyed or decrypted with the key it currently reports (`publicKey`), so an old private key is
+	 * safe to delete only once **no** token still reports it (omit `tokenTypes` to check them all).
 	 *
 	 * @example
 	 * ```ts
 	 * const { accountPublicKey, tokens } = await client.getTokenKeys(address); // every token
-	 * const stale = tokens.filter((t) => t.stale); // need rekeyToken
 	 * const oldKeyStillUsed = tokens.some((t) => t.publicKey?.equals(oldPublicKey));
 	 * ```
 	 *
@@ -390,15 +383,10 @@ export class ContraClient {
 
 		const tokens = tokenObjects.map((object, i) => {
 			if (object instanceof Error) {
-				return { tokenType: types[i], registered: false, stale: false };
+				return { tokenType: types[i], registered: false };
 			}
 			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk);
-			return {
-				tokenType: types[i],
-				registered: true,
-				publicKey,
-				stale: accountPublicKey ? !publicKey.equals(accountPublicKey) : false,
-			};
+			return { tokenType: types[i], registered: true, publicKey };
 		});
 
 		return { accountPublicKey, tokens };
@@ -911,9 +899,10 @@ export class ContraClient {
 	 * independently via `rekeyToken`.
 	 *
 	 * IMPORTANT: when you rotate a token's key, retain the OLD private key until that token has been
-	 * re-keyed. A still-stale token's balance remains encrypted under the old key, and both re-keying
-	 * it (the proof witness is `newSk * oldSk^-1`) and decrypting it require the old key. Discarding the
-	 * old key while any token is still stale makes that token's balance permanently unrecoverable.
+	 * re-keyed. A not-yet-re-keyed token's balance remains encrypted under the old key, and both
+	 * re-keying it (the proof witness is `newSk * oldSk^-1`) and decrypting it require the old key.
+	 * Discarding the old key while any token is still under it makes that balance permanently
+	 * unrecoverable.
 	 *
 	 * @example
 	 * ```ts
