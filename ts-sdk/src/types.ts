@@ -255,7 +255,7 @@ export interface TokenKeyStatus {
 	publicKey?: RistrettoPoint;
 	/**
 	 * True when the token's key differs from the account's default key (`Account.pk`), computed only
-	 * when that key is set. Since `rotateKeyAll` sets the default key to the convergence target, a
+	 * when that key is set. Since `rotateKeys` sets the default key to the convergence target, a
 	 * stale token is one that has not caught up: it still needs `rekeyToken`, and its balance can only
 	 * be re-keyed or decrypted with the key it currently reports here. While any token reports an old
 	 * key, that old private key must be retained.
@@ -386,24 +386,21 @@ export interface RekeyTokenOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.rotateKey`: set the account key and re-key one token in one PTB. */
-export interface RotateKeyOptions extends RekeyTokenOptions {}
-
 /**
- * Arguments to `ContraClient.rotateKeyAll`: set the account key once and optimistically re-key many
- * tokens in one PTB. All rotated tokens are assumed to share one current key and converge to one new
- * key.
+ * Arguments to `ContraClient.rotateKeys`: set the account's default key once and optimistically re-key
+ * one or more tokens to that new key in one PTB.
  */
-export interface RotateKeyAllOptions {
+export interface RotateKeysOptions {
 	/**
-	 * Any current `TokenAccount` for the account — only its address and (shared) current key are used.
-	 * Every rotated token is assumed to currently be under this key.
+	 * The current token accounts to re-key — each carries its own `tokenType` and current key, so
+	 * tokens under different keys can be mixed. Must all be for the same account (same `address`).
 	 */
-	tokenAccount: TokenAccount;
-	/** A `TokenAccount` carrying the new key that every token converges to (the new `Account.pk`). */
+	tokenAccounts: readonly TokenAccount[];
+	/**
+	 * A `TokenAccount` carrying the new key that every token converges to (also set as the account's
+	 * default key). Only its key and address are used; its `tokenType` is ignored.
+	 */
 	newTokenAccount: TokenAccount;
-	/** Which tokens to re-key. Omit to re-key every token registered on the account. */
-	tokenTypes?: readonly string[];
 	/**
 	 * When `true` (the default), a `merge` is prepended before each token's re-key so it can proceed
 	 * against the merged active balance (re-key requires an empty pending balance).

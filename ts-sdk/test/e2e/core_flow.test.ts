@@ -577,7 +577,7 @@ describe('core user flows (devnet)', () => {
 	);
 
 	it(
-		'rotateKey: sets the account key and re-keys the token, preserving balance and folding pending',
+		'rotateKeys: sets the default key and re-keys the token, preserving balance and folding pending',
 		{ timeout: 300_000 },
 		async () => {
 			// Fresh user. Bootstrap funding + account + register, then wrap + merge so the active
@@ -612,8 +612,8 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 1: no pending deposits. `rotateKey` sets the account key and re-keys the
-			// token in one PTB (set_default_key is O(1), rekey_token catches the token up). ---
+			// --- Rotation 1: no pending deposits. `rotateKeys` sets the default key and re-keys the
+			// token in one PTB (set_default_key is O(1), try_rekey_token catches the token up). ---
 			const oldPrivateKey = userTokenAccount.privateKey;
 			const oldPublicKeyBytes = userTokenAccount.publicKey.toBytes();
 
@@ -623,12 +623,12 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn = await client.contra.rotateKey({
-				tokenAccount: userTokenAccount,
+			const rotateFn = await client.contra.rotateKeys({
+				tokenAccounts: [userTokenAccount],
 				newTokenAccount,
 			});
 			const rotateTx = new Transaction();
-			rotateTx.add(rotateFn);
+			rotateFn(rotateTx);
 			rotateTx.setSender(userAddress);
 			await exec(rotateTx, userKp);
 
@@ -646,7 +646,7 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 2: with a pending public deposit outstanding so `rotateKey`'s inline merge
+			// --- Rotation 2: with a pending public deposit outstanding so `rotateKeys`' inline merge
 			// runs (rekey_token requires an empty pending). ---
 			const extra = 3n * ONE;
 			await tokenIssuer.mint(userAddress, extra);
@@ -665,12 +665,12 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn2 = await client.contra.rotateKey({
-				tokenAccount: newTokenAccount,
+			const rotateFn2 = await client.contra.rotateKeys({
+				tokenAccounts: [newTokenAccount],
 				newTokenAccount: rotated2,
 			});
 			const rotateTx2 = new Transaction();
-			rotateTx2.add(rotateFn2);
+			rotateFn2(rotateTx2);
 			rotateTx2.setSender(userAddress);
 			await exec(rotateTx2, userKp);
 
