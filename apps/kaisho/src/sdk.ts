@@ -402,7 +402,7 @@ export async function buildWrapTx(opts: {
 	const tx = new Transaction();
 	const [payment] = tx.splitCoins(tx.object(coins[0].objectId), [opts.amountRaw]);
 	tx.add(
-		opts.contraClient.wrap({
+		await opts.contraClient.wrap({
 			coin: payment,
 			receiver: opts.receiver,
 			tokenType: opts.tokenType,

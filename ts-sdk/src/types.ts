@@ -286,6 +286,14 @@ export interface RegisterOptions {
 	auth?: AuthThunk;
 }
 
+/** Arguments to `ContraClient.registerPermissionless`. */
+export interface RegisterPermissionlessOptions {
+	/** The owner address of the account to register a token account for. Must already have an `Account`. */
+	receiver: string;
+	/** The fully-qualified Move type of the token to register, e.g. `0x2::sui::SUI`. */
+	tokenType: string;
+}
+
 /** Return value of `ContraClient.getAccountStatus`. */
 export interface AccountStatus {
 	/**

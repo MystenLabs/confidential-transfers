@@ -90,7 +90,7 @@ export function createOperations(
 		expect(coins.objects.length).toBeGreaterThan(0);
 		const tx = new Transaction();
 		const [coin] = tx.splitCoins(tx.object(coins.objects[0].objectId), [amount]);
-		tx.add(client.contra.wrap({ coin, receiver, tokenType: tokenIssuer.tokenType }));
+		tx.add(await client.contra.wrap({ coin, receiver, tokenType: tokenIssuer.tokenType }));
 		tx.setSender(owner);
 		await exec(tx, ownerKeypair);
 	}

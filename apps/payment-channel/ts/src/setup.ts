@@ -169,7 +169,7 @@ export async function fundAndActivateChannel(opts: {
 	const tx = new Transaction();
 	const [split] = tx.splitCoins(tx.object(objects[0].objectId), [tx.pure.u64(fundAmount)]);
 	tx.add(
-		contraClient.wrap({
+		await contraClient.wrap({
 			coin: split,
 			receiver: channelObjectId,
 			tokenType: deployment.buType,

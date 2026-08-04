@@ -472,6 +472,38 @@ export function register(options: RegisterOptions) {
 			typeArguments: options.typeArguments,
 		});
 }
+export interface RegisterPermissionlessArguments {
+	account: RawTransactionArgument<string>;
+	ct: RawTransactionArgument<string>;
+}
+export interface RegisterPermissionlessOptions {
+	package?: string;
+	arguments:
+		| RegisterPermissionlessArguments
+		| [account: RawTransactionArgument<string>, ct: RawTransactionArgument<string>];
+	typeArguments: [string];
+}
+/**
+ * Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on
+ * behalf of its owner (keyed under the current `account.pk`), without any `Auth`. Only
+ * allowed when `T` leaves registration permissionless. Lets a sender ensure a receiver is
+ * registered before transferring or wrapping to them, since neither auto-registers anymore.
+ * Aborts if `T`'s registration is permissioned (`ERegistrationNotPermissionless`) or the
+ * token is already registered (`EAccountAlreadyRegistered`).
+ */
+export function registerPermissionless(options: RegisterPermissionlessOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'ct'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'register_permissionless',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+			typeArguments: options.typeArguments,
+		});
+}
 export interface SetAcceptsEncryptedDepositsArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;

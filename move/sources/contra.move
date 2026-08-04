@@ -43,8 +43,9 @@
 /// 3. Rotate the account key with `set_account_key`. Each token catches up lazily via `rekey_token`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
-/// 5. Transfer an encrypted amount to one or more token accounts. An unregistered receiver is
-///    auto-registered on first receive for permissionless tokens. Auditor data is attached if set.
+/// 5. Transfer an encrypted amount to one or more token accounts. Every receiver must already have a
+///    `TokenAccount<T>`; for permissionless tokens anyone can create one on their behalf up front
+///    with `register_permissionless`. Auditor data is attached if set.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
@@ -100,6 +101,7 @@ const EMissingAuditorData: u64 = 13;
 const EUnexpectedAuditorData: u64 = 14;
 const EAuditorProofFailed: u64 = 15;
 const EReceiverNotRegistered: u64 = 16;
+const ERegistrationNotPermissionless: u64 = 17;
 
 // === Constants ===
 
@@ -188,7 +190,6 @@ public enum TransferBatch<phantom T> {
         seed_point: Element<G>,
         next_index: u8,
         auditor_handles: vector<Element<G>>,
-        can_register_permissionless: bool,
     },
 }
 
@@ -344,6 +345,22 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>) {
     account.add_token_account<T>(session_id);
 }
 
+/// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
+/// owner (keyed under the current `account.pk`), without any `Auth`. Only allowed when `T` leaves
+/// registration permissionless. Lets a sender ensure a receiver is registered before transferring or
+/// wrapping to them, since neither auto-registers anymore. Aborts if `T`'s registration is
+/// permissioned (`ERegistrationNotPermissionless`) or the token is already registered
+/// (`EAccountAlreadyRegistered`).
+public fun register_permissionless<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
+    assert!(
+        policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
+        ERegistrationNotPermissionless,
+    );
+    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
+    let session_id = account.session_id<T>();
+    account.add_token_account<T>(session_id);
+}
+
 /// Create a `TokenAccount<T>` on `account`, keyed under the current `account.pk`. The caller is
 /// responsible for any authorization and for ensuring the token is not already registered.
 fun add_token_account<T>(account: &mut Account, session_id: vector<u8>) {
@@ -477,15 +494,7 @@ public fun wrap<T>(
         !is_receiver_denied<T>(deny_list, receiver.owner),
         ETransferDenied,
     );
-    // Auto-register the token on first receive if `T` has permissionless registration.
-    if (!receiver.has_token<T>()) {
-        assert!(
-            policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
-            EReceiverNotRegistered,
-        );
-        let session_id = receiver.session_id<T>();
-        receiver.add_token_account<T>(session_id);
-    };
+    assert!(receiver.has_token<T>(), EReceiverNotRegistered);
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
@@ -600,10 +609,6 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_handles,
-            can_register_permissionless: policy::is_permissionless(
-                &ct.policy,
-                PERMISSIONED_REGISTER,
-            ),
         }
     } else {
         withdrawn.destroy_none();
@@ -653,9 +658,9 @@ fun verify_auditing<T>(
 }
 
 /// Add a receiver to a batched transfer: pop the next receiver-keyed `EncryptedCoin` and credit it
-/// to the receiver's pending deposits. If the receiver has no `TokenAccount<T>` yet, one is
-/// auto-created (keyed at their `Account.pk`) when `T` leaves registration permissionless. Aborts if:
-///  * the receiver is unregistered and `T`'s registration is permissioned,
+/// to the receiver's pending deposits. The receiver must already have a `TokenAccount<T>` (for
+/// permissionless tokens anyone can create one up front with `register_permissionless`). Aborts if:
+///  * the receiver has no `TokenAccount<T>`,
 ///  * the receiver is frozen or on the deny list,
 ///  * `add_to_batch` is called more times than there were `receiver_amounts` in `batched_transfer`,
 ///  * the coin is not encrypted under the receiver's public key.
@@ -676,19 +681,12 @@ public fun add_to_batch<T>(
             seed_point,
             next_index,
             mut auditor_handles,
-            can_register_permissionless,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
             let receiver_addr = receiver.owner;
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
-
-            // Auto-register the token on first receive if `T` has  permissionless registration.
-            if (!receiver.has_token<T>()) {
-                assert!(can_register_permissionless, EReceiverNotRegistered);
-                let session_id = receiver.session_id<T>();
-                receiver.add_token_account<T>(session_id);
-            };
+            assert!(receiver.has_token<T>(), EReceiverNotRegistered);
 
             let coin = coins.pop_back();
 
@@ -725,7 +723,6 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index: next_index + 1,
                 auditor_handles,
-                can_register_permissionless,
             }
         },
     }

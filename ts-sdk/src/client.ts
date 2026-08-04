@@ -57,6 +57,7 @@ import type {
 	NewAccountOptions,
 	PauseAccountOptions,
 	RegisterOptions,
+	RegisterPermissionlessOptions,
 	RekeyTokenOptions,
 	RotateKeyAllOptions,
 	RotateKeyOptions,
@@ -147,10 +148,11 @@ export class ContraClient {
 	 * `core.getObjects` RPC for all addresses, preserving order. Throws if any
 	 * underlying object fetch returned an `Error` entry.
 	 *
-	 * With `autoRegisterFallback`, a receiver that has no `TokenAccount<T>` yet does not throw:
-	 * its state is taken from the receiver's `Account` (`pk = Account.pk`, deposits accepted, not
-	 * frozen), mirroring the on-chain auto-registration `add_to_batch` performs on first receive for
-	 * permissionless-register tokens. A receiver with no `Account` at all still throws.
+	 * With `autoRegisterFallback`, a receiver that has no `TokenAccount<T>` yet does not throw: its
+	 * state is taken from the receiver's `Account` (`pk = Account.pk`, deposits accepted, not frozen)
+	 * and flagged `needsRegistration`, so the caller can prepend a `register_permissionless` call
+	 * before depositing (deposits no longer auto-register on chain). A receiver with no `Account` at
+	 * all still throws.
 	 */
 	async #getAccountStates(
 		addresses: readonly string[],
@@ -186,6 +188,7 @@ export class ContraClient {
 					pk: pointFromBcs(contraContracts.Account.parse(account.content).pk),
 					acceptsEncryptedDeposits: true,
 					isFrozen: false,
+					needsRegistration: true,
 				});
 			});
 		}
@@ -201,6 +204,7 @@ export class ContraClient {
 				pk: pointFromBcs(parsed.pk),
 				acceptsEncryptedDeposits: parsed.accepts_deposits,
 				isFrozen: parsed.is_frozen,
+				needsRegistration: false,
 			};
 		});
 	}
@@ -536,19 +540,52 @@ export class ContraClient {
 	}
 
 	/**
+	 * Register a `TokenAccount<T>` for `receiver` on their behalf, without any `Auth` — the
+	 * permissionless counterpart to `register`. Only succeeds when the token leaves registration
+	 * permissionless, and `receiver` must already have an `Account`. `transferBatch` and `wrap` call
+	 * this automatically for an unregistered receiver, so use it directly only to pre-register.
+	 *
+	 * @example
+	 * ```ts
+	 * const tx = new Transaction();
+	 * tx.add(contraClient.registerPermissionless({ receiver, tokenType }));
+	 * ```
+	 *
+	 * On-chain aborts:
+	 * - `ERegistrationNotPermissionless` — the token's registration is permissioned.
+	 * - `EAccountAlreadyRegistered` — `receiver` is already registered for `T`.
+	 * - `sui::dynamic_field::EFieldDoesNotExist` — `receiver` has no `Account`.
+	 */
+	registerPermissionless({ receiver, tokenType }: RegisterPermissionlessOptions) {
+		return (tx: Transaction): TransactionResult =>
+			tx.add(
+				contraContracts.registerPermissionless({
+					package: this.#packageConfig.packageId,
+					typeArguments: [tokenType],
+					arguments: {
+						account: this.getAccountId(receiver),
+						ct: this.#getConfidentialTokenId(tokenType),
+					},
+				}),
+			);
+	}
+
+	/**
 	 * Wrap a public coin into the receiver's pending encrypted balance.
 	 *
 	 * The supplied coin is consumed, its value is added to the pool for
 	 * that token, and the same amount is credited to the receiver's
-	 * pending public balance. The receiver's account must already be
-	 * shared on chain.
+	 * pending public balance. The receiver must already have an `Account`
+	 * shared on chain; if they have no `TokenAccount<T>` yet it is registered
+	 * on their behalf in the same PTB (permissionless tokens only), since
+	 * wrapping no longer auto-registers on chain.
 	 *
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
 	 * const [payment] = tx.splitCoins(tx.object(sourceCoinId), [10n]);
 	 * tx.add(
-	 *   contraClient.wrap({
+	 *   await contraClient.wrap({
 	 *     coin: payment,
 	 *     receiver: receiverAddress,
 	 *     tokenType: '0x2::sui::SUI',
@@ -556,15 +593,32 @@ export class ContraClient {
 	 * );
 	 * ```
 	 *
+	 * SDK-thrown:
+	 * - `TokenAccountDoesNotExistError` — `receiver` has no `Account` at all.
+	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `ETransferDenied` — the token is paused, the deny list is globally frozen, the receiver
 	 *   is on the deny list, or the receiver's per-account freeze is active.
-	 * - `sui::dynamic_field::EFieldDoesNotExist` — `receiver` is not registered for the token.
+	 * - `ERegistrationNotPermissionless` — `receiver` had no `TokenAccount<T>` and the token's
+	 *   registration is permissioned, so the auto-inserted `register_permissionless` aborts.
 	 */
-	wrap({ coin, receiver, tokenType, memo }: WrapOptions) {
-		return (tx: Transaction): TransactionResult =>
-			tx.add(
+	async wrap({
+		coin,
+		receiver,
+		tokenType,
+		memo,
+	}: WrapOptions): Promise<(tx: Transaction) => TransactionResult> {
+		// Wrapping no longer auto-registers on chain. If the receiver has an `Account` but no
+		// `TokenAccount<T>` yet, register it on their behalf first (permissionless tokens only).
+		const [{ needsRegistration }] = await this.#getAccountStates([receiver], tokenType, {
+			autoRegisterFallback: true,
+		});
+		return (tx: Transaction): TransactionResult => {
+			if (needsRegistration) {
+				tx.add(this.registerPermissionless({ receiver, tokenType }));
+			}
+			return tx.add(
 				contraContracts.wrap({
 					package: this.#packageConfig.packageId,
 					typeArguments: [tokenType],
@@ -578,6 +632,7 @@ export class ContraClient {
 					},
 				}),
 			);
+		};
 	}
 
 	/**
@@ -1203,8 +1258,9 @@ export class ContraClient {
 	 *   deposits or has a per-account freeze active.
 	 * - `InsufficientBalanceError` — total amount exceeds the spendable balance (active,
 	 *   or active + pending when `merge` is `true`).
-	 * - `TokenAccountDoesNotExistError` — sender or a receiver is not registered for the
-	 *   token (no on-chain `TokenAccount` object).
+	 * - `TokenAccountDoesNotExistError` — the sender is not registered for the token, or a receiver
+	 *   has no `Account` at all. A receiver that has an `Account` but no `TokenAccount<T>` yet is
+	 *   registered on their behalf in the same PTB (permissionless tokens only).
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
@@ -1212,6 +1268,8 @@ export class ContraClient {
 	 *   or a receiver is on the deny list, the sender has a per-account freeze active (the
 	 *   receiver-frozen case is caught by the SDK), or a receiver's state changed between the
 	 *   SDK check and execution.
+	 * - `ERegistrationNotPermissionless` — a receiver had no `TokenAccount<T>` and the token's
+	 *   registration is permissioned, so the auto-inserted `register_permissionless` aborts.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — sender or receiver lost its registration between the
 	 *   SDK's check and execution.
 	 */
@@ -1308,6 +1366,15 @@ export class ContraClient {
 			if (shouldMerge) {
 				tx.add(this.#merge({ tokenAccount, auth: authArg }));
 			}
+
+			// Deposits no longer auto-register on chain: any receiver that has an `Account` but no
+			// `TokenAccount<T>` yet is registered on their behalf first via `register_permissionless`
+			// (permissionless tokens only; the call aborts otherwise).
+			recipients.forEach((recipient, i) => {
+				if (receiverStates[i].needsRegistration) {
+					tx.add(this.registerPermissionless({ receiver: recipient.receiverAddress, tokenType }));
+				}
+			});
 
 			const pid = this.#packageConfig.packageId;
 
@@ -1509,6 +1576,12 @@ interface AccountState {
 	pk: PublicKey;
 	acceptsEncryptedDeposits: boolean;
 	isFrozen: boolean;
+	/**
+	 * True when the address has an `Account` but no `TokenAccount<T>` yet, so this state was resolved
+	 * from the `Account` fallback (see `#getAccountStates` with `autoRegisterFallback`). The caller
+	 * must prepend a `register_permissionless` call before depositing to it.
+	 */
+	needsRegistration: boolean;
 }
 
 /** Max recipients in a single `transferBatch` PTB. Mirrors `MAX_BATCH_RECIPIENTS` in `contra.move`. */

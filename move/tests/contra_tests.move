@@ -1645,10 +1645,11 @@ fun test_account_freeze_blocks_add_to_batch() {
     scenario.end();
 }
 
-/// A transfer to a receiver that has an `Account` but no `TokenAccount<T>` (a permissionless token)
-/// auto-creates the token account, keyed at the receiver's `Account.pk`, and credits the deposit.
+/// A receiver that has an `Account` but no `TokenAccount<T>` can be registered by anyone (here the
+/// sender) via `register_permissionless` on a permissionless token, keyed at the receiver's
+/// `Account.pk`; the subsequent transfer then credits the deposit.
 #[test]
-fun test_transfer_auto_registers_receiver() {
+fun test_transfer_after_register_permissionless() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
     let sk_1 = ristretto255::scalar_from_u64(12345);
@@ -1687,9 +1688,11 @@ fun test_transfer_auto_registers_receiver() {
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth);
 
-    // account_2 has an `Account` but is NOT registered for TestCurrency.
+    // account_2 has an `Account` but is NOT registered for TestCurrency; on a permissionless token
+    // anyone can register it on the owner's behalf up front.
     scenario.next_tx(addr2);
     let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
+    contra::register_permissionless<TestCurrency>(&mut account_2, &ct);
 
     scenario.next_tx(addr1);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1738,7 +1741,7 @@ fun test_transfer_auto_registers_receiver() {
         scenario.ctx(),
     );
 
-    // The token account was auto-created for account_2, keyed at its account key.
+    // The token account was created for account_2, keyed at its account key.
     assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
 
     unit_test::destroy(account_1);
@@ -1752,6 +1755,54 @@ fun test_transfer_auto_registers_receiver() {
     unit_test::destroy(ct);
     sui::test_scenario::return_shared(deny_list);
     sui::test_scenario::return_shared(pool);
+    scenario.end();
+}
+
+/// `register_permissionless` aborts on a token whose registration (operation 0) is permissioned.
+#[test, expected_failure(abort_code = ::contra::contra::ERegistrationNotPermissionless)]
+fun test_register_permissionless_aborts_when_permissioned() {
+    let setup_addr = @0x0;
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(setup_addr);
+    let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        option::none(),
+        scenario.ctx(),
+    );
+    // Make registration (operation 0) permissioned.
+    ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
+
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(pk_2, scenario.ctx());
+    // Aborts: registration is not permissionless, so no `Auth`-free registration is allowed.
+    contra::register_permissionless<TestCurrency>(&mut account_2, &ct);
+
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
     scenario.end();
 }
 
