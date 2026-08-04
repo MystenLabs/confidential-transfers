@@ -24,12 +24,12 @@ public struct NewRegistrationEvent<phantom T> has copy, drop {
 /// An account set its optional default key (used by `register_permissionless`) to `new_pk`, or
 /// cleared it (`new_pk == none`). Per-token keys are independent of this, so it is not parameterized
 /// by a token type.
-public struct AccountKeyRotatedEvent has copy, drop {
+public struct DefaultKeyRotatedEvent has copy, drop {
     owner: address,
     new_pk: Option<Element<G>>,
 }
 
-/// Token `T`'s balance was re-keyed to `new_pk` (the account key), catching it up after a rotation.
+/// Token `T`'s balance was re-keyed to `new_pk` (an explicit new key, independent of other tokens).
 public struct TokenRekeyedEvent<phantom T> has copy, drop {
     owner: address,
     new_pk: Element<G>,
@@ -59,8 +59,10 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// `auditor_handles` are the two u32-limb auditor decryption handles for this transfer (empty when
 /// auditing is disabled). Paired with the two commitments an auditor derives from
 /// `encrypted_amount_receiver` (`encrypted_amount::ciphertexts_as_u32_limbs`), they let the auditor
-/// recover the amount off-chain. `memo` is an opaque caller-supplied blob, empty if none was
-/// provided.
+/// recover the amount off-chain. `auditor_pk` is the auditor public key the handles are encrypted
+/// under — the key that verified this transfer's auditor proof (`none` when auditing is disabled) —
+/// so a consumer knows which auditor key (current or, during a rotation grace window, previous) was
+/// used. `memo` is an opaque caller-supplied blob, empty if none was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
     sender_pk: Element<G>,
@@ -70,6 +72,7 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
     auditor_handles: vector<Element<G>>,
+    auditor_pk: Option<Element<G>>,
     memo: vector<u8>,
 }
 
@@ -144,8 +147,8 @@ public(package) fun emit_new_registration<T>(owner: address, pk: Element<G>) {
     event::emit(NewRegistrationEvent<T> { owner, pk });
 }
 
-public(package) fun emit_account_key_rotated(owner: address, new_pk: Option<Element<G>>) {
-    event::emit(AccountKeyRotatedEvent { owner, new_pk });
+public(package) fun emit_default_key_rotated(owner: address, new_pk: Option<Element<G>>) {
+    event::emit(DefaultKeyRotatedEvent { owner, new_pk });
 }
 
 public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: Element<G>) {
@@ -169,6 +172,7 @@ public(package) fun emit_transfer<T>(
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
     auditor_handles: vector<Element<G>>,
+    auditor_pk: Option<Element<G>>,
     memo: vector<u8>,
 ) {
     event::emit(TransferEvent<T> {
@@ -180,6 +184,7 @@ public(package) fun emit_transfer<T>(
         receiver_pk,
         encrypted_amount_receiver,
         auditor_handles,
+        auditor_pk,
         memo,
     });
 }

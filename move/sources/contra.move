@@ -104,7 +104,7 @@ const EUnexpectedAuditorData: u64 = 14;
 const EAuditorProofFailed: u64 = 15;
 const EReceiverNotRegistered: u64 = 16;
 const ERegistrationNotPermissionless: u64 = 17;
-const EAccountKeyNotSet: u64 = 18;
+const EDefaultKeyNotSet: u64 = 18;
 
 // === Constants ===
 
@@ -196,6 +196,7 @@ public enum TransferBatch<phantom T> {
         seed_point: Element<G>,
         next_index: u8,
         auditor_handles: vector<Element<G>>,
+        auditor_pk: Option<Element<G>>,
     },
 }
 
@@ -365,10 +366,10 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
 /// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
 /// owner, keyed under the account's default key `account.pk`, without any `Auth`. Only allowed when
 /// `T` leaves registration permissionless and `account.pk` is set. Aborts
-/// if `account.pk` is unset (`EAccountKeyNotSet`), `T`'s registration is permissioned
+/// if `account.pk` is unset (`EDefaultKeyNotSet`), `T`'s registration is permissioned
 /// (`ERegistrationNotPermissionless`), or the token is already registered (`EAccountAlreadyRegistered`).
 public fun register_permissionless<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
-    assert!(account.pk.is_some(), EAccountKeyNotSet);
+    assert!(account.pk.is_some(), EDefaultKeyNotSet);
     assert!(
         policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         ERegistrationNotPermissionless,
@@ -429,7 +430,7 @@ public fun set_default_key<T>(
         EIdentityPublicKey,
     );
     account.pk = new_default_key;
-    events::emit_account_key_rotated(account.owner, new_default_key);
+    events::emit_default_key_rotated(account.owner, new_default_key);
 }
 
 /// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
@@ -602,7 +603,7 @@ public fun batched_transfer<T>(
     let new_balance = wfeas.pop_back();
     let receiver_amounts = wfeas;
 
-    let mut auditor_handles = verify_auditing(
+    let (mut auditor_handles, auditor_pk) = verify_auditing(
         ct,
         sid,
         &receiver_amounts,
@@ -637,6 +638,7 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_handles,
+            auditor_pk,
         }
     } else {
         withdrawn.destroy_none();
@@ -645,11 +647,12 @@ public fun batched_transfer<T>(
 }
 
 /// Verify the per-transfer auditor data. Returns the flattened auditor handles to attach to events
-/// (empty when none is carried). Auditor data is required when auditing is enabled (a current key is
-/// set), forbidden when the token is fully off (no current key and no previous key in grace), and
-/// optional in between (a disable grace window: data, if present, is verified under the previous key
-/// so in-flight transfers stay auditable). Aborts if that presence rule or the batched auditor
-/// `ElGamalProof` (under an accepted key at `epoch`) is not met.
+/// (empty when none is carried) and the auditor key that verified them (`none` when no data is
+/// carried). Auditor data is required when auditing is enabled (a current key is set), forbidden when
+/// the token is fully off (no current key and no previous key in grace), and optional in between (a
+/// disable grace window: data, if present, is verified under the previous key so in-flight transfers
+/// stay auditable). Aborts if that presence rule or the batched auditor `ElGamalProof` (under an
+/// accepted key at `epoch`) is not met.
 fun verify_auditing<T>(
     ct: &ConfidentialToken<T>,
     session_id: vector<u8>,
@@ -657,12 +660,12 @@ fun verify_auditing<T>(
     auditor_handles: Option<vector<Element<G>>>,
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
-): vector<Element<G>> {
+): (vector<Element<G>>, Option<Element<G>>) {
     if (auditor_handles.is_none() && auditor_proof.is_none()) {
         // No auditor data. Allowed only when there is no current key. During a disable grace window
         // (current key none, previous still in grace) auditor data is optional, so omitting it is fine.
         assert!(!ct.auditor.is_enabled(), EMissingAuditorData);
-        return vector[]
+        return (vector[], option::none())
     };
     // Auditor data attached: require both parts, and that some key can still verify it (the current
     // key, or the previous key within its grace window); then it must actually verify.
@@ -671,18 +674,16 @@ fun verify_auditing<T>(
     let handles = auditor_handles.destroy_some();
     let proof = auditor_proof.destroy_some();
     let encryptions = encrypted_amount::u32_limb_encryptions(receiver_amounts, &handles);
-    assert!(
-        ct
-            .auditor
-            .verify_transfer(
-                ctx.epoch(),
-                &encryptions,
-                &proof,
-                session_id.dst(DST_AUDITOR_ELGAMAL),
-            ),
-        EAuditorProofFailed,
-    );
-    handles
+    let auditor_pk = ct
+        .auditor
+        .verify_transfer(
+            ctx.epoch(),
+            &encryptions,
+            &proof,
+            session_id.dst(DST_AUDITOR_ELGAMAL),
+        );
+    assert!(auditor_pk.is_some(), EAuditorProofFailed);
+    (handles, auditor_pk)
 }
 
 /// Add a receiver to a batched transfer: pop the next receiver-keyed `EncryptedCoin` and credit it
@@ -709,6 +710,7 @@ public fun add_to_batch<T>(
             seed_point,
             next_index,
             mut auditor_handles,
+            auditor_pk,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -741,6 +743,7 @@ public fun add_to_batch<T>(
                 receiver_pk,
                 *coin.amount().amount(),
                 receiver_auditor_handles,
+                auditor_pk,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver_pk, coin);
@@ -751,6 +754,7 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index: next_index + 1,
                 auditor_handles,
+                auditor_pk,
             }
         },
     }

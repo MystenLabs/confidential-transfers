@@ -69,20 +69,26 @@ public(package) fun accepts_at(auditor: &Auditor, epoch: u64): bool {
 /// Verify a batched per-transfer auditor `ElGamalProof` over `encryptions` — the derived u32-limb
 /// `(commitment, handle)` pairs for the whole transfer batch, all encrypted under one auditor key.
 /// Accepts the proof if it verifies under the current key, or under the previous key while
-/// `epoch <= previous_expiration_epoch` (the rotation grace window). Returns `false` if neither
-/// verifies or auditing is disabled.
+/// `epoch <= previous_expiration_epoch` (the rotation grace window). Returns the auditor key that
+/// verified it (so callers can record which key a transfer used), or `none` if neither verifies or
+/// auditing is disabled.
 public(package) fun verify_transfer(
     auditor: &Auditor,
     epoch: u64,
     encryptions: &vector<Encryption>,
     proof: &ElGamalProof,
     dst: vector<u8>,
-): bool {
+): Option<Element<G>> {
     if (auditor.current_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))) {
-        return true
+        return auditor.current_pk
     };
-    epoch <= auditor.previous_expiration_epoch &&
-        auditor.previous_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))
+    if (
+        epoch <= auditor.previous_expiration_epoch &&
+            auditor.previous_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))
+    ) {
+        return auditor.previous_pk
+    };
+    option::none()
 }
 
 public(package) fun current_pk(auditor: &Auditor): Option<Element<G>> {

@@ -23,8 +23,8 @@ export const NewRegistrationEvent = new MoveStruct({
 		pk: group_ops.Element,
 	},
 });
-export const AccountKeyRotatedEvent = new MoveStruct({
-	name: `${$moduleName}::AccountKeyRotatedEvent`,
+export const DefaultKeyRotatedEvent = new MoveStruct({
+	name: `${$moduleName}::DefaultKeyRotatedEvent`,
 	fields: {
 		owner: bcs.Address,
 		new_pk: bcs.option(group_ops.Element),
@@ -62,6 +62,7 @@ export const TransferEvent = new MoveStruct({
 		receiver_pk: group_ops.Element,
 		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
 		auditor_handles: bcs.vector(group_ops.Element),
+		auditor_pk: bcs.option(group_ops.Element),
 		memo: bcs.vector(bcs.u8()),
 	},
 });
