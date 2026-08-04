@@ -367,6 +367,25 @@ export function buildEncryptedAmountAndProof(
 const ELEMENT_VECTOR_TYPE = `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`;
 
 /**
+ * Build an `Option<Element<G>>` for an optional public key (e.g. the account's optional default key
+ * passed to `new_account` / `set_account_key`). `option::some(g_from_bytes(pk))` when a point is
+ * given, `option::none` otherwise.
+ */
+export function buildOptionalPoint(pk?: RistrettoPoint) {
+	const optionType = [ELEMENT_VECTOR_TYPE];
+	if (pk) {
+		return (tx: Transaction) =>
+			tx.moveCall({
+				target: '0x1::option::some',
+				typeArguments: optionType,
+				arguments: [point(pk.toBytes())],
+			});
+	}
+	return (tx: Transaction) =>
+		tx.moveCall({ target: '0x1::option::none', typeArguments: optionType });
+}
+
+/**
  * Build an `Option<vector<Element<G>>>` of the flattened per-transfer auditor decryption handles
  * (two u32-limb handles per receiver). `option::some` wrapping the `decode::g_vector` when `handles`
  * is provided, `option::none` when auditing is disabled.

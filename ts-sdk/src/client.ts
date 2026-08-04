@@ -28,6 +28,7 @@ import {
 	buildEncryptedAmount,
 	buildEncryptedAmountAndProof,
 	buildGVector,
+	buildOptionalPoint,
 	buildWellFormedProof,
 	getAccountId,
 	getConfidentialTokenId,
@@ -184,8 +185,17 @@ export class ContraClient {
 				if (account instanceof Error) {
 					throw new TokenAccountDoesNotExistError(addresses[i], account.message);
 				}
+				// `pk` is the account's optional default key. A missing token account can only be
+				// auto-registered (and deposited to) when it is set — that key becomes the token's key.
+				const accountPk = contraContracts.Account.parse(account.content).pk;
+				if (!accountPk) {
+					throw new TokenAccountDoesNotExistError(
+						addresses[i],
+						'account has no default key set, so no token account can be auto-registered for it',
+					);
+				}
 				accountFallback.set(i, {
-					pk: pointFromBcs(contraContracts.Account.parse(account.content).pk),
+					pk: pointFromBcs(accountPk),
 					acceptsEncryptedDeposits: true,
 					isFrozen: false,
 					needsRegistration: true,
@@ -228,10 +238,14 @@ export class ContraClient {
 	}
 
 	/**
-	 * Create a new account for the transaction sender with account key `publicKey`. Creation is
-	 * restricted to the owner — the account is created for `ctx.sender()`, so the transaction must be
-	 * signed by the intended owner. For an account owned by a Move object, that object's module must
+	 * Create a new account for the transaction sender with optional default key `publicKey`. Creation
+	 * is restricted to the owner — the account is created for `ctx.sender()`, so the transaction must
+	 * be signed by the intended owner. For an account owned by a Move object, that object's module must
 	 * call `contra::new_account_for_object` with the object's `&mut UID`.
+	 *
+	 * The default key is what `register_permissionless` uses when someone auto-registers a token for
+	 * this account; omit `publicKey` to create without one (no third party can then auto-register
+	 * tokens for the account). Per-token keys are chosen independently at `register`.
 	 *
 	 * @example
 	 * ```ts
@@ -249,7 +263,7 @@ export class ContraClient {
 			package: this.#packageConfig.packageId,
 			arguments: {
 				registry: this.#packageConfig.accountRegistryId,
-				pk: point(publicKey.toBytes()),
+				pk: buildOptionalPoint(publicKey),
 			},
 		});
 	}
@@ -335,16 +349,18 @@ export class ContraClient {
 	}
 
 	/**
-	 * Report the account key (`Account.pk`) and, for each token, the key that token's balances are
-	 * currently encrypted under. Pass `tokenTypes` to query specific tokens, or omit it to enumerate
-	 * every token registered on the account (its `TokenAccount` dynamic fields). Use this after a
-	 * `setAccountKey`/`rotateKey`/`rotateKeyAll` to decide what to re-key and whether an old key can be
-	 * discarded — after `rotateKeyAll`, any token still reported `stale` is one whose re-key soft-failed
-	 * (e.g. a deposit raced it) and needs a retry:
+	 * Report the account's optional default key (`Account.pk`, `undefined` when unset) and, for each
+	 * token, the key that token's balances are currently encrypted under. Pass `tokenTypes` to query
+	 * specific tokens, or omit it to enumerate every token registered on the account (its
+	 * `TokenAccount` dynamic fields). Use this after a `rotateKey`/`rotateKeyAll` to decide what to
+	 * re-key and whether an old key can be discarded — after `rotateKeyAll`, any token still reported
+	 * `stale` is one whose re-key soft-failed (e.g. a deposit raced it) and needs a retry:
 	 *
-	 * - `stale === true` for a token means its `TokenAccount.pk` lags the account key — call
-	 *   `rekeyToken` (or `rotateKey`) to catch it up. Its balance can only be re-keyed or decrypted
-	 *   with the key it currently reports (`publicKey`).
+	 * - `stale === true` for a token means its `TokenAccount.pk` differs from the account's default key
+	 *   (only computed when that key is set). Since `rotateKeyAll` sets the default key to the
+	 *   convergence target, a stale token is one that has not caught up — call `rekeyToken` (or
+	 *   `rotateKey`) to re-key it. Its balance can only be re-keyed or decrypted with the key it
+	 *   currently reports (`publicKey`).
 	 * - An old private key is safe to delete only once **no** token still reports its public key. Omit
 	 *   `tokenTypes` (enumerate all) to make that determination sound.
 	 *
@@ -370,7 +386,8 @@ export class ContraClient {
 		if (accountObject instanceof Error) {
 			throw new AccountDoesNotExistError(address, accountObject.message);
 		}
-		const accountPublicKey = pointFromBcs(contraContracts.Account.parse(accountObject.content).pk);
+		const accountPkBcs = contraContracts.Account.parse(accountObject.content).pk;
+		const accountPublicKey = accountPkBcs ? pointFromBcs(accountPkBcs) : undefined;
 
 		const tokens = tokenObjects.map((object, i) => {
 			if (object instanceof Error) {
@@ -381,7 +398,7 @@ export class ContraClient {
 				tokenType: types[i],
 				registered: true,
 				publicKey,
-				stale: !publicKey.equals(accountPublicKey),
+				stale: accountPublicKey ? !publicKey.equals(accountPublicKey) : false,
 			};
 		});
 
@@ -534,6 +551,7 @@ export class ContraClient {
 					arguments: {
 						account: account ?? this.getAccountId(address),
 						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenType),
+						pk: point(tokenAccount.publicKey.toBytes()),
 					},
 				}),
 			);
@@ -889,14 +907,15 @@ export class ContraClient {
 	}
 
 	/**
-	 * Rotate the account key (`Account.pk`) to `newPublicKey`. O(1): sets the convergence target
-	 * without touching any token balance. Each token's balance stays under its own `TokenAccount.pk`
-	 * (deposits keep landing there) until the owner catches it up with `rekeyToken`.
+	 * Set the account's optional default key (`Account.pk`) to `newPublicKey`, or clear it by passing
+	 * `null`/omitting it (which disables permissionless auto-registration for this account). This is
+	 * purely the key `register_permissionless` uses; per-token keys are unaffected and are rotated
+	 * independently via `rekeyToken`.
 	 *
-	 * IMPORTANT: retain the OLD private key until every token has been re-keyed. A still-stale token's
-	 * balance remains encrypted under the old key, and both re-keying it (the proof witness is
-	 * `newSk * oldSk^-1`) and decrypting it require the old key. Discarding the old key while any token
-	 * is still stale makes that token's balance permanently unrecoverable.
+	 * IMPORTANT: when you rotate a token's key, retain the OLD private key until that token has been
+	 * re-keyed. A still-stale token's balance remains encrypted under the old key, and both re-keying
+	 * it (the proof witness is `newSk * oldSk^-1`) and decrypting it require the old key. Discarding the
+	 * old key while any token is still stale makes that token's balance permanently unrecoverable.
 	 *
 	 * @example
 	 * ```ts
@@ -921,7 +940,7 @@ export class ContraClient {
 					arguments: {
 						account: this.getAccountId(tokenAccount.address),
 						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType),
-						newPk: point(newPublicKey.toBytes()),
+						newPk: buildOptionalPoint(newPublicKey ?? undefined),
 					},
 				}),
 			);
@@ -986,12 +1005,13 @@ export class ContraClient {
 
 	/**
 	 * Emit the `rekey_token` (or `try_rekey_token`) Move call re-keying the token's active balance
-	 * from its current `TokenAccount.pk` to the account key. Shared by `rekeyToken`, `tryRekeyToken`,
-	 * and `rotateKey`.
+	 * from its current `TokenAccount.pk` to `newPk` (explicit and independent of the account's default
+	 * key). Shared by `rekeyToken`, `tryRekeyToken`, `rotateKey`, and `rotateKeyAll`.
 	 */
 	#rekeyTokenCall(
 		tx: Transaction,
 		tokenAccount: TokenAccount,
+		newPk: PublicKey,
 		newHandles: PublicKey[],
 		rekeyProof: DdhNizk,
 		auth: TransactionObjectArgument,
@@ -1004,6 +1024,7 @@ export class ContraClient {
 			arguments: {
 				account: this.getAccountId(tokenAccount.address),
 				auth,
+				newPk: point(newPk.toBytes()),
 				newHandles: buildGVector(pid, newHandles),
 				rekeyProof: buildDdhProof(pid, rekeyProof),
 			},
@@ -1014,10 +1035,10 @@ export class ContraClient {
 	}
 
 	/**
-	 * Re-key one token's active balance to the current account key (`Account.pk`). Requires the
-	 * account key to already equal `newTokenAccount.publicKey` (set via `setAccountKey`). When the
-	 * token has pending deposits and `merge` is `true` (the default), a `merge` is prepended so the
-	 * re-key (which requires an empty pending) can proceed.
+	 * Re-key one token's active balance to `newTokenAccount.publicKey`. The target key is explicit and
+	 * independent of the account's default key (`Account.pk`), so no `setAccountKey` is required first.
+	 * When the token has pending deposits and `merge` is `true` (the default), a `merge` is prepended
+	 * so the re-key (which requires an empty pending) can proceed.
 	 *
 	 * SDK-thrown:
 	 * - `TokenAccountDoesNotExistError` — `tokenAccount` is not registered for the token.
@@ -1042,7 +1063,15 @@ export class ContraClient {
 		return (tx: Transaction) => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, false);
+			return this.#rekeyTokenCall(
+				tx,
+				tokenAccount,
+				newTokenAccount.publicKey,
+				newHandles,
+				rekeyProof,
+				authArg,
+				false,
+			);
 		};
 	}
 
@@ -1066,7 +1095,15 @@ export class ContraClient {
 		return (tx: Transaction) => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, true);
+			return this.#rekeyTokenCall(
+				tx,
+				tokenAccount,
+				newTokenAccount.publicKey,
+				newHandles,
+				rekeyProof,
+				authArg,
+				true,
+			);
 		};
 	}
 
@@ -1105,7 +1142,15 @@ export class ContraClient {
 				auth: () => authArg,
 			})(tx);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			return this.#rekeyTokenCall(tx, tokenAccount, newHandles, rekeyProof, authArg, false);
+			return this.#rekeyTokenCall(
+				tx,
+				tokenAccount,
+				newTokenAccount.publicKey,
+				newHandles,
+				rekeyProof,
+				authArg,
+				false,
+			);
 		};
 	}
 
@@ -1170,7 +1215,15 @@ export class ContraClient {
 				const { shouldMerge, newHandles, rekeyProof } = materials[i];
 				const authArg = this.#asSenderAuth(tx, p.current.tokenType);
 				if (shouldMerge) tx.add(this.#merge({ tokenAccount: p.current, auth: authArg }));
-				this.#rekeyTokenCall(tx, p.current, newHandles, rekeyProof, authArg, true);
+				this.#rekeyTokenCall(
+					tx,
+					p.current,
+					p.next.publicKey,
+					newHandles,
+					rekeyProof,
+					authArg,
+					true,
+				);
 			});
 		};
 	}

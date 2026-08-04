@@ -152,7 +152,7 @@ public fun new_account<T>(
     ctx: &TxContext,
 ): Account {
     assert!(ctx.sender() == c.sender, EUnauthorized);
-    contra::new_account_for_object(registry, &mut c.id, pk)
+    contra::new_account_for_object(registry, &mut c.id, option::some(pk))
 }
 
 // === Operations ===

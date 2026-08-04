@@ -27,7 +27,7 @@ export const AccountKeyRotatedEvent = new MoveStruct({
 	name: `${$moduleName}::AccountKeyRotatedEvent`,
 	fields: {
 		owner: bcs.Address,
-		new_pk: group_ops.Element,
+		new_pk: bcs.option(group_ops.Element),
 	},
 });
 export const TokenRekeyedEvent = new MoveStruct({

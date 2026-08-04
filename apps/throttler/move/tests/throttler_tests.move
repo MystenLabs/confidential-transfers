@@ -138,9 +138,9 @@ fun throttled_unwrap_roundtrip() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(pk_alice, scenario.ctx());
+    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth);
+    contra::register(&mut alice_account, &auth, pk_alice);
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -231,9 +231,9 @@ fun unwrap_aborts_for_non_owner() {
     let clock = clock::create_for_testing(scenario.ctx());
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(pk_alice, scenario.ctx());
+    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth);
+    contra::register(&mut alice_account, &auth, pk_alice);
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -313,9 +313,9 @@ fun issuer_can_seize_via_set_pending() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(pk_alice, scenario.ctx());
+    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth);
+    contra::register(&mut alice_account, &auth, pk_alice);
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -414,9 +414,9 @@ fun set_min_duration_shortens_window() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(pk_alice, scenario.ctx());
+    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth);
+    contra::register(&mut alice_account, &auth, pk_alice);
 
     wrap_for_alice(
         &mut treasury_cap,

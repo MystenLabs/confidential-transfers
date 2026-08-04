@@ -109,7 +109,9 @@ public fun register(
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     // Auth is only used internally.
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::register(account, &auth);
+    // Key the token account under the account's default key (set at account creation).
+    let pk = *contra::account_public_key(account).borrow();
+    contra::register(account, &auth, pk);
 }
 
 /// Rotate `account`'s key to `new_pk` and re-key its confidential pBU balance.
@@ -127,6 +129,6 @@ public fun set_public_key(
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::set_account_key(account, &auth, new_pk);
-    contra::rekey_token(account, &auth, new_handles, rekey_proof);
+    contra::set_account_key(account, &auth, option::some(new_pk));
+    contra::rekey_token(account, &auth, new_pk, new_handles, rekey_proof);
 }

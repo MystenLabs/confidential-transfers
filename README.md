@@ -15,7 +15,7 @@ Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances a
 
 Yellow nodes live in the public domain (amounts visible on-chain), blue nodes live in the confidential domain (amounts encrypted).
 
-**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under her account key `pk`. Registration carries no auditor data (auditing is per-transfer).
+**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under a public key `pk` she chooses (per-token keys are independent). For a permissionless token, if Alice set an optional default key on her `Account`, anyone can register the token account on her behalf up front with `register_permissionless`. Registration carries no auditor data (auditing is per-transfer).
 
 ```mermaid
 flowchart LR
@@ -136,7 +136,7 @@ In the failure case, a second attempt with `merge: false` will succeed immediate
 
 ### Key rotation
 
-The account's key (`Account.pk`) can be rotated with `setAccountKey`. Rotation is **lazy and O(1)**: it just moves the account key and touches no balance. Each token's balance stays encrypted under its own `TokenAccount.pk` and catches up independently when the owner calls `rekeyToken` (or the `rotateKey` convenience, which merges and re-keys one token in a single PTB). A not-yet-re-keyed token is a normal, decryptable state — deposits keep landing under its current key until it is re-keyed.
+Each token's balance is encrypted under its own `TokenAccount.pk`, chosen at `register` and rotated **independently** with `rekeyToken(newTokenAccount)` — the new key is explicit and unrelated to any other token or to the account's key. Re-keying is **lazy and O(1)** per token: it touches only that token's active balance (`rotateKey` is a convenience that merges and re-keys one token in a single PTB; `rotateKeyAll` re-keys many at once). A not-yet-re-keyed token is a normal, decryptable state — deposits keep landing under its current key until it is re-keyed. Separately, `Account.pk` is an **optional** default key that only drives `register_permissionless`; `setAccountKey` sets or clears it (O(1), touches no balance).
 
 > **Retain the old key until every token is re-keyed.** A not-yet-re-keyed token's balance is still encrypted under the _old_ key, and both re-keying it (the proof witness is `newSk · oldSk⁻¹`) and decrypting it require that old key. Discarding the old private key while any token is still stale makes that token's balance permanently unrecoverable. Use `ContraClient.getTokenKeys(address)` to list every token's current key and whether it is stale (pass specific `tokenTypes` to narrow it) — an old key is safe to delete only once no token still reports it, and after a `rotateKeyAll` any token still `stale` is one whose re-key soft-failed and needs a retry.
 

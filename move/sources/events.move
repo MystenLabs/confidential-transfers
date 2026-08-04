@@ -21,11 +21,12 @@ public struct NewRegistrationEvent<phantom T> has copy, drop {
     pk: Element<G>,
 }
 
-/// An account rotated its key (the convergence target) to `new_pk`. Token balances catch up lazily
-/// (see `TokenRekeyedEvent`), so this is not parameterized by a token type.
+/// An account set its optional default key (used by `register_permissionless`) to `new_pk`, or
+/// cleared it (`new_pk == none`). Per-token keys are independent of this, so it is not parameterized
+/// by a token type.
 public struct AccountKeyRotatedEvent has copy, drop {
     owner: address,
-    new_pk: Element<G>,
+    new_pk: Option<Element<G>>,
 }
 
 /// Token `T`'s balance was re-keyed to `new_pk` (the account key), catching it up after a rotation.
@@ -143,7 +144,7 @@ public(package) fun emit_new_registration<T>(owner: address, pk: Element<G>) {
     event::emit(NewRegistrationEvent<T> { owner, pk });
 }
 
-public(package) fun emit_account_key_rotated(owner: address, new_pk: Element<G>) {
+public(package) fun emit_account_key_rotated(owner: address, new_pk: Option<Element<G>>) {
     event::emit(AccountKeyRotatedEvent { owner, new_pk });
 }
 

@@ -125,7 +125,7 @@ export const Account = new MoveStruct({
 	fields: {
 		id: bcs.Address,
 		owner: bcs.Address,
-		pk: group_ops.Element,
+		pk: bcs.option(group_ops.Element),
 	},
 });
 export const TokenAccount = new MoveStruct({
@@ -445,24 +445,25 @@ export function shareAccount(options: ShareAccountOptions) {
 export interface RegisterArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
+	pk: TransactionArgument;
 }
 export interface RegisterOptions {
 	package?: string;
 	arguments:
 		| RegisterArguments
-		| [account: RawTransactionArgument<string>, auth: TransactionArgument];
+		| [account: RawTransactionArgument<string>, auth: TransactionArgument, pk: TransactionArgument];
 	typeArguments: [string];
 }
 /**
- * Create a `TokenAccount` for token `T`, with its balances keyed under the current
- * `account.pk`. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER`
- * operation and for `account.owner`. Under per-transfer auditing, registration
- * carries no auditor data.
+ * Create a `TokenAccount` for token `T`, with its balances keyed under `pk` (chosen by
+ * the owner; per-token keys are independent of the account's optional default key).
+ * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
+ * `account.owner`. Under per-transfer auditing, registration carries no auditor data.
  */
 export function register(options: RegisterOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth'];
+	const argumentsTypes = [null, null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'pk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -578,6 +579,7 @@ export function setAccountKey(options: SetAccountKeyOptions) {
 export interface RekeyTokenArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
+	newPk: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
 }
@@ -588,22 +590,24 @@ export interface RekeyTokenOptions {
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
+				newPk: TransactionArgument,
 				newHandles: TransactionArgument,
 				rekeyProof: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Re-key token `T`'s active balance from its current `TokenAccount.pk` to the
- * account key `account.pk`, swapping each limb's decryption handle for the matching
- * `new_handles[i]` (proven by `rekey_proof`). Aborts if the token has unmerged
- * pending deposits (merge them first) or the proof fails. Authorized by `auth`,
- * which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
+ * Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`
+ * (explicit and independent of the account's default key), swapping each limb's
+ * decryption handle for the matching `new_handles[i]` (proven by `rekey_proof`). Aborts
+ * if `new_pk` is the identity, the token has unmerged pending deposits (merge them
+ * first), or the proof fails. Authorized by `auth`, which must be for the
+ * `PERMISSIONED_REGISTER` operation and for `account.owner`.
  */
 export function rekeyToken(options: RekeyTokenOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, 'vector<null>', null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth', 'newHandles', 'rekeyProof'];
+	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -616,6 +620,7 @@ export function rekeyToken(options: RekeyTokenOptions) {
 export interface TryRekeyTokenArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
+	newPk: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
 }
@@ -626,6 +631,7 @@ export interface TryRekeyTokenOptions {
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
+				newPk: TransactionArgument,
 				newHandles: TransactionArgument,
 				rekeyProof: TransactionArgument,
 		  ];
@@ -636,12 +642,13 @@ export interface TryRekeyTokenOptions {
  * not verify (e.g. a deposit raced the caller's read), it emits
  * `TryTokenRekeyFailedEvent` and returns `false`, leaving the token unchanged (still
  * stale) for a retry. Lets a caller bundle `set_account_key` and re-keys of several
- * tokens into one PTB without pausing. Still aborts on unmerged pending deposits.
+ * tokens into one PTB without pausing. Still aborts on an identity `new_pk` or unmerged
+ * pending deposits.
  */
 export function tryRekeyToken(options: TryRekeyTokenOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, 'vector<null>', null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth', 'newHandles', 'rekeyProof'];
+	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

@@ -37,10 +37,12 @@
 ///    The default policy is fully permissionless.
 ///
 /// ## Key Flows for Users:
-/// 1. Create an account for an address with an initial public key `pk` (needed once for all token
-///    types).
-/// 2. Register a token account for a token type `T`. Its balances are keyed under `Account.pk`.
-/// 3. Rotate the account key with `set_account_key`. Each token catches up lazily via `rekey_token`.
+/// 1. Create an account for an address with an optional default key `pk` (needed once for all token
+///    types; when set, others can auto-register tokens for you via `register_permissionless`).
+/// 2. Register a token account for a token type `T` under a key of your choice (`register`). Per-token
+///    keys are independent of the account's default key.
+/// 3. Rotate a token's key with `rekey_token` (to any `new_pk`), and set/clear the account's default
+///    key with `set_account_key`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to one or more token accounts. Every receiver must already have a
@@ -102,6 +104,7 @@ const EUnexpectedAuditorData: u64 = 14;
 const EAuditorProofFailed: u64 = 15;
 const EReceiverNotRegistered: u64 = 16;
 const ERegistrationNotPermissionless: u64 = 17;
+const EAccountKeyNotSet: u64 = 18;
 
 // === Constants ===
 
@@ -152,11 +155,14 @@ public struct Pool<phantom T> has key {
     id: UID,
 }
 
-/// Base account that stores token accounts as dynamic fields.
+/// Base account that stores token accounts as dynamic fields. `pk` is an optional default key: when
+/// set, anyone can create a token account on the owner's behalf for a permissionless token via
+/// `register_permissionless` (keyed at `pk`); when `none`, only the owner can register (choosing each
+/// token's key explicitly). Per-token keys live on `TokenAccount.pk` and are independent of `pk`.
 public struct Account has key {
     id: UID,
     owner: address,
-    pk: Element<G>,
+    pk: Option<Element<G>>,
 }
 
 /// A user's account for one confidential token.
@@ -298,31 +304,40 @@ public fun share_confidential_token<T>(ct: ConfidentialToken<T>) {
 
 public use fun new_account as AccountRegistry.new;
 
-/// Create a new account for `ctx.sender()` with account key `pk`. Can only happen once per address.
-/// Since `pk` is the key every token balance under this account converges to, creation is restricted
-/// to the owner: only the sender can set their own account key. For an account owned by a Move object,
-/// use `new_account_for_object`.
-public fun new_account(registry: &mut AccountRegistry, pk: Element<G>, ctx: &TxContext): Account {
+/// Create a new account for `ctx.sender()` with optional default key `pk` (see `Account`). Creation
+/// is restricted to the owner: only the sender can set their own default key. Pass `none` to create
+/// without one (no third party can then auto-register tokens for this account). Can only happen once
+/// per address. For an account owned by a Move object, use `new_account_for_object`.
+public fun new_account(
+    registry: &mut AccountRegistry,
+    pk: Option<Element<G>>,
+    ctx: &TxContext,
+): Account {
     new_account_internal(registry, ctx.sender(), pk)
 }
 
-/// Create a new account owned by the object identified by `uid`, with account key `pk`. Holding
-/// `&mut UID` proves custody of the object, so it self-authenticates as its own owner (the address
-/// derived from the `UID`) — mirroring `authorize_as_object`. Can only happen once per object address.
+/// Create a new account owned by the object identified by `uid`, with optional default key `pk`.
+/// Holding `&mut UID` proves custody of the object, so it self-authenticates as its own owner (the
+/// address derived from the `UID`) — mirroring `authorize_as_object`. Can only happen once per object
+/// address.
 #[allow(unused_mut_parameter)]
 public fun new_account_for_object(
     registry: &mut AccountRegistry,
     uid: &mut UID,
-    pk: Element<G>,
+    pk: Option<Element<G>>,
 ): Account {
     new_account_internal(registry, uid.to_inner().to_address(), pk)
 }
 
-/// Claim the derived account for `owner` and initialize it with key `pk`. Aborts if `owner` already
-/// has an account or `pk` is the group identity.
-fun new_account_internal(registry: &mut AccountRegistry, owner: address, pk: Element<G>): Account {
+/// Claim the derived account for `owner` and initialize it with optional default key `pk`. Aborts if
+/// `owner` already has an account or `pk` is set to the group identity.
+fun new_account_internal(
+    registry: &mut AccountRegistry,
+    owner: address,
+    pk: Option<Element<G>>,
+): Account {
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
-    assert!(pk != g_identity(), EIdentityPublicKey);
+    assert!(pk.is_none() || *pk.borrow() != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
     Account { id, owner, pk }
 }
@@ -334,39 +349,40 @@ public fun share_account(account: Account) {
     transfer::share_object(account);
 }
 
-/// Create a `TokenAccount` for token `T`, with its balances keyed under the current `account.pk`.
-/// Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
+/// Create a `TokenAccount` for token `T`, with its balances keyed under `pk`. Since per-token keys
+/// are independent of the account's optional default key, the owner chooses this token's key
+/// explicitly. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
 /// `account.owner`. Under per-transfer auditing, registration carries no auditor data.
-public fun register<T>(account: &mut Account, auth: &Auth<T>) {
+public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    assert!(pk != g_identity(), EIdentityPublicKey);
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     let session_id = account.session_id<T>();
-    account.add_token_account<T>(session_id);
+    account.add_token_account<T>(pk, session_id);
 }
 
 /// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
-/// owner (keyed under the current `account.pk`), without any `Auth`. Only allowed when `T` leaves
-/// registration permissionless. Lets a sender ensure a receiver is registered before transferring or
-/// wrapping to them, since neither auto-registers anymore. Aborts if `T`'s registration is
-/// permissioned (`ERegistrationNotPermissionless`) or the token is already registered
-/// (`EAccountAlreadyRegistered`).
+/// owner, keyed under the account's default key `account.pk`, without any `Auth`. Only allowed when
+/// `T` leaves registration permissionless and `account.pk` is set. Aborts
+/// if `account.pk` is unset (`EAccountKeyNotSet`), `T`'s registration is permissioned
+/// (`ERegistrationNotPermissionless`), or the token is already registered (`EAccountAlreadyRegistered`).
 public fun register_permissionless<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
+    assert!(account.pk.is_some(), EAccountKeyNotSet);
     assert!(
         policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         ERegistrationNotPermissionless,
     );
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
+    let pk = *account.pk.borrow();
     let session_id = account.session_id<T>();
-    account.add_token_account<T>(session_id);
+    account.add_token_account<T>(pk, session_id);
 }
 
-/// Create a `TokenAccount<T>` on `account`, keyed under the current `account.pk`. The caller is
-/// responsible for any authorization and for ensuring the token is not already registered.
-fun add_token_account<T>(account: &mut Account, session_id: vector<u8>) {
-    let pk = account.pk;
+/// Create a `TokenAccount<T>` on `account`, keyed under `pk`. The caller is responsible for any
+/// authorization, for a non-identity `pk`, and for ensuring the token is not already registered.
+fun add_token_account<T>(account: &mut Account, pk: Element<G>, session_id: vector<u8>) {
     events::emit_new_registration<T>(account.owner, pk);
-
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
@@ -396,50 +412,54 @@ public fun set_accepts_encrypted_deposits<T>(
     account[TokenAccountKey<T>()].accepts_deposits = accepts_encrypted_deposits;
 }
 
-/// Rotate the account's key to `new_pk`. Each token's balance stays under its own `TokenAccount.pk` (deposits keep
-/// landing there) until the owner calls `rekey_token`. Authenticated by `auth`, which
-/// must be for the `PERMISSIONED_REGISTER` operation and may be for any token the account is
-/// registered for.
-public fun set_account_key<T>(account: &mut Account, auth: &Auth<T>, new_pk: Element<G>) {
+/// Set the account's optional default key to `new_pk` (pass `none` to clear it, which disables
+/// permissionless auto-registration for this account). This is purely the key `register_permissionless`
+/// uses; per-token keys are unaffected and are rotated independently via `rekey_token`. Authenticated
+/// by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and may be for any token the
+/// account is registered for.
+public fun set_account_key<T>(account: &mut Account, auth: &Auth<T>, new_pk: Option<Element<G>>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    assert!(new_pk != g_identity(), EIdentityPublicKey);
+    assert!(new_pk.is_none() || *new_pk.borrow() != g_identity(), EIdentityPublicKey);
     account.pk = new_pk;
     events::emit_account_key_rotated(account.owner, new_pk);
 }
 
-/// Re-key token `T`'s active balance from its current `TokenAccount.pk` to the account key
-/// `account.pk`, swapping each limb's decryption handle for the matching `new_handles[i]` (proven by
-/// `rekey_proof`). Aborts if the token has unmerged pending deposits (which are under the old key, so
-/// they must be merged first) or the proof fails. Authorized by `auth`, which must be for the
-/// `PERMISSIONED_REGISTER` operation and for `account.owner`.
+/// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
+/// limb's decryption handle for the matching `new_handles[i]` (proven by `rekey_proof`). `new_pk` is
+/// explicit and independent of the account's default key. Aborts if `new_pk` is the group identity,
+/// the token has unmerged pending deposits (which are under the old key, so they must be merged
+/// first), or the proof fails. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER`
+/// operation and for `account.owner`.
 public fun rekey_token<T>(
     account: &mut Account,
     auth: &Auth<T>,
+    new_pk: Element<G>,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(
-        rekey_token_internal<T>(account, new_handles, rekey_proof),
+        rekey_token_internal<T>(account, new_pk, new_handles, rekey_proof),
         EAmountsEqualityProofFailed,
     );
 }
 
 /// Like `rekey_token` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
 /// deposit raced the caller's read). In that case, it instead emits `TryTokenRekeyFailedEvent` and returns `false`, leaving
-/// the token unchanged for a retry. Still aborts on unmerged pending deposits.
+/// the token unchanged for a retry. Still aborts on an identity `new_pk` or unmerged pending deposits.
 public fun try_rekey_token<T>(
     account: &mut Account,
     auth: &Auth<T>,
+    new_pk: Element<G>,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ): bool {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (rekey_token_internal<T>(account, new_handles, rekey_proof)) {
+    if (rekey_token_internal<T>(account, new_pk, new_handles, rekey_proof)) {
         true
     } else {
         events::emit_try_token_rekey_failed<T>(owner);
@@ -447,17 +467,18 @@ public fun try_rekey_token<T>(
     }
 }
 
-/// Shared re-key: Assert the token's pending is empty, then re-key its active balance from
-/// `TokenAccount.pk` to `account.pk`. On a verifying proof, commits the new handles, sets
-/// `token.pk = account.pk`, emits `TokenRekeyedEvent`, and returns `true`. Otherwise leaves the token
+/// Shared re-key: Assert `new_pk` is non-identity and the token's pending is empty, then re-key its
+/// active balance from `TokenAccount.pk` to `new_pk`. On a verifying proof, commits the new handles,
+/// sets `token.pk = new_pk`, emits `TokenRekeyedEvent`, and returns `true`. Otherwise leaves the token
 /// unchanged and returns `false`.
 fun rekey_token_internal<T>(
     account: &mut Account,
+    new_pk: Element<G>,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ): bool {
+    assert!(new_pk != g_identity(), EIdentityPublicKey);
     let owner = account.owner;
-    let new_pk = account.pk;
     let token_account = &mut account[TokenAccountKey<T>()];
     assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
     let dst = token_account.session_id.dst(DST_BATCH_DDH);
@@ -1137,8 +1158,9 @@ public fun accepts_deposits<T>(account: &Account): bool {
     account[TokenAccountKey<T>()].accepts_deposits
 }
 
-#[test_only]
-public fun account_public_key(account: &Account): Element<G> {
+/// The account's optional default key (used by `register_permissionless`), or `none` if unset. This
+/// is independent of any `TokenAccount.pk`.
+public fun account_public_key(account: &Account): Option<Element<G>> {
     account.pk
 }
 

@@ -236,13 +236,13 @@ export interface UpdateBalanceOptions {
 /** Arguments to `ContraClient.newAccount`. */
 export interface NewAccountOptions {
 	/**
-	 * The account key — the single per-account public key shared by all of the owner's token
-	 * balances (per-transfer auditing removed the per-token key). Every `TokenAccount<T>` registered
-	 * under this account starts keyed under it, so the caller's `TokenAccount` private keys for this
-	 * owner must all correspond to this key. The account is created for the transaction sender, so the
-	 * transaction must be signed by the intended owner.
+	 * The account's optional default key — the key `register_permissionless` uses when a third party
+	 * auto-registers a token for this account. Omit it to create the account without one (no third
+	 * party can then auto-register tokens for it). Per-token keys are chosen independently at
+	 * `register` and are not tied to this key. The account is created for the transaction sender, so
+	 * the transaction must be signed by the intended owner.
 	 */
-	publicKey: RistrettoPoint;
+	publicKey?: RistrettoPoint;
 }
 
 /** The key a single token's balances are currently encrypted under (see `ContraClient.getTokenKeys`). */
@@ -254,17 +254,19 @@ export interface TokenKeyStatus {
 	/** The key this token's balances are currently under, or `undefined` when not registered. */
 	publicKey?: RistrettoPoint;
 	/**
-	 * True when the token's key lags the account key (`Account.pk`): it still needs `rekeyToken`, and
-	 * its balance can only be re-keyed or decrypted with the key it currently reports here. While any
-	 * token reports an old key, that old private key must be retained.
+	 * True when the token's key differs from the account's default key (`Account.pk`), computed only
+	 * when that key is set. Since `rotateKeyAll` sets the default key to the convergence target, a
+	 * stale token is one that has not caught up: it still needs `rekeyToken`, and its balance can only
+	 * be re-keyed or decrypted with the key it currently reports here. While any token reports an old
+	 * key, that old private key must be retained.
 	 */
 	stale: boolean;
 }
 
-/** Result of `ContraClient.getTokenKeys`: the account key plus each queried token's current key. */
+/** Result of `ContraClient.getTokenKeys`: the account's default key plus each queried token's key. */
 export interface AccountTokenKeys {
-	/** The account key (`Account.pk`) — the convergence target for key rotation. */
-	accountPublicKey: RistrettoPoint;
+	/** The account's optional default key (`Account.pk`), or `undefined` when unset. */
+	accountPublicKey?: RistrettoPoint;
 	/** One entry per queried token type, in the same order. */
 	tokens: TokenKeyStatus[];
 }
@@ -346,13 +348,15 @@ export interface UnpauseAccountOptions {
 /** Arguments to `ContraClient.setAccountKey`. */
 export interface SetAccountKeyOptions {
 	/**
-	 * A token account for the owner whose account key is being rotated. Only its `address` and
-	 * `tokenType` are used (the latter to type the `Auth<T>` and the Move call); the account key is
-	 * shared across all of the owner's tokens.
+	 * A token account for the owner whose default key is being set. Only its `address` and `tokenType`
+	 * are used (the latter to type the `Auth<T>` and the Move call).
 	 */
 	tokenAccount: TokenAccount;
-	/** The new account key (the convergence target). Each token catches up lazily via `rekeyToken`. */
-	newPublicKey: RistrettoPoint;
+	/**
+	 * The new default key for the account (used by `register_permissionless`). Pass `null` (or omit)
+	 * to clear it, disabling permissionless auto-registration. Per-token keys are unaffected.
+	 */
+	newPublicKey?: RistrettoPoint | null;
 	/**
 	 * Optional `Auth<T>` builder. When omitted, the client builds an `as_sender` auth. The resulting
 	 * `Auth<T>` must cover the `REGISTER` operation.
