@@ -62,7 +62,7 @@ import type {
 	RekeyTokenOptions,
 	RotateKeyAllOptions,
 	RotateKeyOptions,
-	SetAccountKeyOptions,
+	SetDefaultKeyOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
@@ -258,12 +258,12 @@ export class ContraClient {
 	 * - `EAccountAlreadyRegistered` — the sender already has an account (one per address).
 	 * - `EIdentityPublicKey` — `publicKey` is the group identity.
 	 */
-	newAccount({ publicKey }: NewAccountOptions) {
+	newAccount({ defaultKey }: NewAccountOptions) {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
 			arguments: {
 				registry: this.#packageConfig.accountRegistryId,
-				pk: buildOptionalPoint(publicKey),
+				defaultKey: buildOptionalPoint(defaultKey),
 			},
 		});
 	}
@@ -907,7 +907,7 @@ export class ContraClient {
 	}
 
 	/**
-	 * Set the account's optional default key (`Account.pk`) to `newPublicKey`, or clear it by passing
+	 * Set the account's optional default key (`Account.pk`) to `newDefaultKey`, or clear it by passing
 	 * `null`/omitting it (which disables permissionless auto-registration for this account). This is
 	 * purely the key `register_permissionless` uses; per-token keys are unaffected and are rotated
 	 * independently via `rekeyToken`.
@@ -920,27 +920,27 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
-	 * tx.add(client.contra.setAccountKey({ tokenAccount, newPublicKey: newTokenAccount.publicKey }));
+	 * tx.add(client.contra.setDefaultKey({ tokenAccount, newDefaultKey: newTokenAccount.publicKey }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
-	 * - `EIdentityPublicKey` — `newPublicKey` is the group identity.
+	 * - `EIdentityPublicKey` — `newDefaultKey` is the group identity.
 	 */
-	setAccountKey({
+	setDefaultKey({
 		tokenAccount,
-		newPublicKey,
+		newDefaultKey,
 		auth,
-	}: SetAccountKeyOptions): (tx: Transaction) => TransactionResult {
+	}: SetDefaultKeyOptions): (tx: Transaction) => TransactionResult {
 		return (tx: Transaction) =>
 			tx.add(
-				contraContracts.setAccountKey({
+				contraContracts.setDefaultKey({
 					package: this.#packageConfig.packageId,
 					typeArguments: [tokenAccount.tokenType],
 					arguments: {
 						account: this.getAccountId(tokenAccount.address),
 						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType),
-						newPk: buildOptionalPoint(newPublicKey ?? undefined),
+						newDefaultKey: buildOptionalPoint(newDefaultKey ?? undefined),
 					},
 				}),
 			);
@@ -1036,7 +1036,7 @@ export class ContraClient {
 
 	/**
 	 * Re-key one token's active balance to `newTokenAccount.publicKey`. The target key is explicit and
-	 * independent of the account's default key (`Account.pk`), so no `setAccountKey` is required first.
+	 * independent of the account's default key (`Account.pk`), so no `setDefaultKey` is required first.
 	 * When the token has pending deposits and `merge` is `true` (the default), a `merge` is prepended
 	 * so the re-key (which requires an empty pending) can proceed.
 	 *
@@ -1078,7 +1078,7 @@ export class ContraClient {
 	/**
 	 * Like `rekeyToken`, but soft-fails instead of aborting when the re-key proof does not verify
 	 * (e.g. a deposit raced the balance read): the token is left stale for a retry and a
-	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setAccountKey` and re-keys of several tokens ride
+	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultKey` and re-keys of several tokens ride
 	 * in one PTB without pausing.
 	 */
 	async tryRekeyToken({
@@ -1108,9 +1108,9 @@ export class ContraClient {
 	}
 
 	/**
-	 * Rotate the account key and re-key one token in a single PTB: `setAccountKey`, an optional
+	 * Rotate the account key and re-key one token in a single PTB: `setDefaultKey`, an optional
 	 * `merge`, then `rekey_token`. The caller supplies and persists `newTokenAccount`. This is the
-	 * common single-token rotation; for a multi-token account, call `setAccountKey` once and then
+	 * common single-token rotation; for a multi-token account, call `setDefaultKey` once and then
 	 * `rekeyToken` / `tryRekeyToken` per token.
 	 *
 	 * SDK-thrown / on-chain aborts: as for `rekeyToken`, plus `EIdentityPublicKey` if the new key is
@@ -1136,9 +1136,9 @@ export class ContraClient {
 		);
 		return (tx: Transaction) => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
-			this.setAccountKey({
+			this.setDefaultKey({
 				tokenAccount,
-				newPublicKey: newTokenAccount.publicKey,
+				newDefaultKey: newTokenAccount.publicKey,
 				auth: () => authArg,
 			})(tx);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
@@ -1156,7 +1156,7 @@ export class ContraClient {
 
 	/**
 	 * Optimistically rotate the account key and re-key many tokens in a single PTB, without pausing:
-	 * `setAccountKey` once, then for each token an optional `merge` + `tryRekeyToken`. Because each
+	 * `setDefaultKey` once, then for each token an optional `merge` + `tryRekeyToken`. Because each
 	 * re-key soft-fails (it does not abort), any token whose re-key races a concurrent deposit is left
 	 * stale for a later retry while the rest still land — so the rotation never reverts.
 	 *
@@ -1203,11 +1203,11 @@ export class ContraClient {
 		const materials = await Promise.all(
 			perToken.map((p) => this.#buildRekeyMaterial(p.current, p.next, merge)),
 		);
-		const newPublicKey = newTokenAccount.publicKey;
+		const newDefaultKey = newTokenAccount.publicKey;
 		return (tx: Transaction) => {
 			// Rotate the account key once; any registered token's `Auth` authorizes it.
 			const setAuth = this.#asSenderAuth(tx, types[0]);
-			this.setAccountKey({ tokenAccount: perToken[0].current, newPublicKey, auth: () => setAuth })(
+			this.setDefaultKey({ tokenAccount: perToken[0].current, newDefaultKey, auth: () => setAuth })(
 				tx,
 			);
 			// Then optimistically merge + re-key each token.

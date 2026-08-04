@@ -95,7 +95,7 @@ describe('core user flows (devnet)', () => {
 				] as [Ed25519Keypair, string, TokenAccount][]
 			).map(async ([keypair, address, tokenAccount]) => {
 				const regTx = new Transaction();
-				const account = regTx.add(client.contra.newAccount({ publicKey: tokenAccount.publicKey }));
+				const account = regTx.add(client.contra.newAccount({ defaultKey: tokenAccount.publicKey }));
 				regTx.add(await client.contra.register({ tokenAccount, account }));
 				regTx.add(client.contra.shareAccount({ account }));
 				regTx.setSender(address);
@@ -589,7 +589,7 @@ describe('core user flows (devnet)', () => {
 			await contraInit.fund(userAddress, FUNDING_AMOUNT);
 			const setupTx = new Transaction();
 			const account = setupTx.add(
-				client.contra.newAccount({ publicKey: userTokenAccount.publicKey }),
+				client.contra.newAccount({ defaultKey: userTokenAccount.publicKey }),
 			);
 			setupTx.add(client.contra.shareAccount({ account }));
 			setupTx.setSender(userAddress);
@@ -613,7 +613,7 @@ describe('core user flows (devnet)', () => {
 			});
 
 			// --- Rotation 1: no pending deposits. `rotateKey` sets the account key and re-keys the
-			// token in one PTB (Option A: set_account_key is O(1), rekey_token catches the token up). ---
+			// token in one PTB (set_default_key is O(1), rekey_token catches the token up). ---
 			const oldPrivateKey = userTokenAccount.privateKey;
 			const oldPublicKeyBytes = userTokenAccount.publicKey.toBytes();
 

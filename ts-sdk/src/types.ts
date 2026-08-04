@@ -242,7 +242,7 @@ export interface NewAccountOptions {
 	 * `register` and are not tied to this key. The account is created for the transaction sender, so
 	 * the transaction must be signed by the intended owner.
 	 */
-	publicKey?: RistrettoPoint;
+	defaultKey?: RistrettoPoint;
 }
 
 /** The key a single token's balances are currently encrypted under (see `ContraClient.getTokenKeys`). */
@@ -345,8 +345,8 @@ export interface UnpauseAccountOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.setAccountKey`. */
-export interface SetAccountKeyOptions {
+/** Arguments to `ContraClient.setDefaultKey`. */
+export interface SetDefaultKeyOptions {
 	/**
 	 * A token account for the owner whose default key is being set. Only its `address` and `tokenType`
 	 * are used (the latter to type the `Auth<T>` and the Move call).
@@ -356,7 +356,7 @@ export interface SetAccountKeyOptions {
 	 * The new default key for the account (used by `register_permissionless`). Pass `null` (or omit)
 	 * to clear it, disabling permissionless auto-registration. Per-token keys are unaffected.
 	 */
-	newPublicKey?: RistrettoPoint | null;
+	newDefaultKey?: RistrettoPoint | null;
 	/**
 	 * Optional `Auth<T>` builder. When omitted, the client builds an `as_sender` auth. The resulting
 	 * `Auth<T>` must cover the `REGISTER` operation.
@@ -371,7 +371,7 @@ export interface RekeyTokenOptions {
 	/**
 	 * The post-rotation token account, carrying the new key. Must have the same `address` and
 	 * `tokenType` as `tokenAccount`, and its public key must equal the account key already set by
-	 * `setAccountKey`. The caller persists it to decrypt the re-keyed balance.
+	 * `setDefaultKey`. The caller persists it to decrypt the re-keyed balance.
 	 */
 	newTokenAccount: TokenAccount;
 	/**

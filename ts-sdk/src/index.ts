@@ -36,7 +36,7 @@ export type {
 	RekeyTokenOptions,
 	RotateKeyAllOptions,
 	RotateKeyOptions,
-	SetAccountKeyOptions,
+	SetDefaultKeyOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,

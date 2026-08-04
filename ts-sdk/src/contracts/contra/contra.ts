@@ -362,23 +362,23 @@ export function shareConfidentialToken(options: ShareConfidentialTokenOptions) {
 }
 export interface NewAccountArguments {
 	registry: RawTransactionArgument<string>;
-	pk: TransactionArgument;
+	defaultKey: TransactionArgument;
 }
 export interface NewAccountOptions {
 	package?: string;
 	arguments:
 		| NewAccountArguments
-		| [registry: RawTransactionArgument<string>, pk: TransactionArgument];
+		| [registry: RawTransactionArgument<string>, defaultKey: TransactionArgument];
 }
 /**
- * Create a new account for `ctx.sender()` with account key `pk`. Can only happen once per address.
- * Creation is restricted to the owner: only the sender can set their own account key. For an account
- * owned by a Move object, use `new_account_for_object`.
+ * Create a new account for `ctx.sender()` with an optional `default_key`. Can only happen once per
+ * address. Creation is restricted to the owner: only the sender can set their own default key. For an
+ * account owned by a Move object, use `new_account_for_object`.
  */
 export function newAccount(options: NewAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null] satisfies (string | null)[];
-	const parameterNames = ['registry', 'pk'];
+	const parameterNames = ['registry', 'defaultKey'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -390,7 +390,7 @@ export function newAccount(options: NewAccountOptions) {
 export interface NewAccountForObjectArguments {
 	registry: RawTransactionArgument<string>;
 	uid: RawTransactionArgument<string>;
-	pk: TransactionArgument;
+	defaultKey: TransactionArgument;
 }
 export interface NewAccountForObjectOptions {
 	package?: string;
@@ -399,18 +399,18 @@ export interface NewAccountForObjectOptions {
 		| [
 				registry: RawTransactionArgument<string>,
 				uid: RawTransactionArgument<string>,
-				pk: TransactionArgument,
+				defaultKey: TransactionArgument,
 		  ];
 }
 /**
- * Create a new account owned by the object identified by `uid`, with account key `pk`. Holding
+ * Create a new account owned by the object identified by `uid`, with an optional `default_key`. Holding
  * `&mut UID` proves custody of the object, so it self-authenticates as its own owner. Can only happen
  * once per object address.
  */
 export function newAccountForObject(options: NewAccountForObjectOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['registry', 'uid', 'pk'];
+	const parameterNames = ['registry', 'uid', 'defaultKey'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -540,38 +540,37 @@ export function setAcceptsEncryptedDeposits(options: SetAcceptsEncryptedDeposits
 			typeArguments: options.typeArguments,
 		});
 }
-export interface SetAccountKeyArguments {
+export interface SetDefaultKeyArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
-	newPk: TransactionArgument;
+	newDefaultKey: TransactionArgument;
 }
-export interface SetAccountKeyOptions {
+export interface SetDefaultKeyOptions {
 	package?: string;
 	arguments:
-		| SetAccountKeyArguments
+		| SetDefaultKeyArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
-				newPk: TransactionArgument,
+				newDefaultKey: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Rotate the account's key to `new_pk`. O(1): sets the convergence target
- * `account.pk`; it does not touch any token balance. Each token's balance stays
- * under its own `TokenAccount.pk` until the owner catches it up with `rekey_token`.
- * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and
- * may be for any token the account is registered for.
+ * Set the account's optional default key (`account.pk`) to `new_default_key` (pass `none` to clear
+ * it). This is purely the key `register_permissionless` uses; per-token keys are unaffected and are
+ * rotated independently via `rekey_token`. Authorized by `auth`, which must be for the
+ * `PERMISSIONED_REGISTER` operation and may be for any token the account is registered for.
  */
-export function setAccountKey(options: SetAccountKeyOptions) {
+export function setDefaultKey(options: SetDefaultKeyOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth', 'newPk'];
+	const parameterNames = ['account', 'auth', 'newDefaultKey'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'set_account_key',
+			function: 'set_default_key',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
@@ -641,7 +640,7 @@ export interface TryRekeyTokenOptions {
  * Like `rekey_token` but soft-fails instead of aborting: if the re-key proof does
  * not verify (e.g. a deposit raced the caller's read), it emits
  * `TryTokenRekeyFailedEvent` and returns `false`, leaving the token unchanged (still
- * stale) for a retry. Lets a caller bundle `set_account_key` and re-keys of several
+ * stale) for a retry. Lets a caller bundle `set_default_key` and re-keys of several
  * tokens into one PTB without pausing. Still aborts on an identity `new_pk` or unmerged
  * pending deposits.
  */

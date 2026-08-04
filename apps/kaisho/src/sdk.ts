@@ -368,7 +368,7 @@ export async function buildRegisterAccountTx(opts: {
 
 	const tx = new Transaction();
 	if (accountStatus === 'needs-account') {
-		const account = tx.add(contraClient.newAccount({ publicKey: tokenAccount.publicKey }));
+		const account = tx.add(contraClient.newAccount({ defaultKey: tokenAccount.publicKey }));
 		tx.add(await contraClient.register({ tokenAccount, account }));
 		tx.add(contraClient.shareAccount({ account }));
 	} else {
