@@ -23,7 +23,7 @@ public struct NewRegistrationEvent<phantom T> has copy, drop {
 /// An account set its optional default key (used by `register_with_default_pk`) to `new_pk`, or
 /// cleared it (`new_pk == none`). Per-token keys are independent of this, so it is not parameterized
 /// by a token type.
-public struct DefaultKeyRotatedEvent has copy, drop {
+public struct DefaultPkRotatedEvent has copy, drop {
     owner: address,
     new_pk: Option<Element<G>>,
 }
@@ -151,8 +151,8 @@ public(package) fun emit_new_registration<T>(owner: address, pk: Element<G>) {
     event::emit(NewRegistrationEvent<T> { owner, pk });
 }
 
-public(package) fun emit_default_key_rotated(owner: address, new_pk: Option<Element<G>>) {
-    event::emit(DefaultKeyRotatedEvent { owner, new_pk });
+public(package) fun emit_default_pk_rotated(owner: address, new_pk: Option<Element<G>>) {
+    event::emit(DefaultPkRotatedEvent { owner, new_pk });
 }
 
 public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: Element<G>) {

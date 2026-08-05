@@ -23,8 +23,8 @@ export const NewRegistrationEvent = new MoveStruct({
 		pk: group_ops.Element,
 	},
 });
-export const DefaultKeyRotatedEvent = new MoveStruct({
-	name: `${$moduleName}::DefaultKeyRotatedEvent`,
+export const DefaultPkRotatedEvent = new MoveStruct({
+	name: `${$moduleName}::DefaultPkRotatedEvent`,
 	fields: {
 		owner: bcs.Address,
 		new_pk: bcs.option(group_ops.Element),

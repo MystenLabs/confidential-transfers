@@ -486,7 +486,7 @@ export interface RegisterWithDefaultPkOptions {
  * Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
  * owner, keyed under the account's `default_pk`, without any `Auth`. Only allowed when `T` leaves
  * registration permissionless and `default_pk` is set. Aborts if `default_pk` is unset
- * (`EDefaultKeyNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or the
+ * (`EDefaultPkNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or the
  * token is already registered (`EAccountAlreadyRegistered`).
  */
 export function registerWithDefaultPk(options: RegisterWithDefaultPkOptions) {

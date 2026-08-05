@@ -103,7 +103,7 @@ const EMissingAuditorData: u64 = 13;
 const EUnexpectedAuditorData: u64 = 14;
 const EReceiverNotRegistered: u64 = 16;
 const ERegistrationNotPermissionless: u64 = 17;
-const EDefaultKeyNotSet: u64 = 18;
+const EDefaultPkNotSet: u64 = 18;
 
 // === Constants ===
 
@@ -356,10 +356,10 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
 /// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
 /// owner, keyed under the account's `default_pk`, without any `Auth`. Only allowed when `T` leaves
 /// registration permissionless and `default_pk` is set. Aborts if `default_pk` is unset
-/// (`EDefaultKeyNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or
+/// (`EDefaultPkNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or
 /// the token is already registered (`EAccountAlreadyRegistered`).
 public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
-    assert!(account.default_pk.is_some(), EDefaultKeyNotSet);
+    assert!(account.default_pk.is_some(), EDefaultPkNotSet);
     assert!(
         policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         ERegistrationNotPermissionless,
@@ -427,7 +427,7 @@ public fun set_default_pk_for_object(
 fun set_default_pk_internal(account: &mut Account, default_pk: Option<Element<G>>) {
     assert!(default_pk.is_none() || *default_pk.borrow() != g_identity(), EIdentityPublicKey);
     account.default_pk = default_pk;
-    events::emit_default_key_rotated(account.owner, default_pk);
+    events::emit_default_pk_rotated(account.owner, default_pk);
 }
 
 /// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
