@@ -58,9 +58,14 @@ public(package) fun verify_ddh(
     bases: &vector<Element<G>>,
     images: &vector<Element<G>>,
 ): bool {
-    // TODO: check for degenerate case where a base is the identity element.
     let n = bases.length();
     if (images.length() != n || proof.commitments.length() != n) return false;
+    // Reject a fully degenerate statement — every base the identity — which binds no witness. An
+    // individual identity base is safe and deliberately allowed: that row's check reduces to
+    // `a + c*image == identity`, which for the `a` and `image` committed before the random `c`
+    // forces both to the identity, so no false image can be proven. (It is also needed: re-keying a
+    // pristine balance whose limb decryption handles are all the identity.)
+    if (bases.all!(|b| *b == g_identity())) return false;
     let c = challenge_ddh(dst, bases, images, &proof.commitments);
     vector::tabulate!(
         n,
@@ -340,6 +345,29 @@ fun ddh_proof_batch_round_trip() {
     let mut short_images = images;
     short_images.pop_back();
     assert!(!verify_ddh(&proof, vector[], &short_bases, &short_images));
+}
+
+/// A statement whose every base is the identity binds no witness and is rejected outright, even
+/// with a proof honestly built for it.
+#[test]
+fun ddh_proof_rejects_all_identity_bases() {
+    let id = g_identity();
+    let bases = vector[id, id];
+    let images = vector[id, id];
+    let proof = prove_ddh(vector[], &scalar_from_u64(7), &bases, &images, &scalar_from_u64(99));
+    assert!(!verify_ddh(&proof, vector[], &bases, &images));
+}
+
+/// A single identity base (e.g. a zero-blinding decryption handle) is allowed as long as some other
+/// base binds the witness — this mirrors re-keying a pristine balance.
+#[test]
+fun ddh_proof_allows_individual_identity_base() {
+    let g = ristretto255::g_generator();
+    let w = scalar_from_u64(13);
+    let bases = vector[g, g_identity()];
+    let images = vector[g_mul(&w, &g), g_identity()];
+    let proof = prove_ddh(vector[], &w, &bases, &images, &scalar_from_u64(42));
+    assert!(verify_ddh(&proof, vector[], &bases, &images));
 }
 
 #[test]

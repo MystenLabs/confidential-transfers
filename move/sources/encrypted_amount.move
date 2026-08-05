@@ -22,9 +22,9 @@ const BULLETPROOFS_VERSION: u8 = 0;
 /// must show every committed value lies in `[0, 2^16)`.
 const LIMB_BITS: u8 = 16;
 
-/// Number of u32 limbs an auditor reads per amount: a u64 amount's four u16 limbs regroup into two
-/// u32 halves, so the sender attaches one decryption handle per two limbs (`2` handles per amount).
-const AUDITOR_LIMBS: u64 = 2;
+/// Number of u32 limbs needed to represent a u64 amount: its four u16 limbs regroup into two u32
+/// halves.
+const U32_LIMBS: u64 = 2;
 
 /// Maximum number of amounts covered by a single Bulletproof chunk.
 /// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
@@ -282,12 +282,12 @@ public(package) fun u32_limb_encryptions(
     amounts: &vector<WellFormedEncryptedAmount>,
     handles: &vector<Element<G>>,
 ): vector<Encryption> {
-    assert!(handles.length() == AUDITOR_LIMBS * amounts.length(), EMismatchedBatchLength);
+    assert!(handles.length() == U32_LIMBS * amounts.length(), EMismatchedBatchLength);
     let mut out = vector[];
     amounts.length().do!(|i| {
         let commitments = amounts[i].amount.ciphertexts_as_u32_limbs();
-        out.push_back(twisted_elgamal::new(commitments[0], handles[AUDITOR_LIMBS * i]));
-        out.push_back(twisted_elgamal::new(commitments[1], handles[AUDITOR_LIMBS * i + 1]));
+        out.push_back(twisted_elgamal::new(commitments[0], handles[U32_LIMBS * i]));
+        out.push_back(twisted_elgamal::new(commitments[1], handles[U32_LIMBS * i + 1]));
     });
     out
 }
