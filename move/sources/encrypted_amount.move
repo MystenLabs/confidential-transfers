@@ -301,11 +301,7 @@ public(package) fun u32_limb_encryptions(
     assert!(handles.length() == amounts.length(), EMismatchedBatchLength);
     amounts.zip_map_ref!(handles, |wfea, u32_handles| {
         let commitments = wfea.amount.ciphertexts_as_u32_limbs();
-        let h = &u32_handles.handles;
-        vector[
-            twisted_elgamal::new(commitments[0], h[0]),
-            twisted_elgamal::new(commitments[1], h[1]),
-        ]
+        commitments.zip_map!(u32_handles.handles, |c, h| twisted_elgamal::new(c, h))
     }).flatten()
 }
 
