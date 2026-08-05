@@ -22,6 +22,9 @@ const BULLETPROOFS_VERSION: u8 = 0;
 /// must show every committed value lies in `[0, 2^16)`.
 const LIMB_BITS: u8 = 16;
 
+/// Number of u16 limbs a u64 amount is stored as (`l0..l3`).
+const U16_LIMBS: u64 = 4;
+
 /// Number of u32 limbs needed to represent a u64 amount: its four u16 limbs regroup into two u32
 /// halves.
 const U32_LIMBS: u64 = 2;
@@ -184,7 +187,7 @@ public(package) fun pk(self: &WellFormedEncryptedAmount): &Element<G> {
 
 #[syntax(index)]
 public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
-    assert!(i < 4, EIndexOutOfBounds);
+    assert!(i < U16_LIMBS, EIndexOutOfBounds);
     if (i == 0) {
         &ea.l0
     } else if (i == 1) {
@@ -243,11 +246,11 @@ public(package) fun try_rekey(
     proof: &DdhProof,
     dst: vector<u8>,
 ): Option<EncryptedAmount> {
-    assert!(new_handles.length() == 4, EMismatchedBatchLength);
+    assert!(new_handles.length() == U16_LIMBS, EMismatchedBatchLength);
     // Pair 0 re-keys the public key; pairs 1..4 re-key each limb's decryption handle.
     let mut bases = vector[*old_pk];
     let mut images = vector[*new_pk];
-    4u64.do!(|i| {
+    U16_LIMBS.do!(|i| {
         bases.push_back(*old_amount[i].decryption_handle());
         images.push_back(new_handles[i]);
     });
@@ -367,7 +370,10 @@ fun verify_well_formed_range_proofs(
         rangeproofs::verify_bulletproofs_with_dst_ristretto255(
             range_proof,
             LIMB_BITS,
-            &vector::tabulate!(4 * chunk, |j| *amounts[start + j / 4][j % 4].ciphertext()),
+            &vector::tabulate!(
+                U16_LIMBS * chunk,
+                |j| *amounts[start + j / U16_LIMBS][j % U16_LIMBS].ciphertext(),
+            ),
             &dst,
             BULLETPROOFS_VERSION,
         )
