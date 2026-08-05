@@ -372,7 +372,6 @@ fun test_batched_transfer() {
             new_balance_ea,
             balance_proof,
             option::none(),
-            option::none(),
             scenario.ctx(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
@@ -530,8 +529,7 @@ fun test_batched_transfer_with_auditor() {
             ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
-            option::some(auditor_handles),
-            option::some(auditor_proof),
+            option::some(auditors::new_auditor_package(auditor_handles, auditor_proof)),
             scenario.ctx(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
@@ -687,8 +685,7 @@ fun test_batched_transfer_auditor_disable_grace() {
             ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
-            option::some(auditor_handles),
-            option::some(auditor_proof),
+            option::some(auditors::new_auditor_package(auditor_handles, auditor_proof)),
             scenario.ctx(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
@@ -818,7 +815,6 @@ fun transfer<T>(
             ristretto255::g_identity(),
             new_balance,
             balance_proof,
-            option::none(),
             option::none(),
             ctx,
         )

@@ -3,13 +3,42 @@
 
 module contra::auditors;
 
-use contra::{nizk::{ElGamalProof, verify_elgamal}, twisted_elgamal::Encryption};
+use contra::{
+    encrypted_amount::{U32LimbHandles, WellFormedEncryptedAmount, u32_limb_encryptions},
+    nizk::{ElGamalProof, verify_elgamal}
+};
 use sui::{group_ops::Element, ristretto255::{G, g_identity}};
 
 // === Errors ===
 
 const EIdentityAuditorPublicKey: u64 = 0;
 const EAuditorProofFailed: u64 = 1;
+const EMissingAuditorData: u64 = 2;
+const EUnexpectedAuditorData: u64 = 3;
+
+// === Per-transfer auditor data ===
+
+/// The per-transfer auditor data a sender attaches to a `batched_transfer`: one `U32LimbHandles`
+/// (two u32-limb decryption handles) per receiver, in receiver order, plus one batched `ElGamalProof`
+/// proving those handles well-formed under the auditor key. `none` (no package) means the transfer
+/// carries no auditor data.
+public struct AuditorPackage has drop {
+    handles: vector<U32LimbHandles>,
+    proof: ElGamalProof,
+}
+
+public fun new_auditor_package(
+    handles: vector<U32LimbHandles>,
+    proof: ElGamalProof,
+): AuditorPackage {
+    AuditorPackage { handles, proof }
+}
+
+/// Consume `self` into its per-receiver handles and batched proof.
+public(package) fun unpack(self: AuditorPackage): (vector<U32LimbHandles>, ElGamalProof) {
+    let AuditorPackage { handles, proof } = self;
+    (handles, proof)
+}
 
 // === Main Type ===
 
@@ -67,28 +96,41 @@ public(package) fun accepts_at(auditor: &Auditor, epoch: u64): bool {
         (epoch <= auditor.previous_expiration_epoch && auditor.previous_pk.is_some())
 }
 
-/// Verify a batched per-transfer auditor `ElGamalProof` over `encryptions` — the derived u32-limb
-/// `(commitment, handle)` pairs for the whole transfer batch, all encrypted under one auditor key.
-/// Accepts the proof if it verifies under the current key, or under the previous key while
-/// `epoch <= previous_expiration_epoch` (the rotation grace window). Returns the auditor key that
-/// verified it (so callers can record which key a transfer used). Callers only reach this with
-/// auditor data attached (see `accepts_at`), so a proof that verifies under no accepted key is a
-/// hard error: aborts `EAuditorProofFailed`.
+/// Verify a transfer's per-transfer auditor data against this auditor. `receiver_amounts` are the
+/// range/consistency-proven receiver amounts; `auditor_package` is the sender-supplied data (`none`
+/// when the transfer carries none), holding one `U32LimbHandles` per receiver plus one batched
+/// `ElGamalProof` over the derived u32-limb `(commitment, handle)` pairs (the commitments come from
+/// `receiver_amounts` itself). Returns the per-receiver handles to attach to events (empty when none
+/// is carried) and the auditor key that verified them (`none` when none is carried).
+///
+/// Presence policy: auditor data is required when auditing is enabled, forbidden when fully off, and
+/// optional during a disable grace window (verified under the previous key so in-flight transfers
+/// stay auditable). Aborts if that policy is violated (`EMissingAuditorData` / `EUnexpectedAuditorData`)
+/// or the proof verifies under no accepted key at `epoch` (`EAuditorProofFailed`). The proof is
+/// accepted under the current key, or the previous key while `epoch <= previous_expiration_epoch`.
 public(package) fun verify_transfer(
     auditor: &Auditor,
+    receiver_amounts: &vector<WellFormedEncryptedAmount>,
+    auditor_package: Option<AuditorPackage>,
     epoch: u64,
-    encryptions: &vector<Encryption>,
-    proof: &ElGamalProof,
     dst: vector<u8>,
-): Element<G> {
-    if (auditor.current_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))) {
-        return *auditor.current_pk.borrow()
+): (vector<U32LimbHandles>, Option<Element<G>>) {
+    if (auditor_package.is_none()) {
+        assert!(!auditor.is_enabled(), EMissingAuditorData);
+        return (vector[], option::none())
+    };
+    assert!(auditor.accepts_at(epoch), EUnexpectedAuditorData);
+    let (handles, proof) = auditor_package.destroy_some().unpack();
+    let encryptions = u32_limb_encryptions(receiver_amounts, &handles);
+    // Accept under the current key, or the previous key while in its grace window.
+    if (auditor.current_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, &encryptions))) {
+        return (handles, auditor.current_pk)
     };
     if (
         epoch <= auditor.previous_expiration_epoch &&
-            auditor.previous_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, encryptions))
+            auditor.previous_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, &encryptions))
     ) {
-        return *auditor.previous_pk.borrow()
+        return (handles, auditor.previous_pk)
     };
     abort EAuditorProofFailed
 }

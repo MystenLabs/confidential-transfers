@@ -15,6 +15,7 @@ import { blake2b } from '@noble/hashes/blake2.js';
 import { hexToBytes } from '@noble/hashes/utils.js';
 
 import type { BatchRangeProver } from './bp.js';
+import * as auditorsContracts from './contracts/contra/auditors.js';
 import * as decodeContracts from './contracts/contra/decode.js';
 import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
 import { InvalidArgumentError } from './error.js';
@@ -373,42 +374,34 @@ export function buildOptionalPoint(pk?: RistrettoPoint) {
 }
 
 /**
- * Build an `Option<vector<U32LimbHandles>>` of the per-transfer auditor decryption handles (one
- * `U32LimbHandles` = two u32-limb handles per receiver). The flattened `handles` (two per receiver,
- * in receiver order) are grouped into pairs on-chain by `decode::u32_limb_handles`; `option::some`
- * wrapping that when `handles` is provided, `option::none` when auditing is disabled.
+ * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: one `U32LimbHandles`
+ * (two u32-limb handles) per receiver plus one batched `ElGamalProof`. `option::some` wrapping
+ * `auditors::new_auditor_package(handles, proof)` when `data` is provided, `option::none` when
+ * auditing is disabled. The flattened `data.handles` (two per receiver, in receiver order) are grouped
+ * into per-receiver pairs on-chain by `decode::u32_limb_handles`.
  */
-export function buildAuditorHandlesOption(packageId: string, handles?: RistrettoPoint[]) {
-	const optionType = [`vector<${packageId}::encrypted_amount::U32LimbHandles>`];
-	if (handles) {
+export function buildAuditorPackageOption(
+	packageId: string,
+	data?: { handles: RistrettoPoint[]; proof: ElGamalNizk },
+) {
+	const optionType = [`${packageId}::auditors::AuditorPackage`];
+	if (data) {
 		return (tx: Transaction) =>
 			tx.moveCall({
 				target: '0x1::option::some',
 				typeArguments: optionType,
 				arguments: [
-					decodeContracts.u32LimbHandles({
+					auditorsContracts.newAuditorPackage({
 						package: packageId,
-						arguments: { parts: elemParts(handles.map((h) => h.toBytes())) },
+						arguments: {
+							handles: decodeContracts.u32LimbHandles({
+								package: packageId,
+								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
+							}),
+							proof: buildElGamalProof(packageId, data.proof),
+						},
 					}),
 				],
-			});
-	}
-	return (tx: Transaction) =>
-		tx.moveCall({ target: '0x1::option::none', typeArguments: optionType });
-}
-
-/**
- * Build an `Option<ElGamalProof>` for the batched per-transfer auditor proof. `option::some`
- * wrapping the serialized `ElGamalNizk` when provided, `option::none` when auditing is disabled.
- */
-export function buildAuditorProofOption(packageId: string, proof?: ElGamalNizk) {
-	const optionType = [`${packageId}::nizk::ElGamalProof`];
-	if (proof) {
-		return (tx: Transaction) =>
-			tx.moveCall({
-				target: '0x1::option::some',
-				typeArguments: optionType,
-				arguments: [buildElGamalProof(packageId, proof)],
 			});
 	}
 	return (tx: Transaction) =>

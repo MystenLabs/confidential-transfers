@@ -66,7 +66,7 @@
 module contra::contra;
 
 use contra::{
-    auditors::{Auditor, new as new_auditor},
+    auditors::{Auditor, AuditorPackage, new as new_auditor},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{
@@ -105,8 +105,6 @@ const ETooManyReceivers: u64 = 9;
 const EBalancesFull: u64 = 10;
 const EIdentityPublicKey: u64 = 11;
 const EBatchTooLarge: u64 = 12;
-const EMissingAuditorData: u64 = 13;
-const EUnexpectedAuditorData: u64 = 14;
 const EReceiverNotRegistered: u64 = 16;
 const ERegistrationNotPermissionless: u64 = 17;
 const EDefaultPkNotSet: u64 = 18;
@@ -543,12 +541,12 @@ public fun wrap<T>(
 /// `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
 /// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
 ///
-/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_handles` must carry one
-/// `U32LimbHandles` (two u32-limb decryption handles) per receiver, in `receiver_amounts` order, and
-/// `auditor_proof` a single batched `ElGamalProof` over the derived `(commitment, handle)` pairs;
-/// the derived commitments come from `receiver_amounts` itself (see
-/// `encrypted_amount::ciphertexts_as_u32_limbs`). The proof is accepted under the current or (in grace)
-/// previous auditor key at `ctx.epoch()`. When auditing is disabled both must be `none`.
+/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_package` must carry one
+/// `U32LimbHandles` (two u32-limb decryption handles) per receiver, in `receiver_amounts` order, plus
+/// a single batched `ElGamalProof` over the derived `(commitment, handle)` pairs; the derived
+/// commitments come from `receiver_amounts` itself (see `encrypted_amount::ciphertexts_as_u32_limbs`).
+/// The proof is accepted under the current or (in grace) previous auditor key at `ctx.epoch()`. When
+/// auditing is disabled `auditor_package` must be `none`.
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts
 /// if `well_formed_proofs`, the auditor requirement, or `consistency_proof` fails. Call `add` once
@@ -567,8 +565,7 @@ public fun batched_transfer<T>(
     seed_point: Element<G>,
     new_balance: EncryptedAmount,
     balance_proof: DdhProof,
-    auditor_handles: Option<vector<U32LimbHandles>>,
-    auditor_proof: Option<ElGamalProof>,
+    auditor_package: Option<AuditorPackage>,
     ctx: &TxContext,
 ): TransferBatch<T> {
     assert!(ct.is_active, ETransferDenied);
@@ -598,14 +595,14 @@ public fun batched_transfer<T>(
     let new_balance = wfeas.pop_back();
     let receiver_amounts = wfeas;
 
-    let (mut auditor_handles, auditor_pk) = verify_auditing(
-        ct,
-        sender.session_id,
-        &receiver_amounts,
-        auditor_handles,
-        auditor_proof,
-        ctx,
-    );
+    let (mut auditor_handles, auditor_pk) = ct
+        .auditor
+        .verify_transfer(
+            &receiver_amounts,
+            auditor_package,
+            ctx.epoch(),
+            sender.session_id.dst(DST_AUDITOR_ELGAMAL),
+        );
 
     let withdrawn = sender
         .active
@@ -639,38 +636,6 @@ public fun batched_transfer<T>(
         withdrawn.destroy_none();
         TransferBatch::BalanceProofFailed
     }
-}
-
-/// Verify the per-transfer auditor data. Returns the per-receiver auditor handles to attach to events
-/// (empty when none is carried) and the auditor key that verified them (`none` when no data is
-/// carried). Aborts if that presence rule or the batched auditor `ElGamalProof` (under an
-/// accepted key at `epoch`) is not met.
-fun verify_auditing<T>(
-    ct: &ConfidentialToken<T>,
-    session_id: vector<u8>,
-    receiver_amounts: &vector<WellFormedEncryptedAmount>,
-    auditor_handles: Option<vector<U32LimbHandles>>,
-    auditor_proof: Option<ElGamalProof>,
-    ctx: &TxContext,
-): (vector<U32LimbHandles>, Option<Element<G>>) {
-    if (auditor_handles.is_none() && auditor_proof.is_none()) {
-        assert!(!ct.auditor.is_enabled(), EMissingAuditorData);
-        return (vector[], option::none())
-    };
-    assert!(auditor_handles.is_some() && auditor_proof.is_some(), EMissingAuditorData);
-    assert!(ct.auditor.accepts_at(ctx.epoch()), EUnexpectedAuditorData);
-    let handles = auditor_handles.destroy_some();
-    let proof = auditor_proof.destroy_some();
-    let encryptions = encrypted_amount::u32_limb_encryptions(receiver_amounts, &handles);
-    let auditor_pk = ct
-        .auditor
-        .verify_transfer(
-            ctx.epoch(),
-            &encryptions,
-            &proof,
-            session_id.dst(DST_AUDITOR_ELGAMAL),
-        );
-    (handles, option::some(auditor_pk))
 }
 
 /// Add a receiver to a batched transfer: pop the next receiver-keyed `EncryptedCoin` and credit it

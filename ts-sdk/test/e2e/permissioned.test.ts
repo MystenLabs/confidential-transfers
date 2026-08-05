@@ -22,8 +22,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { getBulletproofs } from '../../src/bp.js';
 import * as contraContracts from '../../src/contracts/contra/contra.js';
 import {
-	buildAuditorHandlesOption,
-	buildAuditorProofOption,
+	buildAuditorPackageOption,
 	buildDdhProof,
 	buildElGamalProof,
 	buildEncryptedAmount,
@@ -142,8 +141,8 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			randomScalar(),
 		);
 
-		// Per-transfer auditor data for the single receiver: `verify_auditing` runs before the balance
-		// proof, so valid handles + proof must be present for the transfer to reach the
+		// Per-transfer auditor data for the single receiver: `auditors::verify_transfer` runs before the
+		// balance proof, so valid handles + proof must be present for the transfer to reach the
 		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData`.
 		const auditorPk = tokenIssuer.auditorPublicKey!;
 		const shift = 1n << 16n;
@@ -219,8 +218,10 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						newBalanceLimbs.map((l) => l.ciphertext),
 					),
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
-					auditorHandles: buildAuditorHandlesOption(pid, auditorHandles),
-					auditorProof: buildAuditorProofOption(pid, auditorProof),
+					auditorPackage: buildAuditorPackageOption(pid, {
+						handles: auditorHandles,
+						proof: auditorProof,
+					}),
 				},
 			}),
 		);

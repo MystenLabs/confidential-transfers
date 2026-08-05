@@ -138,7 +138,6 @@ fun closed_loop_roundtrip() {
             new_balance,
             sum_proof,
             option::none(),
-            option::none(),
             scenario.ctx(),
         )
         .add<PBU>(&mut bob_account, vector[], &deny_list)

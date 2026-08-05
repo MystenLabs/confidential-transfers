@@ -731,8 +731,7 @@ export interface BatchedTransferArguments {
 	seedPoint: TransactionArgument;
 	newBalance: TransactionArgument;
 	balanceProof: TransactionArgument;
-	auditorHandles: TransactionArgument;
-	auditorProof: TransactionArgument;
+	auditorPackage: TransactionArgument;
 }
 export interface BatchedTransferOptions {
 	package?: string;
@@ -750,8 +749,7 @@ export interface BatchedTransferOptions {
 				seedPoint: TransactionArgument,
 				newBalance: TransactionArgument,
 				balanceProof: TransactionArgument,
-				auditorHandles: TransactionArgument,
-				auditorProof: TransactionArgument,
+				auditorPackage: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -788,7 +786,6 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		null,
 		null,
 		null,
-		null,
 	] satisfies (string | null)[];
 	const parameterNames = [
 		'sender',
@@ -802,8 +799,7 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'seedPoint',
 		'newBalance',
 		'balanceProof',
-		'auditorHandles',
-		'auditorProof',
+		'auditorPackage',
 	];
 	return (tx: Transaction) =>
 		tx.moveCall({

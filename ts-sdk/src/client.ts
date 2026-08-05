@@ -21,8 +21,7 @@ import {
 	TokenAccountDoesNotExistError,
 } from './error.js';
 import {
-	buildAuditorHandlesOption,
-	buildAuditorProofOption,
+	buildAuditorPackageOption,
 	buildDdhProof,
 	buildElGamalProof,
 	buildEncryptedAmount,
@@ -1402,8 +1401,7 @@ export class ContraClient {
 							newBalance.map((l) => l.ciphertext),
 						),
 						balanceProof: buildDdhProof(pid, balanceProof),
-						auditorHandles: buildAuditorHandlesOption(pid, auditorData?.handles),
-						auditorProof: buildAuditorProofOption(pid, auditorData?.proof),
+						auditorPackage: buildAuditorPackageOption(pid, auditorData),
 					},
 				}),
 			);
