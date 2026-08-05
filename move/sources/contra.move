@@ -71,8 +71,8 @@ use contra::{
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{
         Self,
-        AuditorHandles,
         EncryptedAmount,
+        U32LimbHandles,
         WellFormedEncryptedAmount,
         WellFormedProof,
     },
@@ -197,7 +197,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_handles: vector<AuditorHandles>,
+        auditor_handles: vector<U32LimbHandles>,
         auditor_pk: Option<Element<G>>,
     },
 }
@@ -544,7 +544,7 @@ public fun wrap<T>(
 /// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
 ///
 /// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_handles` must carry one
-/// `AuditorHandles` (two u32-limb decryption handles) per receiver, in `receiver_amounts` order, and
+/// `U32LimbHandles` (two u32-limb decryption handles) per receiver, in `receiver_amounts` order, and
 /// `auditor_proof` a single batched `ElGamalProof` over the derived `(commitment, handle)` pairs;
 /// the derived commitments come from `receiver_amounts` itself (see
 /// `encrypted_amount::ciphertexts_as_u32_limbs`). The proof is accepted under the current or (in grace)
@@ -567,7 +567,7 @@ public fun batched_transfer<T>(
     seed_point: Element<G>,
     new_balance: EncryptedAmount,
     balance_proof: DdhProof,
-    auditor_handles: Option<vector<AuditorHandles>>,
+    auditor_handles: Option<vector<U32LimbHandles>>,
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
 ): TransferBatch<T> {
@@ -643,19 +643,16 @@ public fun batched_transfer<T>(
 
 /// Verify the per-transfer auditor data. Returns the per-receiver auditor handles to attach to events
 /// (empty when none is carried) and the auditor key that verified them (`none` when no data is
-/// carried). Auditor data is required when auditing is enabled (a current key is set), forbidden when
-/// the token is fully off (no current key and no previous key in grace), and optional in between (a
-/// disable grace window: data, if present, is verified under the previous key so in-flight transfers
-/// stay auditable). Aborts if that presence rule or the batched auditor `ElGamalProof` (under an
+/// carried). Aborts if that presence rule or the batched auditor `ElGamalProof` (under an
 /// accepted key at `epoch`) is not met.
 fun verify_auditing<T>(
     ct: &ConfidentialToken<T>,
     session_id: vector<u8>,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
-    auditor_handles: Option<vector<AuditorHandles>>,
+    auditor_handles: Option<vector<U32LimbHandles>>,
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
-): (vector<AuditorHandles>, Option<Element<G>>) {
+): (vector<U32LimbHandles>, Option<Element<G>>) {
     if (auditor_handles.is_none() && auditor_proof.is_none()) {
         assert!(!ct.auditor.is_enabled(), EMissingAuditorData);
         return (vector[], option::none())

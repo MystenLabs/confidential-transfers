@@ -7,12 +7,12 @@ module contra::decode;
 
 use contra::{
     encrypted_amount::{
-        new_auditor_handles,
         new_consistency_proof,
         new_encrypted_amount,
-        AuditorHandles,
+        new_u32_limb_handles,
         ConsistencyProof,
         EncryptedAmount,
+        U32LimbHandles,
     },
     nizk::{Self, DdhProof, ElGamalProof},
     twisted_elgamal::{Self, Encryption}
@@ -23,14 +23,14 @@ public fun g_vector(parts: vector<vector<u8>>): vector<Element<G>> {
     parts.map!(|b| g_from_bytes(&b))
 }
 
-/// Build one `AuditorHandles` per consecutive pair of point-encoded `parts` (two u32-limb handles
+/// Build one `U32LimbHandles` per consecutive pair of point-encoded `parts` (two u32-limb handles
 /// per transferred amount, flattened in amount order). Aborts if `parts` has an odd length.
-public fun auditor_handles(parts: vector<vector<u8>>): vector<AuditorHandles> {
+public fun u32_limb_handles(parts: vector<vector<u8>>): vector<U32LimbHandles> {
     let elements = g_vector(parts);
     let mut out = vector[];
     let mut i = 0;
     while (i < elements.length()) {
-        out.push_back(new_auditor_handles(vector[elements[i], elements[i + 1]]));
+        out.push_back(new_u32_limb_handles(vector[elements[i], elements[i + 1]]));
         i = i + 2;
     };
     out

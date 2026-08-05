@@ -39,8 +39,8 @@ export const WellFormedProof = new MoveStruct({
 		consistency_proofs: bcs.vector(ConsistencyProof),
 	},
 });
-export const AuditorHandles = new MoveStruct({
-	name: `${$moduleName}::AuditorHandles`,
+export const U32LimbHandles = new MoveStruct({
+	name: `${$moduleName}::U32LimbHandles`,
 	fields: {
 		handles: bcs.vector(group_ops.Element),
 	},
@@ -125,14 +125,14 @@ export function newWellFormedProof(options: NewWellFormedProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface NewAuditorHandlesArguments {
+export interface NewU32LimbHandlesArguments {
 	handles: TransactionArgument;
 }
-export interface NewAuditorHandlesOptions {
+export interface NewU32LimbHandlesOptions {
 	package?: string;
-	arguments: NewAuditorHandlesArguments | [handles: TransactionArgument];
+	arguments: NewU32LimbHandlesArguments | [handles: TransactionArgument];
 }
-export function newAuditorHandles(options: NewAuditorHandlesOptions) {
+export function newU32LimbHandles(options: NewU32LimbHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<null>'] satisfies (string | null)[];
 	const parameterNames = ['handles'];
@@ -140,7 +140,7 @@ export function newAuditorHandles(options: NewAuditorHandlesOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'encrypted_amount',
-			function: 'new_auditor_handles',
+			function: 'new_u32_limb_handles',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

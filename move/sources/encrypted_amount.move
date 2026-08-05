@@ -36,7 +36,7 @@ const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 const EWellFormedProofFailed: u64 = 4;
 const ERangeProofRequired: u64 = 5;
-const EMalformedAuditorHandles: u64 = 6;
+const EMalformedU32LimbHandles: u64 = 6;
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -71,6 +71,13 @@ public struct WellFormedProof has drop {
     consistency_proofs: vector<ConsistencyProof>,
 }
 
+/// The two u32-limb auditor decryption handles for one transferred amount (`D̃_0`, `D̃_1`). Paired
+/// with the amount's two `ciphertexts_as_u32_limbs` commitments, they let an auditor recover the
+/// amount off-chain.
+public struct U32LimbHandles has copy, drop, store {
+    handles: vector<Element<G>>,
+}
+
 public fun new_encrypted_amount(
     l0: Encryption,
     l1: Encryption,
@@ -99,6 +106,13 @@ public fun new_well_formed_proof(
     );
     assert!(range_proofs.all!(|rp| !rp.is_empty()), ERangeProofRequired);
     WellFormedProof { range_proofs, consistency_proofs }
+}
+
+/// Wrap one amount's two u32-limb auditor decryption handles. Aborts unless exactly `U32_LIMBS`
+/// handles are given.
+public fun new_u32_limb_handles(handles: vector<Element<G>>): U32LimbHandles {
+    assert!(handles.length() == U32_LIMBS, EMalformedU32LimbHandles);
+    U32LimbHandles { handles }
 }
 
 /// Check `proof` against `amounts` under `pks`: every limb of every amount is u16 (range proof,
@@ -277,26 +291,12 @@ public(package) fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Eleme
     ]
 }
 
-/// The two u32-limb auditor decryption handles for one transferred amount (`D̃_0`, `D̃_1`). Paired
-/// with the amount's two `ciphertexts_as_u32_limbs` commitments, they let an auditor recover the
-/// amount off-chain.
-public struct AuditorHandles has copy, drop, store {
-    handles: vector<Element<G>>,
-}
-
-/// Wrap one amount's two u32-limb auditor decryption handles. Aborts unless exactly `U32_LIMBS`
-/// handles are given.
-public fun new_auditor_handles(handles: vector<Element<G>>): AuditorHandles {
-    assert!(handles.length() == U32_LIMBS, EMalformedAuditorHandles);
-    AuditorHandles { handles }
-}
-
-/// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching amount's `AuditorHandles`, in
+/// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching amount's `U32LimbHandles`, in
 /// amount order, into `U32_LIMBS * amounts.length()` `Encryption`s. Aborts unless the batch lengths
 /// match.
 public(package) fun u32_limb_encryptions(
     amounts: &vector<WellFormedEncryptedAmount>,
-    handles: &vector<AuditorHandles>,
+    handles: &vector<U32LimbHandles>,
 ): vector<Encryption> {
     assert!(handles.length() == amounts.length(), EMismatchedBatchLength);
     let mut out = vector[];

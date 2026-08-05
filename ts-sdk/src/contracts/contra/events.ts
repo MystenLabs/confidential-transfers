@@ -61,7 +61,7 @@ export const TransferEvent = new MoveStruct({
 		receiver: bcs.Address,
 		receiver_pk: group_ops.Element,
 		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
-		auditor_handles: bcs.option(encrypted_amount.AuditorHandles),
+		auditor_handles: bcs.option(encrypted_amount.U32LimbHandles),
 		auditor_pk: bcs.option(group_ops.Element),
 		memo: bcs.vector(bcs.u8()),
 	},

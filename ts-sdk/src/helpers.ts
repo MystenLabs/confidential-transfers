@@ -373,20 +373,20 @@ export function buildOptionalPoint(pk?: RistrettoPoint) {
 }
 
 /**
- * Build an `Option<vector<AuditorHandles>>` of the per-transfer auditor decryption handles (one
- * `AuditorHandles` = two u32-limb handles per receiver). The flattened `handles` (two per receiver,
- * in receiver order) are grouped into pairs on-chain by `decode::auditor_handles`; `option::some`
+ * Build an `Option<vector<U32LimbHandles>>` of the per-transfer auditor decryption handles (one
+ * `U32LimbHandles` = two u32-limb handles per receiver). The flattened `handles` (two per receiver,
+ * in receiver order) are grouped into pairs on-chain by `decode::u32_limb_handles`; `option::some`
  * wrapping that when `handles` is provided, `option::none` when auditing is disabled.
  */
 export function buildAuditorHandlesOption(packageId: string, handles?: RistrettoPoint[]) {
-	const optionType = [`vector<${packageId}::encrypted_amount::AuditorHandles>`];
+	const optionType = [`vector<${packageId}::encrypted_amount::U32LimbHandles>`];
 	if (handles) {
 		return (tx: Transaction) =>
 			tx.moveCall({
 				target: '0x1::option::some',
 				typeArguments: optionType,
 				arguments: [
-					decodeContracts.auditorHandles({
+					decodeContracts.u32LimbHandles({
 						package: packageId,
 						arguments: { parts: elemParts(handles.map((h) => h.toBytes())) },
 					}),

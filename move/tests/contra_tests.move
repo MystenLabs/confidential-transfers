@@ -857,7 +857,7 @@ fun build_auditor_data(
     blindings: vector<u64>,
     auditor_pk: &Element<G>,
     dst: vector<u8>,
-): (vector<encrypted_amount::AuditorHandles>, nizk::ElGamalProof) {
+): (vector<encrypted_amount::U32LimbHandles>, nizk::ElGamalProof) {
     let mut handles = vector[];
     let mut encryptions = vector[];
     let mut messages = vector[];
@@ -865,7 +865,7 @@ fun build_auditor_data(
     values.length().do!(|i| {
         let low = encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]);
         handles.push_back(
-            encrypted_amount::new_auditor_handles(vector[
+            encrypted_amount::new_u32_limb_handles(vector[
                 *low.decryption_handle(),
                 ristretto255::g_identity(),
             ]),
