@@ -194,7 +194,7 @@ export function createOperations(
 			users.map(async (user) => {
 				const tx = new Transaction();
 				const account = tx.add(
-					client.contra.newAccount({ defaultKey: user.tokenAccount.publicKey }),
+					client.contra.newAccount({ defaultPk: user.tokenAccount.publicKey }),
 				);
 				tx.add(client.contra.shareAccount({ account }));
 				tx.setSender(user.address);

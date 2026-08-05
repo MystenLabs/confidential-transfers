@@ -57,9 +57,9 @@ import type {
 	NewAccountOptions,
 	PauseAccountOptions,
 	RegisterOptions,
-	RegisterPermissionlessOptions,
+	RegisterWithDefaultPkOptions,
 	RekeyTokenOptions,
-	SetDefaultKeyOptions,
+	SetDefaultPkOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
@@ -149,8 +149,8 @@ export class ContraClient {
 	 * underlying object fetch returned an `Error` entry.
 	 *
 	 * With `autoRegisterFallback`, a receiver that has no `TokenAccount<T>` yet does not throw: its
-	 * state is taken from the receiver's `Account` (`pk = Account.pk`, deposits accepted, not frozen)
-	 * and flagged `needsRegistration`, so the caller can prepend a `register_permissionless` call
+	 * state is taken from the receiver's `Account` (`pk = Account.default_pk`, deposits accepted, not frozen)
+	 * and flagged `needsRegistration`, so the caller can prepend a `register_with_default_pk` call
 	 * before depositing (deposits no longer auto-register on chain). A receiver with no `Account` at
 	 * all still throws.
 	 */
@@ -184,9 +184,9 @@ export class ContraClient {
 				if (account instanceof Error) {
 					throw new TokenAccountDoesNotExistError(addresses[i], account.message);
 				}
-				// `default_key` is the account's optional default key. A missing token account can only be
+				// `default_pk` is the account's optional default key. A missing token account can only be
 				// auto-registered (and deposited to) when it is set — that key becomes the token's key.
-				const accountPk = contraContracts.Account.parse(account.content).default_key;
+				const accountPk = contraContracts.Account.parse(account.content).default_pk;
 				if (!accountPk) {
 					throw new TokenAccountDoesNotExistError(
 						addresses[i],
@@ -242,27 +242,27 @@ export class ContraClient {
 	 * be signed by the intended owner. For an account owned by a Move object, that object's module must
 	 * call `contra::new_account_for_object` with the object's `&mut UID`.
 	 *
-	 * The default key is what `register_permissionless` uses when someone auto-registers a token for
-	 * this account; omit `publicKey` to create without one (no third party can then auto-register
+	 * The default key is what `register_with_default_pk` uses when someone auto-registers a token for
+	 * this account; omit `defaultPk` to create without one (no third party can then auto-register
 	 * tokens for the account). Per-token keys are chosen independently at `register`.
 	 *
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * const account = tx.add(contraClient.newAccount({ publicKey: tokenAccount.publicKey }));
+	 * const account = tx.add(contraClient.newAccount({ defaultPk: tokenAccount.publicKey }));
 	 * tx.add(contraClient.shareAccount({ account }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAccountAlreadyRegistered` — the sender already has an account (one per address).
-	 * - `EIdentityPublicKey` — `publicKey` is the group identity.
+	 * - `EIdentityPublicKey` — `defaultPk` is the group identity.
 	 */
-	newAccount({ defaultKey }: NewAccountOptions) {
+	newAccount({ defaultPk }: NewAccountOptions) {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
 			arguments: {
 				registry: this.#packageConfig.accountRegistryId,
-				defaultKey: buildOptionalPoint(defaultKey),
+				defaultPk: buildOptionalPoint(defaultPk),
 			},
 		});
 	}
@@ -490,9 +490,8 @@ export class ContraClient {
 	 * Register a token account for `tokenAccount.tokenType` inside the
 	 * account owned by `tokenAccount.address`.
 	 *
-	 * The token balance is keyed under the current account key (`Account.pk`), which the caller set
-	 * at `newAccount`. Under per-transfer auditing registration carries no auditor data, so the
-	 * caller's `tokenAccount` private key must correspond to the account key.
+	 * The token balance is keyed under `tokenAccount.publicKey`, chosen independently of the account's
+	 * optional default key. Under per-transfer auditing registration carries no auditor data.
 	 *
 	 * When `account` is omitted the shared account object is looked up
 	 * by its derived ID. Pass `account` explicitly when the account was
@@ -548,7 +547,7 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * tx.add(contraClient.registerPermissionless({ receiver, tokenType }));
+	 * tx.add(contraClient.registerWithDefaultPk({ receiver, tokenType }));
 	 * ```
 	 *
 	 * On-chain aborts:
@@ -556,10 +555,10 @@ export class ContraClient {
 	 * - `EAccountAlreadyRegistered` — `receiver` is already registered for `T`.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — `receiver` has no `Account`.
 	 */
-	registerPermissionless({ receiver, tokenType }: RegisterPermissionlessOptions) {
+	registerWithDefaultPk({ receiver, tokenType }: RegisterWithDefaultPkOptions) {
 		return (tx: Transaction): TransactionResult =>
 			tx.add(
-				contraContracts.registerPermissionless({
+				contraContracts.registerWithDefaultPk({
 					package: this.#packageConfig.packageId,
 					typeArguments: [tokenType],
 					arguments: {
@@ -601,7 +600,7 @@ export class ContraClient {
 	 * - `ETransferDenied` — the token is paused, the deny list is globally frozen, the receiver
 	 *   is on the deny list, or the receiver's per-account freeze is active.
 	 * - `ERegistrationNotPermissionless` — `receiver` had no `TokenAccount<T>` and the token's
-	 *   registration is permissioned, so the auto-inserted `register_permissionless` aborts.
+	 *   registration is permissioned, so the auto-inserted `register_with_default_pk` aborts.
 	 */
 	async wrap({
 		coin,
@@ -616,7 +615,7 @@ export class ContraClient {
 		});
 		return (tx: Transaction): TransactionResult => {
 			if (needsRegistration) {
-				tx.add(this.registerPermissionless({ receiver, tokenType }));
+				tx.add(this.registerWithDefaultPk({ receiver, tokenType }));
 			}
 			return tx.add(
 				contraContracts.wrap({
@@ -888,10 +887,12 @@ export class ContraClient {
 	}
 
 	/**
-	 * Set the account's optional default key (`Account.pk`) to `newDefaultKey`, or clear it by passing
-	 * `null`/omitting it (which disables permissionless auto-registration for this account). This is
-	 * purely the key `register_permissionless` uses; per-token keys are unaffected and are rotated
-	 * independently via `rekeyToken`.
+	 * Set the account's optional default key (`Account.default_pk`) to `defaultPk`, or clear it by
+	 * passing `null`/omitting it (which disables permissionless auto-registration for this account).
+	 * This is purely the key `register_with_default_pk` uses; per-token keys are unaffected and are
+	 * rotated independently via `rekeyToken`. Restricted to the owner: the transaction must be signed
+	 * by `account` (the account owner). For an object-owned account, call
+	 * `contra::set_default_pk_for_object` directly.
 	 *
 	 * IMPORTANT: when you rotate a token's key, retain the OLD private key until that token has been
 	 * re-keyed. A not-yet-re-keyed token's balance remains encrypted under the old key, and both
@@ -902,27 +903,24 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
-	 * tx.add(client.contra.setDefaultKey({ tokenAccount, newDefaultKey: newTokenAccount.publicKey }));
+	 * tx.add(client.contra.setDefaultPk({ account: address, defaultPk: newTokenAccount.publicKey }));
 	 * ```
 	 *
 	 * On-chain aborts:
-	 * - `EAuthorizationError` — invalid `auth`.
-	 * - `EIdentityPublicKey` — `newDefaultKey` is the group identity.
+	 * - `EAuthorizationError` — the transaction sender is not `account`.
+	 * - `EIdentityPublicKey` — `defaultPk` is the group identity.
 	 */
-	setDefaultKey({
-		tokenAccount,
-		newDefaultKey,
-		auth,
-	}: SetDefaultKeyOptions): (tx: Transaction) => TransactionResult {
+	setDefaultPk({
+		account,
+		defaultPk,
+	}: SetDefaultPkOptions): (tx: Transaction) => TransactionResult {
 		return (tx: Transaction) =>
 			tx.add(
-				contraContracts.setDefaultKey({
+				contraContracts.setDefaultPk({
 					package: this.#packageConfig.packageId,
-					typeArguments: [tokenAccount.tokenType],
 					arguments: {
-						account: this.getAccountId(tokenAccount.address),
-						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType),
-						newDefaultKey: buildOptionalPoint(newDefaultKey ?? undefined),
+						account: this.getAccountId(account),
+						defaultPk: buildOptionalPoint(defaultPk ?? undefined),
 					},
 				}),
 			);
@@ -1018,7 +1016,7 @@ export class ContraClient {
 
 	/**
 	 * Re-key one token's active balance to `newTokenAccount.publicKey`. The target key is explicit and
-	 * independent of the account's default key (`Account.pk`), so no `setDefaultKey` is required first.
+	 * independent of the account's default key (`Account.default_pk`), so no `setDefaultPk` is required first.
 	 * When the token has pending deposits and `merge` is `true` (the default), a `merge` is prepended
 	 * so the re-key (which requires an empty pending) can proceed.
 	 *
@@ -1060,7 +1058,7 @@ export class ContraClient {
 	/**
 	 * Like `rekeyToken`, but soft-fails instead of aborting when the re-key proof does not verify
 	 * (e.g. a deposit raced the balance read): the token is left stale for a retry and a
-	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultKey` and re-keys of several tokens ride
+	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultPk` and re-keys of several tokens ride
 	 * in one PTB without pausing.
 	 */
 	async tryRekeyToken({
@@ -1096,8 +1094,8 @@ export class ContraClient {
 	 * not abort), any token whose re-key races a concurrent deposit is left stale for a later retry while
 	 * the rest still land — so it never reverts. Different tokens may re-key to different keys.
 	 *
-	 * This does not touch the account's default key (used by `register_permissionless`); set that
-	 * separately with `setDefaultKey` if you want it changed. All accounts must be for the same account
+	 * This does not touch the account's default key (used by `register_with_default_pk`); set that
+	 * separately with `setDefaultPk` if you want it changed. All accounts must be for the same account
 	 * (same `address`).
 	 *
 	 * There is no SDK-side key check: if a pair's `tokenAccount` key doesn't match the token's real
@@ -1246,7 +1244,7 @@ export class ContraClient {
 	 *   receiver-frozen case is caught by the SDK), or a receiver's state changed between the
 	 *   SDK check and execution.
 	 * - `ERegistrationNotPermissionless` — a receiver had no `TokenAccount<T>` and the token's
-	 *   registration is permissioned, so the auto-inserted `register_permissionless` aborts.
+	 *   registration is permissioned, so the auto-inserted `register_with_default_pk` aborts.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — sender or receiver lost its registration between the
 	 *   SDK's check and execution.
 	 */
@@ -1345,11 +1343,11 @@ export class ContraClient {
 			}
 
 			// Deposits no longer auto-register on chain: any receiver that has an `Account` but no
-			// `TokenAccount<T>` yet is registered on their behalf first via `register_permissionless`
+			// `TokenAccount<T>` yet is registered on their behalf first via `register_with_default_pk`
 			// (permissionless tokens only; the call aborts otherwise).
 			recipients.forEach((recipient, i) => {
 				if (receiverStates[i].needsRegistration) {
-					tx.add(this.registerPermissionless({ receiver: recipient.receiverAddress, tokenType }));
+					tx.add(this.registerWithDefaultPk({ receiver: recipient.receiverAddress, tokenType }));
 				}
 			});
 
@@ -1556,7 +1554,7 @@ interface AccountState {
 	/**
 	 * True when the address has an `Account` but no `TokenAccount<T>` yet, so this state was resolved
 	 * from the `Account` fallback (see `#getAccountStates` with `autoRegisterFallback`). The caller
-	 * must prepend a `register_permissionless` call before depositing to it.
+	 * must prepend a `register_with_default_pk` call before depositing to it.
 	 */
 	needsRegistration: boolean;
 }

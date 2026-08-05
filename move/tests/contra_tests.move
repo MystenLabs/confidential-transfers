@@ -976,9 +976,9 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_default_key<TestCurrency>(&mut account_1, &auth, option::some(pk_new));
+    contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
     // The default key is now pk_new, but the token's balance still lags under pk_old.
-    assert_eq!(account_1.default_key(), option::some(pk_new));
+    assert_eq!(account_1.default_pk(), option::some(pk_new));
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
     contra::rekey_token<TestCurrency>(
         &mut account_1,
@@ -1082,7 +1082,7 @@ fun test_rekey_token_aborts_on_bad_proof() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_default_key<TestCurrency>(&mut account_1, &auth, option::some(pk_new));
+    contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
     // Aborts here with `EAmountsEqualityProofFailed`.
     contra::rekey_token<TestCurrency>(
         &mut account_1,
@@ -1187,7 +1187,7 @@ fun test_try_rekey_token_soft_fails_then_succeeds() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_default_key<TestCurrency>(&mut account_1, &auth, option::some(pk_new));
+    contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
 
     // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
     assert!(
@@ -1650,10 +1650,10 @@ fun test_account_freeze_blocks_add_to_batch() {
 }
 
 /// A receiver that has an `Account` but no `TokenAccount<T>` can be registered by anyone (here the
-/// sender) via `register_permissionless` on a permissionless token, keyed at the receiver's
-/// `Account.pk`; the subsequent transfer then credits the deposit.
+/// sender) via `register_with_default_pk` on a permissionless token, keyed at the receiver's
+/// `Account.default_pk`; the subsequent transfer then credits the deposit.
 #[test]
-fun test_transfer_after_register_permissionless() {
+fun test_transfer_after_register_with_default_pk() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
     let sk_1 = ristretto255::scalar_from_u64(12345);
@@ -1696,7 +1696,7 @@ fun test_transfer_after_register_permissionless() {
     // anyone can register it on the owner's behalf up front.
     scenario.next_tx(addr2);
     let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
-    contra::register_permissionless<TestCurrency>(&mut account_2, &ct);
+    contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
 
     scenario.next_tx(addr1);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1762,9 +1762,9 @@ fun test_transfer_after_register_permissionless() {
     scenario.end();
 }
 
-/// `register_permissionless` aborts on a token whose registration (operation 0) is permissioned.
+/// `register_with_default_pk` aborts on a token whose registration (operation 0) is permissioned.
 #[test, expected_failure(abort_code = ::contra::contra::ERegistrationNotPermissionless)]
-fun test_register_permissionless_aborts_when_permissioned() {
+fun test_register_with_default_pk_aborts_when_permissioned() {
     let setup_addr = @0x0;
     let addr2 = @0x101;
     let pk_2 = ristretto255::g_mul(
@@ -1797,7 +1797,7 @@ fun test_register_permissionless_aborts_when_permissioned() {
     scenario.next_tx(addr2);
     let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
     // Aborts: registration is not permissionless, so no `Auth`-free registration is allowed.
-    contra::register_permissionless<TestCurrency>(&mut account_2, &ct);
+    contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
 
     unit_test::destroy(account_2);
     unit_test::destroy(acc_reg);

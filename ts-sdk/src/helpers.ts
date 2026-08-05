@@ -355,7 +355,7 @@ const ELEMENT_VECTOR_TYPE = `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_
 
 /**
  * Build an `Option<Element<G>>` for an optional public key (e.g. the account's optional default key
- * passed to `new_account` / `set_default_key`). `option::some(g_from_bytes(pk))` when a point is
+ * passed to `new_account` / `set_default_pk`). `option::some(g_from_bytes(pk))` when a point is
  * given, `option::none` otherwise.
  */
 export function buildOptionalPoint(pk?: RistrettoPoint) {

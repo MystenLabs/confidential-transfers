@@ -236,13 +236,13 @@ export interface UpdateBalanceOptions {
 /** Arguments to `ContraClient.newAccount`. */
 export interface NewAccountOptions {
 	/**
-	 * The account's optional default key — the key `register_permissionless` uses when a third party
+	 * The account's optional default key — the key `register_with_default_pk` uses when a third party
 	 * auto-registers a token for this account. Omit it to create the account without one (no third
 	 * party can then auto-register tokens for it). Per-token keys are chosen independently at
 	 * `register` and are not tied to this key. The account is created for the transaction sender, so
 	 * the transaction must be signed by the intended owner.
 	 */
-	defaultKey?: RistrettoPoint;
+	defaultPk?: RistrettoPoint;
 }
 
 /**
@@ -275,8 +275,8 @@ export interface RegisterOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.registerPermissionless`. */
-export interface RegisterPermissionlessOptions {
+/** Arguments to `ContraClient.registerWithDefaultPk`. */
+export interface RegisterWithDefaultPkOptions {
 	/** The owner address of the account to register a token account for. Must already have an `Account`. */
 	receiver: string;
 	/** The fully-qualified Move type of the token to register, e.g. `0x2::sui::SUI`. */
@@ -332,23 +332,18 @@ export interface UnpauseAccountOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.setDefaultKey`. */
-export interface SetDefaultKeyOptions {
+/** Arguments to `ContraClient.setDefaultPk`. */
+export interface SetDefaultPkOptions {
 	/**
-	 * A token account for the owner whose default key is being set. Only its `address` and `tokenType`
-	 * are used (the latter to type the `Auth<T>` and the Move call).
+	 * The owner address of the account whose default key is being set. The transaction must be signed
+	 * by this address (only the owner can set it).
 	 */
-	tokenAccount: TokenAccount;
+	account: string;
 	/**
-	 * The new default key for the account (used by `register_permissionless`). Pass `null` (or omit)
+	 * The new default key for the account (used by `register_with_default_pk`). Pass `null` (or omit)
 	 * to clear it, disabling permissionless auto-registration. Per-token keys are unaffected.
 	 */
-	newDefaultKey?: RistrettoPoint | null;
-	/**
-	 * Optional `Auth<T>` builder. When omitted, the client builds an `as_sender` auth. The resulting
-	 * `Auth<T>` must cover the `REGISTER` operation.
-	 */
-	auth?: AuthThunk;
+	defaultPk?: RistrettoPoint | null;
 }
 
 /** Arguments to `ContraClient.rekeyToken` / `tryRekeyToken`. */
@@ -357,8 +352,8 @@ export interface RekeyTokenOptions {
 	tokenAccount: TokenAccount;
 	/**
 	 * The post-rotation token account, carrying the new key. Must have the same `address` and
-	 * `tokenType` as `tokenAccount`, and its public key must equal the account key already set by
-	 * `setDefaultKey`. The caller persists it to decrypt the re-keyed balance.
+	 * `tokenType` as `tokenAccount`; its public key is chosen independently of the account's default
+	 * key. The caller persists it to decrypt the re-keyed balance.
 	 */
 	newTokenAccount: TokenAccount;
 	/**

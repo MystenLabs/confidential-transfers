@@ -15,7 +15,7 @@ Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances a
 
 Yellow nodes live in the public domain (amounts visible on-chain), blue nodes live in the confidential domain (amounts encrypted).
 
-**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under a public key `pk` she chooses (per-token keys are independent). For a permissionless token, if Alice set an optional default key on her `Account`, anyone can register the token account on her behalf up front with `register_permissionless`. Registration carries no auditor data (auditing is per-transfer).
+**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under a public key `pk` she chooses (per-token keys are independent). For a permissionless token, if Alice set an optional default key on her `Account`, anyone can register the token account on her behalf up front with `register_with_default_pk`. Registration carries no auditor data (auditing is per-transfer).
 
 ```mermaid
 flowchart LR
@@ -136,7 +136,7 @@ In the failure case, a second attempt with `merge: false` will succeed immediate
 
 ### Key rotation
 
-Each token's balance is encrypted under its own `TokenAccount.pk`, chosen at `register` and rotated **independently** with `rekeyToken(newTokenAccount)` — the new key is explicit and unrelated to any other token or to the account's key. Re-keying is **lazy and O(1)** per token: it touches only that token's active balance (`tryRekeyTokens` is a convenience that merges + re-keys one or more tokens — each `(current, new)` pair to its own new key — in a single, optimistic (soft-failing) PTB). A not-yet-re-keyed token is a normal, decryptable state — deposits keep landing under its current key until it is re-keyed. Separately, `Account.pk` is an **optional** default key that only drives `register_permissionless`; `setDefaultKey` sets or clears it (O(1), touches no balance).
+Each token's balance is encrypted under its own `TokenAccount.pk`, chosen at `register` and rotated **independently** with `rekeyToken(newTokenAccount)` — the new key is explicit and unrelated to any other token or to the account's key. Re-keying is **lazy and O(1)** per token: it touches only that token's active balance (`tryRekeyTokens` is a convenience that merges + re-keys one or more tokens — each `(current, new)` pair to its own new key — in a single, optimistic (soft-failing) PTB). A not-yet-re-keyed token is a normal, decryptable state — deposits keep landing under its current key until it is re-keyed. Separately, `Account.default_pk` is an **optional** default key that only drives `register_with_default_pk`; `setDefaultPk` sets or clears it (O(1), touches no balance).
 
 > **Retain the old key until every token is re-keyed.** A not-yet-re-keyed token's balance is still encrypted under the _old_ key, and both re-keying it (the proof witness is `newSk · oldSk⁻¹`) and decrypting it require that old key. Discarding the old private key while any token is still under it makes that token's balance permanently unrecoverable. Use `ContraClient.getTokenKeys(address)` to list every token's current key (pass specific `tokenTypes` to narrow it) — an old key is safe to delete only once no token still reports it, and after a `tryRekeyTokens` any token that still reports its old key is one whose re-key soft-failed and needs a retry.
 

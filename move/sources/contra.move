@@ -38,16 +38,16 @@
 ///
 /// ## Key Flows for Users:
 /// 1. Create an account for an address with an optional default key `pk` (needed once for all token
-///    types; when set, others can auto-register tokens for you via `register_permissionless`).
+///    types; when set, others can auto-register tokens for you via `register_with_default_pk`).
 /// 2. Register a token account for a token type `T` under a key of your choice (`register`). Per-token
 ///    keys are independent of the account's default key.
 /// 3. Rotate a token's key with `rekey_token` (to any `new_pk`), and set/clear the account's default
-///    key with `set_default_key`.
+///    key with `set_default_pk`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to one or more token accounts. Every receiver must already have a
 ///    `TokenAccount<T>`; for permissionless tokens anyone can create one on their behalf up front
-///    with `register_permissionless`. Auditor data is attached if set.
+///    with `register_with_default_pk`. Auditor data is attached if set.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
@@ -101,7 +101,6 @@ const EIdentityPublicKey: u64 = 11;
 const EBatchTooLarge: u64 = 12;
 const EMissingAuditorData: u64 = 13;
 const EUnexpectedAuditorData: u64 = 14;
-const EAuditorProofFailed: u64 = 15;
 const EReceiverNotRegistered: u64 = 16;
 const ERegistrationNotPermissionless: u64 = 17;
 const EDefaultKeyNotSet: u64 = 18;
@@ -159,7 +158,7 @@ public struct Pool<phantom T> has key {
 public struct Account has key {
     id: UID,
     owner: address,
-    default_key: Option<Element<G>>,
+    default_pk: Option<Element<G>>,
 }
 
 /// A user's account for one confidential token.
@@ -302,42 +301,38 @@ public fun share_confidential_token<T>(ct: ConfidentialToken<T>) {
 
 public use fun new_account as AccountRegistry.new;
 
-/// Create a new account for `ctx.sender()` with optional `default_key` (see `Account`). Creation
-/// is restricted to the owner: only the sender can set their own default key. Pass `none` to create
-/// without one (no third party can then auto-register tokens for this account). Can only happen once
-/// per address. For an account owned by a Move object, use `new_account_for_object`.
+/// Create a new account for `ctx.sender()` with optional `default_pk` (see `Account`). Pass `none`
+/// to create without one (no third party can then auto-register tokens for this account).
 public fun new_account(
     registry: &mut AccountRegistry,
-    default_key: Option<Element<G>>,
+    default_pk: Option<Element<G>>,
     ctx: &TxContext,
 ): Account {
-    new_account_internal(registry, ctx.sender(), default_key)
+    new_account_internal(registry, ctx.sender(), default_pk)
 }
 
-/// Create a new account owned by the object identified by `uid`, with optional `default_key`.
-/// Holding `&mut UID` proves custody of the object, so it self-authenticates as its own owner (the
-/// address derived from the `UID`) — mirroring `authorize_as_object`. Can only happen once per object
-/// address.
+/// Create a new account owned by the object identified by `uid`, with optional `default_pk`. Holding
+/// `&mut UID` proves custody of the object, so it self-authenticates as its own owner.
 #[allow(unused_mut_parameter)]
 public fun new_account_for_object(
     registry: &mut AccountRegistry,
     uid: &mut UID,
-    default_key: Option<Element<G>>,
+    default_pk: Option<Element<G>>,
 ): Account {
-    new_account_internal(registry, uid.to_inner().to_address(), default_key)
+    new_account_internal(registry, uid.to_inner().to_address(), default_pk)
 }
 
-/// Claim the derived account for `owner` and initialize it with optional `default_key`. Aborts if
-/// `owner` already has an account or `default_key` is set to the group identity.
+/// Claim the derived account for `owner` and initialize it with optional `default_pk`. Aborts if
+/// `owner` already has an account or `default_pk` is set to the group identity.
 fun new_account_internal(
     registry: &mut AccountRegistry,
     owner: address,
-    default_key: Option<Element<G>>,
+    default_pk: Option<Element<G>>,
 ): Account {
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
-    assert!(default_key.is_none() || *default_key.borrow() != g_identity(), EIdentityPublicKey);
+    assert!(default_pk.is_none() || *default_pk.borrow() != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    Account { id, owner, default_key }
+    Account { id, owner, default_pk }
 }
 
 /// Share the account object.
@@ -347,10 +342,8 @@ public fun share_account(account: Account) {
     transfer::share_object(account);
 }
 
-/// Create a `TokenAccount` for token `T`, with its balances keyed under `pk`. Since per-token keys
-/// are independent of the account's optional default key, the owner chooses this token's key
-/// explicitly. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
-/// `account.owner`. Under per-transfer auditing, registration carries no auditor data.
+/// Create a `TokenAccount` for token `T`, with its balances keyed under `pk`. Authorized by `auth`,
+/// which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
@@ -361,18 +354,18 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
 }
 
 /// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
-/// owner, keyed under the account's `default_key`, without any `Auth`. Only allowed when
-/// `T` leaves registration permissionless and `default_key` is set. Aborts
-/// if `default_key` is unset (`EDefaultKeyNotSet`), `T`'s registration is permissioned
-/// (`ERegistrationNotPermissionless`), or the token is already registered (`EAccountAlreadyRegistered`).
-public fun register_permissionless<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
-    assert!(account.default_key.is_some(), EDefaultKeyNotSet);
+/// owner, keyed under the account's `default_pk`, without any `Auth`. Only allowed when `T` leaves
+/// registration permissionless and `default_pk` is set. Aborts if `default_pk` is unset
+/// (`EDefaultKeyNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or
+/// the token is already registered (`EAccountAlreadyRegistered`).
+public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
+    assert!(account.default_pk.is_some(), EDefaultKeyNotSet);
     assert!(
         policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         ERegistrationNotPermissionless,
     );
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
-    let pk = *account.default_key.borrow();
+    let pk = *account.default_pk.borrow();
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
 }
@@ -410,24 +403,31 @@ public fun set_accepts_encrypted_deposits<T>(
     account[TokenAccountKey<T>()].accepts_deposits = accepts_encrypted_deposits;
 }
 
-/// Set the account's optional `default_key` (pass `none` to clear it, which disables permissionless
-/// auto-registration for this account). This is purely the key `register_permissionless` uses;
-/// per-token keys are unaffected and are rotated independently via `rekey_token`. Authenticated by
-/// `auth`, which must be for the `PERMISSIONED_REGISTER` operation and may be for any token the
-/// account is registered for.
-public fun set_default_key<T>(
+/// Set the account's optional `default_pk` (pass `none` to clear it, which disables permissionless
+/// auto-registration). This is purely the key `register_with_default_pk` uses; per-token keys are
+/// rotated independently via `rekey_token`. Restricted to the owner: only `ctx.sender()` can set it.
+/// For an account owned by a Move object, use `set_default_pk_for_object`.
+public fun set_default_pk(account: &mut Account, default_pk: Option<Element<G>>, ctx: &TxContext) {
+    assert!(ctx.sender() == account.owner, EAuthorizationError);
+    account.set_default_pk_internal(default_pk);
+}
+
+/// Set the `default_pk` of an account owned by the object identified by `uid`. Holding `&mut UID`
+/// proves custody of the object, so it self-authenticates as its own owner.
+#[allow(unused_mut_parameter)]
+public fun set_default_pk_for_object(
     account: &mut Account,
-    auth: &Auth<T>,
-    new_default_key: Option<Element<G>>,
+    default_pk: Option<Element<G>>,
+    uid: &mut UID,
 ) {
-    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    assert!(
-        new_default_key.is_none() || *new_default_key.borrow() != g_identity(),
-        EIdentityPublicKey,
-    );
-    account.default_key = new_default_key;
-    events::emit_default_key_rotated(account.owner, new_default_key);
+    assert!(uid.to_inner().to_address() == account.owner, EAuthorizationError);
+    account.set_default_pk_internal(default_pk);
+}
+
+fun set_default_pk_internal(account: &mut Account, default_pk: Option<Element<G>>) {
+    assert!(default_pk.is_none() || *default_pk.borrow() != g_identity(), EIdentityPublicKey);
+    account.default_pk = default_pk;
+    events::emit_default_key_rotated(account.owner, default_pk);
 }
 
 /// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
@@ -673,13 +673,12 @@ fun verify_auditing<T>(
             &proof,
             session_id.dst(DST_AUDITOR_ELGAMAL),
         );
-    assert!(auditor_pk.is_some(), EAuditorProofFailed);
-    (handles, auditor_pk)
+    (handles, option::some(auditor_pk))
 }
 
 /// Add a receiver to a batched transfer: pop the next receiver-keyed `EncryptedCoin` and credit it
 /// to the receiver's pending deposits. The receiver must already have a `TokenAccount<T>` (for
-/// permissionless tokens anyone can create one up front with `register_permissionless`). Aborts if:
+/// permissionless tokens anyone can create one up front with `register_with_default_pk`). Aborts if:
 ///  * the receiver has no `TokenAccount<T>`,
 ///  * the receiver is frozen or on the deny list,
 ///  * `add_to_batch` is called more times than there were `receiver_amounts` in `batched_transfer`,
@@ -1155,10 +1154,10 @@ public fun accepts_deposits<T>(account: &Account): bool {
     account[TokenAccountKey<T>()].accepts_deposits
 }
 
-/// The account's optional default key (used by `register_permissionless`), or `none` if unset. This
+/// The account's optional default key (used by `register_with_default_pk`), or `none` if unset. This
 /// is independent of any `TokenAccount.pk`.
-public fun default_key(account: &Account): Option<Element<G>> {
-    account.default_key
+public fun default_pk(account: &Account): Option<Element<G>> {
+    account.default_pk
 }
 
 #[test_only]

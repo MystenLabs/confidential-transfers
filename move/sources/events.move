@@ -20,7 +20,7 @@ public struct NewRegistrationEvent<phantom T> has copy, drop {
     pk: Element<G>,
 }
 
-/// An account set its optional default key (used by `register_permissionless`) to `new_pk`, or
+/// An account set its optional default key (used by `register_with_default_pk`) to `new_pk`, or
 /// cleared it (`new_pk == none`). Per-token keys are independent of this, so it is not parameterized
 /// by a token type.
 public struct DefaultKeyRotatedEvent has copy, drop {
@@ -48,6 +48,14 @@ public struct WrapEvent<phantom T> has copy, drop {
     memo: vector<u8>,
 }
 
+/// The two u32-limb auditor decryption handles a transfer carries (empty when auditing is disabled).
+/// Paired with the two commitments an auditor derives from a `TransferEvent`'s
+/// `encrypted_amount_receiver` (`encrypted_amount::ciphertexts_as_u32_limbs`), they let the auditor
+/// recover the amount off-chain.
+public struct AuditorHandles has copy, drop, store {
+    handles: vector<Element<G>>,
+}
+
 /// A confidential transfer is made from a sender to a receiver. The transferred amount is the
 /// well-formed four-limb encryption `encrypted_amount_receiver` under `receiver_pk`. The sender
 /// does not send a separate sender-keyed amount: it recovers its own outgoing value from the
@@ -55,13 +63,10 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// by re-deriving the per-transfer blinding from `seed = HKDF(sk * seed_point)` and
 /// the receiver's `batch_index` within this transfer.
 ///
-/// `auditor_handles` are the two u32-limb auditor decryption handles for this transfer (empty when
-/// auditing is disabled). Paired with the two commitments an auditor derives from
-/// `encrypted_amount_receiver` (`encrypted_amount::ciphertexts_as_u32_limbs`), they let the auditor
-/// recover the amount off-chain. `auditor_pk` is the auditor public key the handles are encrypted
-/// under — the key that verified this transfer's auditor proof (`none` when auditing is disabled) —
-/// so a consumer knows which auditor key (current or, during a rotation grace window, previous) was
-/// used. `memo` is an opaque caller-supplied blob, empty if none was provided.
+/// `auditor_pk` is the auditor public key the `auditor_handles` are encrypted under — the key that
+/// verified this transfer's auditor proof (`none` when auditing is disabled) — so a consumer knows
+/// which auditor key (current or, during a rotation grace window, previous) was used. `memo` is an
+/// opaque caller-supplied blob, empty if none was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
     sender_pk: Element<G>,
@@ -70,7 +75,7 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver: address,
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_handles: vector<Element<G>>,
+    auditor_handles: AuditorHandles,
     auditor_pk: Option<Element<G>>,
     memo: vector<u8>,
 }
@@ -182,7 +187,7 @@ public(package) fun emit_transfer<T>(
         receiver,
         receiver_pk,
         encrypted_amount_receiver,
-        auditor_handles,
+        auditor_handles: AuditorHandles { handles: auditor_handles },
         auditor_pk,
         memo,
     });

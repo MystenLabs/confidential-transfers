@@ -60,11 +60,10 @@ public(package) fun verify_ddh(
 ): bool {
     let n = bases.length();
     if (images.length() != n || proof.commitments.length() != n) return false;
-    // Reject a fully degenerate statement — every base the identity — which binds no witness. An
-    // individual identity base is safe and deliberately allowed: that row's check reduces to
-    // `a + c*image == identity`, which for the `a` and `image` committed before the random `c`
-    // forces both to the identity, so no false image can be proven. (It is also needed: re-keying a
-    // pristine balance whose limb decryption handles are all the identity.)
+    // Reject an all-identity statement: it binds no witness (`w * identity == identity` for any `w`).
+    // Defensive only — real statements always include a non-identity base (`g`, or the asserted
+    // non-identity old key on re-key). An *individual* identity base is safe and allowed (e.g. a
+    // pristine balance's identity limb handles).
     if (bases.all!(|b| *b == g_identity())) return false;
     let c = challenge_ddh(dst, bases, images, &proof.commitments);
     vector::tabulate!(

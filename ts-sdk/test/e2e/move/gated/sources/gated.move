@@ -42,7 +42,7 @@ public fun vault_address(vault: &Vault): address {
 public fun gated_register<T>(ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), GatedWitness {});
     // Key the token account under the account's default key (set at account creation).
-    let pk = *contra::default_key(account).borrow();
+    let pk = *contra::default_pk(account).borrow();
     contra::register(account, &auth, pk);
 }
 
@@ -73,7 +73,7 @@ public fun vault_new_account(
 public fun vault_register<T>(vault: &mut Vault, ct: &ConfidentialToken<T>, account: &mut Account) {
     let auth = ct.authorize_as_object(&mut vault.id);
     // Key the token account under the account's default key (set at account creation).
-    let pk = *contra::default_key(account).borrow();
+    let pk = *contra::default_pk(account).borrow();
     contra::register(account, &auth, pk);
 }
 

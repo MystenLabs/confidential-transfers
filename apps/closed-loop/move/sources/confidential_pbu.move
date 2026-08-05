@@ -97,20 +97,18 @@ public fun is_whitelisted(whitelist: &Whitelist, addr: address): bool {
 
 // === Gated register ===
 
-/// Register a confidential pBU `TokenAccount` on `account`, keyed under the
-/// current `account.pk`. Callable only by addresses on the `Whitelist`; the
-/// caller does not need to own `account`.
+/// Register a confidential pBU `TokenAccount` on `account`, keyed under the explicit `pk`. Callable
+/// only by addresses on the `Whitelist`; the caller does not need to own `account`.
 public fun register(
     ct: &ConfidentialToken<PBU>,
     whitelist: &Whitelist,
     account: &mut Account,
+    pk: Element<G>,
     ctx: &mut TxContext,
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     // Auth is only used internally.
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    // Key the token account under the account's default key (set at account creation).
-    let pk = *contra::default_key(account).borrow();
     contra::register(account, &auth, pk);
 }
 
@@ -129,6 +127,5 @@ public fun set_public_key(
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::set_default_key(account, &auth, option::some(new_pk));
     contra::rekey_token(account, &auth, new_pk, new_handles, rekey_proof);
 }

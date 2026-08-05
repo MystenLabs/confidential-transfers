@@ -368,7 +368,7 @@ export async function buildRegisterAccountTx(opts: {
 
 	const tx = new Transaction();
 	if (accountStatus === 'needs-account') {
-		const account = tx.add(contraClient.newAccount({ defaultKey: tokenAccount.publicKey }));
+		const account = tx.add(contraClient.newAccount({ defaultPk: tokenAccount.publicKey }));
 		tx.add(await contraClient.register({ tokenAccount, account }));
 		tx.add(contraClient.shareAccount({ account }));
 	} else {
@@ -637,11 +637,11 @@ export async function executeIssuerTx(opts: {
 export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array): bigint | null {
 	try {
 		const decoded = TransferEventBcs.parse(eventBcs);
-		if (decoded.auditor_handles.length !== 2) return null;
+		if (decoded.auditor_handles.handles.length !== 2) return null;
 		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
 		return auditor.decryptTransferAmount(
 			encryptedAmount,
-			decoded.auditor_handles.map((h) => pointFromBcs(h)),
+			decoded.auditor_handles.handles.map((h) => pointFromBcs(h)),
 		);
 	} catch (e) {
 		console.error('[sdk] failed to audit-decrypt TransferEvent', e);

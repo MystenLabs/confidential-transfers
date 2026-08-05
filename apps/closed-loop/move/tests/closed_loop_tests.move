@@ -56,11 +56,11 @@ fun closed_loop_roundtrip() {
 
     scenario.next_tx(alice);
     let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
-    confidential_pbu::register(&ct, &whitelist, &mut alice_account, scenario.ctx());
+    confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk_alice, scenario.ctx());
 
     scenario.next_tx(bob);
     let mut bob_account = account_registry.new(option::some(pk_bob), scenario.ctx());
-    confidential_pbu::register(&ct, &whitelist, &mut bob_account, scenario.ctx());
+    confidential_pbu::register(&ct, &whitelist, &mut bob_account, pk_bob, scenario.ctx());
 
     // Alice: mint BU, swap to pBU, wrap into her confidential balance.
     scenario.next_tx(alice);
@@ -242,7 +242,7 @@ fun register_requires_whitelist() {
     // `mallory` is not on the whitelist -> this aborts.
     scenario.next_tx(mallory);
     let mut mallory_account = account_registry.new(option::some(pk), scenario.ctx());
-    confidential_pbu::register(&ct, &whitelist, &mut mallory_account, scenario.ctx());
+    confidential_pbu::register(&ct, &whitelist, &mut mallory_account, pk, scenario.ctx());
 
     unit_test::destroy(mallory_account);
     unit_test::destroy(account_registry);
@@ -296,7 +296,7 @@ fun set_public_key_requires_whitelist() {
 
     scenario.next_tx(alice);
     let mut alice_account = account_registry.new(option::some(pk), scenario.ctx());
-    confidential_pbu::register(&ct, &whitelist, &mut alice_account, scenario.ctx());
+    confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk, scenario.ctx());
 
     // Dummy re-key args so the call type-checks; the whitelist abort fires before any proof
     // verification.

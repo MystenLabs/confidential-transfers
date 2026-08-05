@@ -51,6 +51,12 @@ export const WrapEvent = new MoveStruct({
 		memo: bcs.vector(bcs.u8()),
 	},
 });
+export const AuditorHandles = new MoveStruct({
+	name: `${$moduleName}::AuditorHandles`,
+	fields: {
+		handles: bcs.vector(group_ops.Element),
+	},
+});
 export const TransferEvent = new MoveStruct({
 	name: `${$moduleName}::TransferEvent<phantom T>`,
 	fields: {
@@ -61,7 +67,7 @@ export const TransferEvent = new MoveStruct({
 		receiver: bcs.Address,
 		receiver_pk: group_ops.Element,
 		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
-		auditor_handles: bcs.vector(group_ops.Element),
+		auditor_handles: AuditorHandles,
 		auditor_pk: bcs.option(group_ops.Element),
 		memo: bcs.vector(bcs.u8()),
 	},
