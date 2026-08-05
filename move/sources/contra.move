@@ -347,7 +347,6 @@ public fun share_account(account: Account) {
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     assert!(pk != g_identity(), EIdentityPublicKey);
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
@@ -361,15 +360,15 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
         policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         ERegistrationNotPermissionless,
     );
-    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     let pk = *account.default_pk.borrow();
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
 }
 
-/// Create a `TokenAccount<T>` on `account`, keyed under `pk`. The caller is responsible for any
-/// authorization, for a non-identity `pk`, and for ensuring the token is not already registered.
+/// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
+/// registered. The caller is responsible for any authorization and for a non-identity `pk`.
 fun add_token_account<T>(account: &mut Account, pk: Element<G>, session_id: vector<u8>) {
+    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     events::emit_new_registration<T>(account.owner, pk);
     df::add(
         &mut account.id,
