@@ -353,11 +353,8 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
     account.add_token_account<T>(pk, session_id);
 }
 
-/// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
-/// owner, keyed under the account's `default_pk`, without any `Auth`. Only allowed when `T` leaves
-/// registration permissionless and `default_pk` is set. Aborts if `default_pk` is unset
-/// (`EDefaultPkNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or
-/// the token is already registered (`EAccountAlreadyRegistered`).
+/// Permissionless `register`: create a `TokenAccount<T>` keyed under the account's `default_pk`,
+/// without any `Auth`. Requires `T`'s registration permissionless and `default_pk` set.
 public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
     assert!(account.default_pk.is_some(), EDefaultPkNotSet);
     assert!(

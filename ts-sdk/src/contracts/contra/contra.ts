@@ -483,11 +483,8 @@ export interface RegisterWithDefaultPkOptions {
 	typeArguments: [string];
 }
 /**
- * Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
- * owner, keyed under the account's `default_pk`, without any `Auth`. Only allowed when `T` leaves
- * registration permissionless and `default_pk` is set. Aborts if `default_pk` is unset
- * (`EDefaultPkNotSet`), `T`'s registration is permissioned (`ERegistrationNotPermissionless`), or the
- * token is already registered (`EAccountAlreadyRegistered`).
+ * Permissionless `register`: create a `TokenAccount<T>` keyed under the account's `default_pk`,
+ * without any `Auth`. Requires `T`'s registration permissionless and `default_pk` set.
  */
 export function registerWithDefaultPk(options: RegisterWithDefaultPkOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
