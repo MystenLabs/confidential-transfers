@@ -400,9 +400,7 @@ public fun set_accepts_encrypted_deposits<T>(
 }
 
 /// Set the account's optional `default_pk` (pass `none` to clear it, which disables permissionless
-/// auto-registration). This is purely the key `register_with_default_pk` uses; per-token keys are
-/// rotated independently via `rekey_token`. Restricted to the owner: only `ctx.sender()` can set it.
-/// For an account owned by a Move object, use `set_default_pk_for_object`.
+/// auto-registration).
 public fun set_default_pk(account: &mut Account, default_pk: Option<Element<G>>, ctx: &TxContext) {
     assert!(ctx.sender() == account.owner, EAuthorizationError);
     account.set_default_pk_internal(default_pk);

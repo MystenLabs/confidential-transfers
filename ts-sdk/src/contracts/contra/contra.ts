@@ -546,9 +546,7 @@ export interface SetDefaultPkOptions {
 }
 /**
  * Set the account's optional `default_pk` (pass `none` to clear it, which disables permissionless
- * auto-registration). This is purely the key `register_with_default_pk` uses; per-token keys are
- * rotated independently via `rekey_token`. Restricted to the owner: only `ctx.sender()` can set it.
- * For an account owned by a Move object, use `set_default_pk_for_object`.
+ * auto-registration).
  */
 export function setDefaultPk(options: SetDefaultPkOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
