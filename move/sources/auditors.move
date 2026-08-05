@@ -100,9 +100,11 @@ public(package) fun verify_transfer(
         assert!(auditor.current_pk.is_none(), EMissingAuditorData);
         return (vector[], option::none())
     };
-    assert!(auditor.current_pk.is_some() ||
-        (epoch <= auditor.previous_expiration_epoch && auditor.previous_pk.is_some()), EUnexpectedAuditorData);
-        
+    assert!(
+        auditor.current_pk.is_some() ||
+            (epoch <= auditor.previous_expiration_epoch && auditor.previous_pk.is_some()),
+        EUnexpectedAuditorData,
+    );
     let (handles, proof) = auditor_package.destroy_some().unpack();
     let encryptions = u32_limb_encryptions(receiver_amounts, &handles);
     // Accept under the current key, or the previous key while in its grace window.
