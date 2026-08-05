@@ -5,8 +5,8 @@ import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
-import * as encrypted_amount from './encrypted_amount.js';
 import * as group_ops from './deps/sui/group_ops.js';
+import * as encrypted_amount from './encrypted_amount.js';
 import * as nizk from './nizk.js';
 
 const $moduleName = '@local-pkg/contra::auditors';

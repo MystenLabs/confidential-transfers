@@ -541,12 +541,8 @@ public fun wrap<T>(
 /// `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
 /// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
 ///
-/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_package` must carry one
-/// `U32LimbHandles` (two u32-limb decryption handles) per receiver, in `receiver_amounts` order, plus
-/// a single batched `ElGamalProof` over the derived `(commitment, handle)` pairs; the derived
-/// commitments come from `receiver_amounts` itself (see `encrypted_amount::ciphertexts_as_u32_limbs`).
-/// The proof is accepted under the current or (in grace) previous auditor key at `ctx.epoch()`. When
-/// auditing is disabled `auditor_package` must be `none`.
+/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_package` must be `some`.
+/// See `auditors::verify_transfer` for details.
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts
 /// if `well_formed_proofs`, the auditor requirement, or `consistency_proof` fails. Call `add` once

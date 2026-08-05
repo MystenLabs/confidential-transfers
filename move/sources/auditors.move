@@ -81,17 +81,9 @@ public(package) fun update(
 }
 
 /// Verify a transfer's per-transfer auditor data against this auditor. `receiver_amounts` are the
-/// range/consistency-proven receiver amounts; `auditor_package` is the sender-supplied data (`none`
-/// when the transfer carries none), holding one `U32LimbHandles` per receiver plus one batched
-/// `ElGamalProof` over the derived u32-limb `(commitment, handle)` pairs (the commitments come from
-/// `receiver_amounts` itself). Returns the per-receiver handles to attach to events (empty when none
+/// range/consistency-proven receiver amounts and `auditor_package` is the sender-supplied data (`none`
+/// when the transfer carries none). Returns the per-receiver handles to attach to events (empty when none
 /// is carried) and the auditor key that verified them (`none` when none is carried).
-///
-/// Presence policy: auditor data is required when auditing is enabled, forbidden when fully off, and
-/// optional during a disable grace window (verified under the previous key so in-flight transfers
-/// stay auditable). Aborts if that policy is violated (`EMissingAuditorData` / `EUnexpectedAuditorData`)
-/// or the proof verifies under no accepted key at `epoch` (`EAuditorProofFailed`). The proof is
-/// accepted under the current key, or the previous key while `epoch <= previous_expiration_epoch`.
 public(package) fun verify_transfer(
     auditor: &Auditor,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
