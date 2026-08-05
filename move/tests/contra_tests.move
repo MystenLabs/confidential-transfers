@@ -978,7 +978,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::set_default_key<TestCurrency>(&mut account_1, &auth, option::some(pk_new));
     // The default key is now pk_new, but the token's balance still lags under pk_old.
-    assert_eq!(account_1.account_public_key(), option::some(pk_new));
+    assert_eq!(account_1.default_key(), option::some(pk_new));
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
     contra::rekey_token<TestCurrency>(
         &mut account_1,

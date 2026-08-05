@@ -357,9 +357,9 @@ public fun share_account(account: Account) {
 /// `account.owner`. Under per-transfer auditing, registration carries no auditor data.
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
+    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(pk != g_identity(), EIdentityPublicKey);
-    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
 }
@@ -400,8 +400,8 @@ fun add_token_account<T>(account: &mut Account, pk: Element<G>, session_id: vect
     );
 }
 
-/// Set the per-token deposit gate for token `T`. This is independent of the account-wide gate that
-/// key rotation requires; a deposit is accepted only if both allow it.
+/// Set whether this account for token `T` accepts new encrypted deposits.
+/// This is used to prevent receiving new encrypted deposits during token account key rotation.
 /// Authorized by `auth`, which must be for `account.owner`. Any `Auth<T>` is accepted regardless
 /// of which operation it covers.
 public fun set_accepts_encrypted_deposits<T>(
@@ -931,18 +931,17 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
-    let pk = account.pk;
     let sid = account.session_id;
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
         sid.dst(DST_RANGE_PROOF_16),
-        pk,
+        account.pk,
         new_balance_proof,
     );
     let withdrawn = account
         .active
         .try_split_to_public(
-            &pk,
+            &account.pk,
             new_balance,
             amount,
             balance_proof,
@@ -1169,7 +1168,7 @@ public fun accepts_deposits<T>(account: &Account): bool {
 
 /// The account's optional default key (used by `register_permissionless`), or `none` if unset. This
 /// is independent of any `TokenAccount.pk`.
-public fun account_public_key(account: &Account): Option<Element<G>> {
+public fun default_key(account: &Account): Option<Element<G>> {
     account.default_key
 }
 

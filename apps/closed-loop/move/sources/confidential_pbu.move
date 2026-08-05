@@ -110,7 +110,7 @@ public fun register(
     // Auth is only used internally.
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
     // Key the token account under the account's default key (set at account creation).
-    let pk = *contra::account_public_key(account).borrow();
+    let pk = *contra::default_key(account).borrow();
     contra::register(account, &auth, pk);
 }
 
