@@ -14,8 +14,7 @@ public struct NewConfidentialTokenEvent<phantom T>() has copy, drop;
 /// A policy is updated for a confidential token.
 public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop;
 
-/// A new token account is registered for an account for a token type `T`, keyed under `pk` (the
-/// account key at registration time).
+/// A new token account is registered for an account for a token type `T` with a public key `pk`.
 public struct NewRegistrationEvent<phantom T> has copy, drop {
     owner: address,
     pk: Element<G>,
@@ -35,8 +34,8 @@ public struct TokenRekeyedEvent<phantom T> has copy, drop {
     new_pk: Element<G>,
 }
 
-/// Emitted when `try_rekey_token` soft-fails (its re-key proof did not verify, e.g. a deposit raced);
-/// token `T` is left stale (unchanged) for a retry.
+/// Emitted when `try_rekey_token` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
+/// Token `T` is left stale (unchanged) for a retry.
 public struct TryTokenRekeyFailedEvent<phantom T> has copy, drop {
     owner: address,
 }

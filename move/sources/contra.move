@@ -155,11 +155,7 @@ public struct Pool<phantom T> has key {
     id: UID,
 }
 
-/// Base account that stores token accounts as dynamic fields. `default_key` is optional: when set,
-/// anyone can create a token account on the owner's behalf for a permissionless token via
-/// `register_permissionless` (keyed at `default_key`); when `none`, only the owner can register
-/// (choosing each token's key explicitly). Per-token keys live on `TokenAccount.pk` and are
-/// independent of `default_key`.
+/// Base account that stores token accounts as dynamic fields.
 public struct Account has key {
     id: UID,
     owner: address,
@@ -357,8 +353,8 @@ public fun share_account(account: Account) {
 /// `account.owner`. Under per-transfer auditing, registration carries no auditor data.
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     assert!(pk != g_identity(), EIdentityPublicKey);
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
@@ -587,17 +583,15 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
-    let sender_pk = sender.pk;
-    let sid = sender.session_id;
     // `well_formed_proofs` is one aggregate proof over `[receiver_amounts..., new_balance]`
-    // under `[receiver_pks..., sender_pk]`; verify and wrap into WFEAs in one call, then peel
+    // under `[receiver_pks..., sender.pk]`; verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
     receiver_amounts.push_back(new_balance);
-    receiver_pks.push_back(sender_pk);
+    receiver_pks.push_back(sender.pk);
     let mut wfeas = encrypted_amount::batch_into_well_formed(
         receiver_amounts,
-        sid.dst(DST_ELGAMAL),
-        sid.dst(DST_RANGE_PROOF_16),
+        sender.session_id.dst(DST_ELGAMAL),
+        sender.session_id.dst(DST_RANGE_PROOF_16),
         receiver_pks,
         well_formed_proofs,
     );
@@ -606,7 +600,7 @@ public fun batched_transfer<T>(
 
     let (mut auditor_handles, auditor_pk) = verify_auditing(
         ct,
-        sid,
+        sender.session_id,
         &receiver_amounts,
         auditor_handles,
         auditor_proof,
@@ -616,14 +610,14 @@ public fun batched_transfer<T>(
     let withdrawn = sender
         .active
         .try_split_batch(
-            &sender_pk,
+            &sender.pk,
             new_balance,
             receiver_amounts,
             total_sender_handle,
             consistency_proof,
-            sid.dst(DST_ELGAMAL),
+            sender.session_id.dst(DST_ELGAMAL),
             &balance_proof,
-            sid.dst(DST_DDH),
+            sender.session_id.dst(DST_DDH),
         );
 
     if (withdrawn.is_some()) {
@@ -634,7 +628,7 @@ public fun batched_transfer<T>(
         auditor_handles.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
-            sender_pk,
+            sender_pk: sender.pk,
             coins,
             seed_point,
             next_index: 0,
@@ -663,13 +657,9 @@ fun verify_auditing<T>(
     ctx: &TxContext,
 ): (vector<Element<G>>, Option<Element<G>>) {
     if (auditor_handles.is_none() && auditor_proof.is_none()) {
-        // No auditor data. Allowed only when there is no current key. During a disable grace window
-        // (current key none, previous still in grace) auditor data is optional, so omitting it is fine.
         assert!(!ct.auditor.is_enabled(), EMissingAuditorData);
         return (vector[], option::none())
     };
-    // Auditor data attached: require both parts, and that some key can still verify it (the current
-    // key, or the previous key within its grace window); then it must actually verify.
     assert!(auditor_handles.is_some() && auditor_proof.is_some(), EMissingAuditorData);
     assert!(ct.auditor.accepts_at(ctx.epoch()), EUnexpectedAuditorData);
     let handles = auditor_handles.destroy_some();
@@ -774,8 +764,7 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
             false
         },
         TransferBatch::Ok { coins, auditor_handles, .. } => {
-            assert!(coins.is_empty(), EAllAmountsMustBeUsed);
-            assert!(auditor_handles.is_empty(), EAllAmountsMustBeUsed);
+            assert!(coins.is_empty() && auditor_handles.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
             true
         },

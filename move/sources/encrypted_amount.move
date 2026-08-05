@@ -216,10 +216,10 @@ public(package) fun verify_equal(
 
 /// Re-key `old_amount` (encrypted under `old_pk`) to `new_pk` by swapping each limb's decryption
 /// handle for the matching `new_handles[i]` while keeping its Pedersen commitment. On a verifying
-/// re-keying DDH proof — a single witness `w` mapping `old_pk` and every old handle to `new_pk` and
-/// `new_handles[i]` — returns the re-keyed amount; otherwise `none`. Reusing the commitments means
-/// only the handles are caller-supplied, and the result encrypts the same per-limb values under
-/// `new_pk` by construction.
+/// batched re-keying DDH proof (Π_rekey) — a single witness `w` mapping `old_pk` and every old
+/// handle to `new_pk` and `new_handles[i]` — returns the re-keyed amount; otherwise `none`. Reusing
+/// the commitments means only the handles are caller-supplied, and the result encrypts the same
+/// per-limb values under `new_pk` by construction.
 public(package) fun try_rekey(
     old_amount: &EncryptedAmount,
     old_pk: &Element<G>,
