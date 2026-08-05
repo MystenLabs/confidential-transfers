@@ -299,14 +299,14 @@ public(package) fun u32_limb_encryptions(
     handles: &vector<U32LimbHandles>,
 ): vector<Encryption> {
     assert!(handles.length() == amounts.length(), EMismatchedBatchLength);
-    let mut out = vector[];
-    amounts.length().do!(|i| {
-        let commitments = amounts[i].amount.ciphertexts_as_u32_limbs();
-        let h = &handles[i].handles;
-        out.push_back(twisted_elgamal::new(commitments[0], h[0]));
-        out.push_back(twisted_elgamal::new(commitments[1], h[1]));
-    });
-    out
+    amounts.zip_map_ref!(handles, |wfea, u32_handles| {
+        let commitments = wfea.amount.ciphertexts_as_u32_limbs();
+        let h = &u32_handles.handles;
+        vector[
+            twisted_elgamal::new(commitments[0], h[0]),
+            twisted_elgamal::new(commitments[1], h[1]),
+        ]
+    }).flatten()
 }
 
 /// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.
