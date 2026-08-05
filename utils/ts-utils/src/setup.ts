@@ -47,7 +47,7 @@ export async function createContraAccount(
 	const tokenAccount = new TokenAccount(walletKp.toSuiAddress(), tokenType, packageConfig);
 
 	const tx = new Transaction();
-	const account = tx.add(contraClient.newAccount({ defaultKey: tokenAccount.publicKey }));
+	const account = tx.add(contraClient.newAccount({ defaultPk: tokenAccount.publicKey }));
 	tx.add(await contraClient.register({ tokenAccount, account }));
 	tx.add(contraClient.shareAccount({ account }));
 
