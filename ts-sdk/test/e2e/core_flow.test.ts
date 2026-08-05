@@ -402,7 +402,7 @@ describe('core user flows (devnet)', () => {
 			expect(decodedTransfer.sender).toBe(user1Address);
 			expect(decodedTransfer.receiver).toBe(user2Address);
 			// Two u32-limb auditor handles are attached when auditing is enabled.
-			expect(decodedTransfer.auditor_handles.handles).toHaveLength(2);
+			expect(decodedTransfer.auditor_handles!.handles).toHaveLength(2);
 
 			const encryptedAmountReceiver = EncryptedAmount.fromBcs(
 				decodedTransfer.encrypted_amount_receiver,
@@ -411,7 +411,7 @@ describe('core user flows (devnet)', () => {
 			// Auditor recovers the amount from the event.
 			const auditorAmount = auditor.decryptTransferAmount(
 				encryptedAmountReceiver,
-				decodedTransfer.auditor_handles.handles.map((h) => pointFromBcs(h)),
+				decodedTransfer.auditor_handles!.handles.map((h) => pointFromBcs(h)),
 			);
 			expect(auditorAmount).toBe(transferAmount);
 
@@ -436,7 +436,7 @@ describe('core user flows (devnet)', () => {
 			try {
 				wrong = wrongAuditor.decryptTransferAmount(
 					encryptedAmountReceiver,
-					decodedTransfer.auditor_handles.handles.map((h) => pointFromBcs(h)),
+					decodedTransfer.auditor_handles!.handles.map((h) => pointFromBcs(h)),
 				);
 			} catch {
 				wrong = undefined;

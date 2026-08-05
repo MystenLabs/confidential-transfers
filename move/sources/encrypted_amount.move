@@ -36,6 +36,7 @@ const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 const EWellFormedProofFailed: u64 = 4;
 const ERangeProofRequired: u64 = 5;
+const EMalformedAuditorHandles: u64 = 6;
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -276,18 +277,34 @@ public(package) fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Eleme
     ]
 }
 
-/// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching two `handles`, flattened in amount
-/// order, into `2 * amounts.length()` `Encryption`s. Aborts unless the lengths match.
+/// The two u32-limb auditor decryption handles for one transferred amount (`D̃_0`, `D̃_1`). Paired
+/// with the amount's two `ciphertexts_as_u32_limbs` commitments, they let an auditor recover the
+/// amount off-chain.
+public struct AuditorHandles has copy, drop, store {
+    handles: vector<Element<G>>,
+}
+
+/// Wrap one amount's two u32-limb auditor decryption handles. Aborts unless exactly `U32_LIMBS`
+/// handles are given.
+public fun new_auditor_handles(handles: vector<Element<G>>): AuditorHandles {
+    assert!(handles.length() == U32_LIMBS, EMalformedAuditorHandles);
+    AuditorHandles { handles }
+}
+
+/// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching amount's `AuditorHandles`, in
+/// amount order, into `U32_LIMBS * amounts.length()` `Encryption`s. Aborts unless the batch lengths
+/// match.
 public(package) fun u32_limb_encryptions(
     amounts: &vector<WellFormedEncryptedAmount>,
-    handles: &vector<Element<G>>,
+    handles: &vector<AuditorHandles>,
 ): vector<Encryption> {
-    assert!(handles.length() == U32_LIMBS * amounts.length(), EMismatchedBatchLength);
+    assert!(handles.length() == amounts.length(), EMismatchedBatchLength);
     let mut out = vector[];
     amounts.length().do!(|i| {
         let commitments = amounts[i].amount.ciphertexts_as_u32_limbs();
-        out.push_back(twisted_elgamal::new(commitments[0], handles[U32_LIMBS * i]));
-        out.push_back(twisted_elgamal::new(commitments[1], handles[U32_LIMBS * i + 1]));
+        let h = &handles[i].handles;
+        out.push_back(twisted_elgamal::new(commitments[0], h[0]));
+        out.push_back(twisted_elgamal::new(commitments[1], h[1]));
     });
     out
 }

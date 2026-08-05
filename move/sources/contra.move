@@ -69,7 +69,13 @@ use contra::{
     auditors::{Auditor, new as new_auditor},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
-    encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
+    encrypted_amount::{
+        Self,
+        AuditorHandles,
+        EncryptedAmount,
+        WellFormedEncryptedAmount,
+        WellFormedProof,
+    },
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy}
@@ -191,7 +197,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_handles: vector<Element<G>>,
+        auditor_handles: vector<AuditorHandles>,
         auditor_pk: Option<Element<G>>,
     },
 }
@@ -537,8 +543,8 @@ public fun wrap<T>(
 /// `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
 /// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
 ///
-/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_handles` must carry two
-/// u32-limb decryption handles per receiver (flattened, in `receiver_amounts` order) and
+/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_handles` must carry one
+/// `AuditorHandles` (two u32-limb decryption handles) per receiver, in `receiver_amounts` order, and
 /// `auditor_proof` a single batched `ElGamalProof` over the derived `(commitment, handle)` pairs;
 /// the derived commitments come from `receiver_amounts` itself (see
 /// `encrypted_amount::ciphertexts_as_u32_limbs`). The proof is accepted under the current or (in grace)
@@ -561,7 +567,7 @@ public fun batched_transfer<T>(
     seed_point: Element<G>,
     new_balance: EncryptedAmount,
     balance_proof: DdhProof,
-    auditor_handles: Option<vector<Element<G>>>,
+    auditor_handles: Option<vector<AuditorHandles>>,
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
 ): TransferBatch<T> {
@@ -635,7 +641,7 @@ public fun batched_transfer<T>(
     }
 }
 
-/// Verify the per-transfer auditor data. Returns the flattened auditor handles to attach to events
+/// Verify the per-transfer auditor data. Returns the per-receiver auditor handles to attach to events
 /// (empty when none is carried) and the auditor key that verified them (`none` when no data is
 /// carried). Auditor data is required when auditing is enabled (a current key is set), forbidden when
 /// the token is fully off (no current key and no previous key in grace), and optional in between (a
@@ -646,10 +652,10 @@ fun verify_auditing<T>(
     ct: &ConfidentialToken<T>,
     session_id: vector<u8>,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
-    auditor_handles: Option<vector<Element<G>>>,
+    auditor_handles: Option<vector<AuditorHandles>>,
     auditor_proof: Option<ElGamalProof>,
     ctx: &TxContext,
-): (vector<Element<G>>, Option<Element<G>>) {
+): (vector<AuditorHandles>, Option<Element<G>>) {
     if (auditor_handles.is_none() && auditor_proof.is_none()) {
         assert!(!ct.auditor.is_enabled(), EMissingAuditorData);
         return (vector[], option::none())
@@ -705,11 +711,9 @@ public fun add_to_batch<T>(
             let coin = coins.pop_back();
 
             let receiver_auditor_handles = if (auditor_handles.is_empty()) {
-                vector[]
+                option::none()
             } else {
-                let lo = auditor_handles.pop_back();
-                let hi = auditor_handles.pop_back();
-                vector[lo, hi]
+                option::some(auditor_handles.pop_back())
             };
 
             let receiver = &mut receiver[TokenAccountKey<T>()];

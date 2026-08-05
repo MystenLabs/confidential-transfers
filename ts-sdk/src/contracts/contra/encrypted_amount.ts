@@ -39,6 +39,12 @@ export const WellFormedProof = new MoveStruct({
 		consistency_proofs: bcs.vector(ConsistencyProof),
 	},
 });
+export const AuditorHandles = new MoveStruct({
+	name: `${$moduleName}::AuditorHandles`,
+	fields: {
+		handles: bcs.vector(group_ops.Element),
+	},
+});
 export interface NewEncryptedAmountArguments {
 	l0: TransactionArgument;
 	l1: TransactionArgument;
@@ -116,6 +122,25 @@ export function newWellFormedProof(options: NewWellFormedProofOptions) {
 			package: packageAddress,
 			module: 'encrypted_amount',
 			function: 'new_well_formed_proof',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface NewAuditorHandlesArguments {
+	handles: TransactionArgument;
+}
+export interface NewAuditorHandlesOptions {
+	package?: string;
+	arguments: NewAuditorHandlesArguments | [handles: TransactionArgument];
+}
+export function newAuditorHandles(options: NewAuditorHandlesOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<null>'] satisfies (string | null)[];
+	const parameterNames = ['handles'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'encrypted_amount',
+			function: 'new_auditor_handles',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

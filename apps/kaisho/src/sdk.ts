@@ -637,7 +637,7 @@ export async function executeIssuerTx(opts: {
 export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array): bigint | null {
 	try {
 		const decoded = TransferEventBcs.parse(eventBcs);
-		if (decoded.auditor_handles.handles.length !== 2) return null;
+		if (!decoded.auditor_handles || decoded.auditor_handles.handles.length !== 2) return null;
 		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
 		return auditor.decryptTransferAmount(
 			encryptedAmount,

@@ -30,6 +30,25 @@ export function gVector(options: GVectorOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface AuditorHandlesArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface AuditorHandlesOptions {
+	package?: string;
+	arguments: AuditorHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+export function auditorHandles(options: AuditorHandlesOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'auditor_handles',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface EncryptionArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
