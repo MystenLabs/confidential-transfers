@@ -249,8 +249,8 @@ public(package) fun try_update<T>(
 /// On a verifying `eq_proof` that `new_handles` re-key `self` (under `old_pk`) to `new_pk` — each
 /// limb's commitment kept, its decryption handle mapped by a shared witness — replace `self`'s
 /// amount with the re-keyed amount, preserving `upper_bound` (the re-keyed limbs encrypt the same
-/// values, so their bounds are unchanged). Returns whether the proof verified. The balance stores no
-/// key, so the caller is responsible for updating its own record of the active key (`TokenAccount.pk`).
+/// values, so their bounds are unchanged). Returns whether the proof verified. The caller is
+/// responsible for updating its own record of the active key.
 public(package) fun try_set_public_key<T>(
     self: &mut EncryptedBalance<T>,
     old_pk: &Element<G>,
