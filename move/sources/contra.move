@@ -1013,12 +1013,8 @@ public fun update_auditor<T>(
     new_pk: Option<Element<G>>,
     expiration_epoch: u64,
 ) {
-    ct.auditor.update(new_pk, expiration_epoch);
-    events::emit_update_auditors<T>(
-        ct.auditor.current_pk(),
-        ct.auditor.previous_pk(),
-        ct.auditor.previous_expiration_epoch(),
-    );
+    let previous_pk = ct.auditor.update(new_pk, expiration_epoch);
+    events::emit_update_auditors<T>(new_pk, previous_pk, expiration_epoch);
 }
 
 // === Helpers ===

@@ -65,16 +65,19 @@ public(package) fun new(pk: Option<Element<G>>): Auditor {
 
 /// Rotate the auditor key. The old `current_pk` (if any) becomes `previous_pk` and remains valid for
 /// transfers through `expiration_epoch`. Passing `new_pk = none` disables auditing going forward,
-/// though the previous key still audits in-flight transfers until it expires.
+/// though the previous key still audits in-flight transfers until it expires. Returns the outgoing
+/// key (the old `current_pk`) now retained as `previous_pk`.
 public(package) fun update(
     auditor: &mut Auditor,
     new_pk: Option<Element<G>>,
     expiration_epoch: u64,
-) {
+): Option<Element<G>> {
     assert_non_identity(&new_pk);
-    auditor.previous_pk = auditor.current_pk;
+    let previous_pk = auditor.current_pk;
+    auditor.previous_pk = previous_pk;
     auditor.previous_expiration_epoch = expiration_epoch;
     auditor.current_pk = new_pk;
+    previous_pk
 }
 
 /// Verify a transfer's per-transfer auditor data against this auditor. `receiver_amounts` are the
@@ -118,18 +121,6 @@ public(package) fun verify_transfer(
         return (handles, auditor.previous_pk)
     };
     abort EAuditorProofFailed
-}
-
-public(package) fun current_pk(auditor: &Auditor): Option<Element<G>> {
-    auditor.current_pk
-}
-
-public(package) fun previous_pk(auditor: &Auditor): Option<Element<G>> {
-    auditor.previous_pk
-}
-
-public(package) fun previous_expiration_epoch(auditor: &Auditor): u64 {
-    auditor.previous_expiration_epoch
 }
 
 /// Abort with `EIdentityAuditorPublicKey` if `pk` is set to the group identity.
