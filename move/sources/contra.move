@@ -155,14 +155,15 @@ public struct Pool<phantom T> has key {
     id: UID,
 }
 
-/// Base account that stores token accounts as dynamic fields. `pk` is an optional default key: when
-/// set, anyone can create a token account on the owner's behalf for a permissionless token via
-/// `register_permissionless` (keyed at `pk`); when `none`, only the owner can register (choosing each
-/// token's key explicitly). Per-token keys live on `TokenAccount.pk` and are independent of `pk`.
+/// Base account that stores token accounts as dynamic fields. `default_key` is optional: when set,
+/// anyone can create a token account on the owner's behalf for a permissionless token via
+/// `register_permissionless` (keyed at `default_key`); when `none`, only the owner can register
+/// (choosing each token's key explicitly). Per-token keys live on `TokenAccount.pk` and are
+/// independent of `default_key`.
 public struct Account has key {
     id: UID,
     owner: address,
-    pk: Option<Element<G>>,
+    default_key: Option<Element<G>>,
 }
 
 /// A user's account for one confidential token.
@@ -340,7 +341,7 @@ fun new_account_internal(
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
     assert!(default_key.is_none() || *default_key.borrow() != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    Account { id, owner, pk: default_key }
+    Account { id, owner, default_key }
 }
 
 /// Share the account object.
@@ -364,18 +365,18 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
 }
 
 /// Permissionless counterpart to `register`: create a `TokenAccount<T>` on `account` on behalf of its
-/// owner, keyed under the account's default key `account.pk`, without any `Auth`. Only allowed when
-/// `T` leaves registration permissionless and `account.pk` is set. Aborts
-/// if `account.pk` is unset (`EDefaultKeyNotSet`), `T`'s registration is permissioned
+/// owner, keyed under the account's `default_key`, without any `Auth`. Only allowed when
+/// `T` leaves registration permissionless and `default_key` is set. Aborts
+/// if `default_key` is unset (`EDefaultKeyNotSet`), `T`'s registration is permissioned
 /// (`ERegistrationNotPermissionless`), or the token is already registered (`EAccountAlreadyRegistered`).
 public fun register_permissionless<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
-    assert!(account.pk.is_some(), EDefaultKeyNotSet);
+    assert!(account.default_key.is_some(), EDefaultKeyNotSet);
     assert!(
         policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
         ERegistrationNotPermissionless,
     );
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
-    let pk = *account.pk.borrow();
+    let pk = *account.default_key.borrow();
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
 }
@@ -429,7 +430,7 @@ public fun set_default_key<T>(
         new_default_key.is_none() || *new_default_key.borrow() != g_identity(),
         EIdentityPublicKey,
     );
-    account.pk = new_default_key;
+    account.default_key = new_default_key;
     events::emit_default_key_rotated(account.owner, new_default_key);
 }
 
@@ -1169,7 +1170,7 @@ public fun accepts_deposits<T>(account: &Account): bool {
 /// The account's optional default key (used by `register_permissionless`), or `none` if unset. This
 /// is independent of any `TokenAccount.pk`.
 public fun account_public_key(account: &Account): Option<Element<G>> {
-    account.pk
+    account.default_key
 }
 
 #[test_only]

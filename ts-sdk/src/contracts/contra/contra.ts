@@ -125,7 +125,7 @@ export const Account = new MoveStruct({
 	fields: {
 		id: bcs.Address,
 		owner: bcs.Address,
-		pk: bcs.option(group_ops.Element),
+		default_key: bcs.option(group_ops.Element),
 	},
 });
 export const TokenAccount = new MoveStruct({

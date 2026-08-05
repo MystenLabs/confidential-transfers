@@ -184,9 +184,9 @@ export class ContraClient {
 				if (account instanceof Error) {
 					throw new TokenAccountDoesNotExistError(addresses[i], account.message);
 				}
-				// `pk` is the account's optional default key. A missing token account can only be
+				// `default_key` is the account's optional default key. A missing token account can only be
 				// auto-registered (and deposited to) when it is set — that key becomes the token's key.
-				const accountPk = contraContracts.Account.parse(account.content).pk;
+				const accountPk = contraContracts.Account.parse(account.content).default_key;
 				if (!accountPk) {
 					throw new TokenAccountDoesNotExistError(
 						addresses[i],
