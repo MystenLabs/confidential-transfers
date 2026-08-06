@@ -1945,7 +1945,13 @@ fun verify_well_formed_proof_dst_match_succeeds() {
         consistency_proof_for_testing(dst, amount, &ea, r, &pk),
     );
     assert!(
-        encrypted_amount::verify(&proof, dst, b"range-proof-dst-21byt", &vector[ea], &vector[pk]),
+        encrypted_amount::verify(
+            &proof,
+            dst,
+            b"range-proof-dst-21byt",
+            &vector[ea],
+            &vector[public_key(pk)],
+        ),
     );
 }
 
@@ -1989,7 +1995,7 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
             verifier_dst,
             b"range-proof-dst-21byt",
             &vector[ea],
-            &vector[pk],
+            &vector[public_key(pk)],
         ),
     );
 }
