@@ -140,7 +140,7 @@ fun throttled_unwrap_roundtrip() {
     scenario.next_tx(alice);
     let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth, pk_alice);
+    contra::register(&mut alice_account, &auth, twisted_elgamal::public_key(pk_alice));
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -233,7 +233,7 @@ fun unwrap_aborts_for_non_owner() {
     scenario.next_tx(alice);
     let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth, pk_alice);
+    contra::register(&mut alice_account, &auth, twisted_elgamal::public_key(pk_alice));
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -315,7 +315,7 @@ fun issuer_can_seize_via_set_pending() {
     scenario.next_tx(alice);
     let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth, pk_alice);
+    contra::register(&mut alice_account, &auth, twisted_elgamal::public_key(pk_alice));
 
     wrap_for_alice(
         &mut treasury_cap,
@@ -416,7 +416,7 @@ fun set_min_duration_shortens_window() {
     scenario.next_tx(alice);
     let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::register(&mut alice_account, &auth, pk_alice);
+    contra::register(&mut alice_account, &auth, twisted_elgamal::public_key(pk_alice));
 
     wrap_for_alice(
         &mut treasury_cap,

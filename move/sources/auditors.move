@@ -5,13 +5,13 @@ module contra::auditors;
 
 use contra::{
     encrypted_amount::{U32LimbHandles, WellFormedEncryptedAmount, u32_limb_encryptions},
-    nizk::{ElGamalProof, verify_elgamal}
+    nizk::{ElGamalProof, verify_elgamal},
+    twisted_elgamal::PublicKey
 };
-use sui::{group_ops::Element, ristretto255::{G, g_identity}};
+use sui::{group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
-const EIdentityAuditorPublicKey: u64 = 0;
 const EAuditorProofFailed: u64 = 1;
 const EMissingAuditorData: u64 = 2;
 const EUnexpectedAuditorData: u64 = 3;
@@ -54,9 +54,12 @@ public(package) fun unpack(self: AuditorPackage): (vector<U32LimbHandles>, ElGam
     (handles, proof)
 }
 
-public(package) fun new(pk: Option<Element<G>>): Auditor {
-    assert_non_identity(&pk);
-    Auditor { current_pk: pk, previous_pk: option::none(), previous_expiration_epoch: 0 }
+public(package) fun new(pk: Option<PublicKey>): Auditor {
+    Auditor {
+        current_pk: pk.map!(|k| *k.as_element()),
+        previous_pk: option::none(),
+        previous_expiration_epoch: 0,
+    }
 }
 
 /// Rotate the auditor key. The old `current_pk` (if any) becomes `previous_pk` and remains valid for
@@ -65,14 +68,13 @@ public(package) fun new(pk: Option<Element<G>>): Auditor {
 /// key (the old `current_pk`) now retained as `previous_pk`.
 public(package) fun update(
     auditor: &mut Auditor,
-    new_pk: Option<Element<G>>,
+    new_pk: Option<PublicKey>,
     expiration_epoch: u64,
 ): Option<Element<G>> {
-    assert_non_identity(&new_pk);
     let previous_pk = auditor.current_pk;
     auditor.previous_pk = previous_pk;
     auditor.previous_expiration_epoch = expiration_epoch;
-    auditor.current_pk = new_pk;
+    auditor.current_pk = new_pk.map!(|k| *k.as_element());
     previous_pk
 }
 
@@ -109,9 +111,4 @@ public(package) fun verify_transfer(
         return (handles, auditor.previous_pk)
     };
     abort EAuditorProofFailed
-}
-
-/// Abort with `EIdentityAuditorPublicKey` if `pk` is set to the group identity.
-fun assert_non_identity(pk: &Option<Element<G>>) {
-    pk.do_ref!(|k| assert!(*k != g_identity(), EIdentityAuditorPublicKey));
 }

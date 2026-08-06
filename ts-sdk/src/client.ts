@@ -27,7 +27,8 @@ import {
 	buildEncryptedAmount,
 	buildEncryptedAmountAndProof,
 	buildGVector,
-	buildOptionalPoint,
+	buildOptionalPublicKey,
+	buildPublicKey,
 	buildWellFormedProof,
 	getAccountId,
 	getConfidentialTokenId,
@@ -193,7 +194,7 @@ export class ContraClient {
 					);
 				}
 				accountFallback.set(i, {
-					pk: pointFromBcs(accountPk),
+					pk: pointFromBcs(accountPk.element),
 					acceptsEncryptedDeposits: true,
 					isFrozen: false,
 					needsRegistration: true,
@@ -527,7 +528,7 @@ export class ContraClient {
 					arguments: {
 						account: account ?? this.getAccountId(address),
 						auth: auth ? auth(tx) : this.#asSenderAuth(tx, tokenType),
-						pk: point(tokenAccount.publicKey.toBytes()),
+						pk: buildPublicKey(pid, tokenAccount.publicKey),
 					},
 				}),
 			);
@@ -917,7 +918,10 @@ export class ContraClient {
 					package: this.#packageConfig.packageId,
 					arguments: {
 						account: this.getAccountId(account),
-						defaultPk: buildOptionalPoint(defaultPk ?? undefined),
+						defaultPk: buildOptionalPublicKey(
+							this.#packageConfig.packageId,
+							defaultPk ?? undefined,
+						),
 					},
 				}),
 			);
@@ -1001,7 +1005,7 @@ export class ContraClient {
 			arguments: {
 				account: this.getAccountId(tokenAccount.address),
 				auth,
-				newPk: point(newPk.toBytes()),
+				newPk: buildPublicKey(pid, newPk),
 				newHandles: buildGVector(pid, newHandles),
 				rekeyProof: buildDdhProof(pid, rekeyProof),
 			},

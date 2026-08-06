@@ -11,7 +11,7 @@
 /// shares the resulting `ConfidentialToken<BU>`.
 module bu_token::bu;
 
-use contra::contra;
+use contra::{contra, twisted_elgamal::public_key};
 use sui::{
     coin::{Self, Coin, TreasuryCap},
     coin_registry,
@@ -81,7 +81,7 @@ public fun register_confidential(
     let (ct, management_cap) = contra::new_confidential_token<BU>(
         registry,
         &mut treasury.cap,
-        auditor_pk,
+        auditor_pk.map!(|pk| public_key(pk)),
         ctx,
     );
     contra::share_confidential_token(ct);

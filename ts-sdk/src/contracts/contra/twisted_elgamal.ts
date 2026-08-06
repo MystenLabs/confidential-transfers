@@ -40,3 +40,52 @@ export function _new(options: NewOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export const PublicKey = new MoveStruct({
+	name: `${$moduleName}::PublicKey`,
+	fields: {
+		element: group_ops.Element,
+	},
+});
+export interface PublicKeyArguments {
+	element: TransactionArgument;
+}
+export interface PublicKeyOptions {
+	package?: string;
+	arguments: PublicKeyArguments | [element: TransactionArgument];
+}
+/**
+ * Wrap `element` as a `PublicKey`, aborting with `EIdentityPublicKey` if it is the
+ * group identity.
+ */
+export function publicKey(options: PublicKeyOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null] satisfies (string | null)[];
+	const parameterNames = ['element'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'twisted_elgamal',
+			function: 'public_key',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface AsElementArguments {
+	pk: TransactionArgument;
+}
+export interface AsElementOptions {
+	package?: string;
+	arguments: AsElementArguments | [pk: TransactionArgument];
+}
+/** The underlying group element. */
+export function asElement(options: AsElementOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null] satisfies (string | null)[];
+	const parameterNames = ['pk'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'twisted_elgamal',
+			function: 'as_element',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}

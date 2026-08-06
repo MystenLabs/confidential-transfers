@@ -39,6 +39,26 @@ public fun new(ciphertext: Element<G>, decryption_handle: Element<G>): Encryptio
     }
 }
 
+// === Public key ===
+
+const EIdentityPublicKey: u64 = 0;
+
+/// A twisted ElGamal public key `pk = x * g`, guaranteed non-identity by construction.
+public struct PublicKey has copy, drop, store {
+    element: Element<G>,
+}
+
+/// Wrap `element` as a `PublicKey`, aborting with `EIdentityPublicKey` if it is the group identity.
+public fun public_key(element: Element<G>): PublicKey {
+    assert!(element != g_identity(), EIdentityPublicKey);
+    PublicKey { element }
+}
+
+/// The underlying group element.
+public fun as_element(pk: &PublicKey): &Element<G> {
+    &pk.element
+}
+
 /// The standard Ristretto255 generator `g`, used for randomness blinding in ciphertexts.
 public(package) fun g(): Element<G> {
     ristretto255::g_generator()

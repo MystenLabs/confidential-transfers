@@ -18,6 +18,7 @@ import type { BatchRangeProver } from './bp.js';
 import * as auditorsContracts from './contracts/contra/auditors.js';
 import * as decodeContracts from './contracts/contra/decode.js';
 import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
+import * as twistedElgamalContracts from './contracts/contra/twisted_elgamal.js';
 import { InvalidArgumentError } from './error.js';
 import type { DdhNizk } from './nizk.js';
 import { ElGamalNizk } from './nizk.js';
@@ -351,22 +352,32 @@ export function buildEncryptedAmountAndProof(
 	};
 }
 
-/** Move type of the per-transfer auditor handles Option: `vector<Element<G>>`. */
-const ELEMENT_VECTOR_TYPE = `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`;
+/**
+ * Wrap a ristretto255 point into an on-chain `twisted_elgamal::PublicKey` via `public_key`, which
+ * asserts the point is non-identity. Every contra entry that keys a balance or installs an auditor
+ * key takes a `PublicKey`, so callers build one through this helper.
+ */
+export function buildPublicKey(packageId: string, pk: RistrettoPoint) {
+	return twistedElgamalContracts.publicKey({
+		package: packageId,
+		arguments: { element: point(pk.toBytes()) },
+	});
+}
 
 /**
- * Build an `Option<Element<G>>` for an optional public key (e.g. the account's optional default key
- * passed to `new_account` / `set_default_pk_as_sender`). `option::some(g_from_bytes(pk))` when a point is
+ * Build an `Option<twisted_elgamal::PublicKey>` for an optional public key (e.g. the account's
+ * optional default key passed to `set_default_pk_as_sender`, or an auditor key passed to
+ * `update_auditor` / `new_confidential_token`). `option::some(public_key(pk))` when a point is
  * given, `option::none` otherwise.
  */
-export function buildOptionalPoint(pk?: RistrettoPoint) {
-	const optionType = [ELEMENT_VECTOR_TYPE];
+export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
+	const optionType = [`${packageId}::twisted_elgamal::PublicKey`];
 	if (pk) {
 		return (tx: Transaction) =>
 			tx.moveCall({
 				target: '0x1::option::some',
 				typeArguments: optionType,
-				arguments: [point(pk.toBytes())],
+				arguments: [buildPublicKey(packageId, pk)],
 			});
 	}
 	return (tx: Transaction) =>

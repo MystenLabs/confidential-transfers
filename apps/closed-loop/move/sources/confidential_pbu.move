@@ -16,7 +16,8 @@ module closed_loop::confidential_pbu;
 use closed_loop::pbu::{Self, PbuAdminCap, Pool, PBU};
 use contra::{
     contra::{Self, Account, ConfidentialToken, ManagementCap, TokenRegistry},
-    nizk::DdhProof
+    nizk::DdhProof,
+    twisted_elgamal::public_key
 };
 use sui::{group_ops::Element, ristretto255::G, vec_set::{Self, VecSet}};
 
@@ -109,7 +110,7 @@ public fun register(
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     // Auth is only used internally.
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::register(account, &auth, pk);
+    contra::register(account, &auth, public_key(pk));
 }
 
 /// Rotate `account`'s key to `new_pk` and re-key its confidential pBU balance.
@@ -127,5 +128,5 @@ public fun set_public_key(
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::rekey_token_account(account, &auth, new_pk, new_handles, rekey_proof);
+    contra::rekey_token_account(account, &auth, public_key(new_pk), new_handles, rekey_proof);
 }

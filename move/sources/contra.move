@@ -79,7 +79,8 @@ use contra::{
     },
     events,
     nizk::{DdhProof, ElGamalProof},
-    policy::{Self, Auth, Policy}
+    policy::{Self, Auth, Policy},
+    twisted_elgamal::{PublicKey, public_key}
 };
 use sui::{
     coin::{Self, Coin, TreasuryCap},
@@ -87,7 +88,7 @@ use sui::{
     derived_object,
     dynamic_field as df,
     group_ops::Element,
-    ristretto255::{G, g_identity},
+    ristretto255::G,
     vec_set::{Self, VecSet}
 };
 
@@ -104,7 +105,6 @@ const EAmountsEqualityProofFailed: u64 = 7;
 const EEmptyTransferBatch: u64 = 8;
 const ETooManyReceivers: u64 = 9;
 const EBalancesFull: u64 = 10;
-const EIdentityPublicKey: u64 = 11;
 const EBatchTooLarge: u64 = 12;
 const EReceiverNotRegistered: u64 = 16;
 const ERegistrationNotPermissionless: u64 = 17;
@@ -163,7 +163,7 @@ public struct Pool<phantom T> has key {
 public struct Account has key {
     id: UID,
     owner: address,
-    default_pk: Option<Element<G>>,
+    default_pk: Option<PublicKey>,
 }
 
 /// A user's account for one confidential token.
@@ -192,12 +192,12 @@ public enum TransferBatch<phantom T> {
     /// is likewise carried only for the event.
     Ok {
         sender: address,
-        sender_pk: Element<G>,
+        sender_pk: PublicKey,
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
         auditor_decryption_handles: vector<U32LimbHandles>,
-        auditor_pk: Option<Element<G>>,
+        auditor_pk: Option<PublicKey>,
     },
 }
 
@@ -277,7 +277,7 @@ public use fun share_confidential_token as ConfidentialToken.share;
 public fun new_confidential_token<T>(
     registry: &mut TokenRegistry,
     _t: &mut TreasuryCap<T>,
-    auditor_pk: Option<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     ctx: &mut TxContext,
 ): (ConfidentialToken<T>, ManagementCap<T>) {
     assert!(!derived_object::exists(&registry.id, TokenKey<T>()), ETokenAlreadyRegistered);
@@ -325,10 +325,9 @@ public fun share_account(account: Account) {
 
 /// Create a `TokenAccount` for token `T`, with its balances keyed under `pk`. Authorized by `auth`,
 /// which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
-public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: Element<G>) {
+public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    assert!(pk != g_identity(), EIdentityPublicKey);
     let session_id = account.session_id<T>();
     account.add_token_account<T>(pk, session_id);
 }
@@ -347,15 +346,15 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
 }
 
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
-/// registered. The caller is responsible for any authorization and for a non-identity `pk`.
-fun add_token_account<T>(account: &mut Account, pk: Element<G>, session_id: vector<u8>) {
+/// registered. The caller is responsible for any authorization.
+fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vector<u8>) {
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
-    events::emit_new_registration<T>(account.owner, pk);
+    events::emit_new_registration<T>(account.owner, *pk.as_element());
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
-            pk,
+            pk: *pk.as_element(),
             session_id,
             is_frozen: false,
             accepts_deposits: true,
@@ -384,7 +383,7 @@ public fun set_accepts_encrypted_deposits<T>(
 /// auto-registration).
 public fun set_default_pk_as_sender(
     account: &mut Account,
-    default_pk: Option<Element<G>>,
+    default_pk: Option<PublicKey>,
     ctx: &TxContext,
 ) {
     assert!(ctx.sender() == account.owner, EAuthorizationError);
@@ -396,36 +395,35 @@ public fun set_default_pk_as_sender(
 #[allow(unused_mut_parameter)]
 public fun set_default_pk_as_object(
     account: &mut Account,
-    default_pk: Option<Element<G>>,
+    default_pk: Option<PublicKey>,
     uid: &mut UID,
 ) {
     assert!(uid.to_inner().to_address() == account.owner, EAuthorizationError);
     account.set_default_pk_internal(default_pk);
 }
 
-fun set_default_pk_internal(account: &mut Account, default_pk: Option<Element<G>>) {
-    assert!(default_pk.is_none() || *default_pk.borrow() != g_identity(), EIdentityPublicKey);
+fun set_default_pk_internal(account: &mut Account, default_pk: Option<PublicKey>) {
     account.default_pk = default_pk;
-    events::emit_default_pk_rotated(account.owner, default_pk);
+    events::emit_default_pk_rotated(account.owner, default_pk.map!(|pk| *pk.as_element()));
 }
 
 /// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
 /// limb's decryption handle for the matching `new_handles[i]` (proven by `rekey_proof`). `new_pk` is
-/// explicit and independent of the account's default key. Aborts if `new_pk` is the group identity,
-/// the token has unmerged pending deposits (which are under the old key, so they must be merged
-/// first), or the proof fails. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER`
-/// operation and for `account.owner`.
+/// explicit and independent of the account's default key. Aborts if the token has unmerged pending
+/// deposits (which are under the old key, so they must be merged first) or the proof fails.
+/// Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
+/// `account.owner`.
 public fun rekey_token_account<T>(
     account: &mut Account,
     auth: &Auth<T>,
-    new_pk: Element<G>,
+    new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(
-        rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof),
+        rekey_token_account_internal<T>(account, *new_pk.as_element(), new_handles, rekey_proof),
         EAmountsEqualityProofFailed,
     );
 }
@@ -435,26 +433,26 @@ public fun rekey_token_account<T>(
 /// = false`) so no deposit lands under the old key mid-rotation; on success this re-keys the token and
 /// resumes deposits (`accepts_deposits = true`), now under the new key. On failure it emits
 /// `TryTokenRekeyFailedEvent` and leaves the token unchanged (still paused) for a retry. Still aborts
-/// on an identity `new_pk` or unmerged pending deposits.
+/// on unmerged pending deposits.
 public fun try_rekey_token_account<T>(
     account: &mut Account,
     auth: &Auth<T>,
-    new_pk: Element<G>,
+    new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
+    if (rekey_token_account_internal<T>(account, *new_pk.as_element(), new_handles, rekey_proof)) {
         account[TokenAccountKey<T>()].accepts_deposits = true;
     } else {
         events::emit_try_token_rekey_failed<T>(owner);
     };
 }
 
-/// Shared re-key: Assert `new_pk` is non-identity and the token's pending is empty, then re-key its
-/// active balance from `TokenAccount.pk` to `new_pk`. On a verifying proof, commits the new handles,
+/// Shared re-key: Assert the token's pending is empty, then re-key its active balance from
+/// `TokenAccount.pk` to `new_pk`. On a verifying proof, commits the new handles,
 /// sets `token.pk = new_pk`, emits `TokenRekeyedEvent`, and returns `true`. Otherwise leaves the token
 /// unchanged and returns `false`.
 fun rekey_token_account_internal<T>(
@@ -463,7 +461,6 @@ fun rekey_token_account_internal<T>(
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ): bool {
-    assert!(new_pk != g_identity(), EIdentityPublicKey);
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
     assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
@@ -604,12 +601,12 @@ public fun batched_transfer<T>(
         auditor_decryption_handles.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
-            sender_pk: sender.pk,
+            sender_pk: public_key(sender.pk),
             coins,
             seed_point,
             next_index: 0,
             auditor_decryption_handles,
-            auditor_pk,
+            auditor_pk: auditor_pk.map!(|pk| public_key(pk)),
         }
     } else {
         withdrawn.destroy_none();
@@ -665,14 +662,14 @@ public fun add_to_batch<T>(
 
             events::emit_transfer<T>(
                 sender,
-                sender_pk,
+                *sender_pk.as_element(),
                 seed_point,
                 next_index,
                 receiver_addr,
                 receiver_pk,
                 *coin.amount().amount(),
                 receiver_auditor_decryption_handles,
-                auditor_pk,
+                auditor_pk.map!(|pk| *pk.as_element()),
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver_pk, coin);
@@ -992,11 +989,12 @@ public fun set_policy<T, W>(
 public fun update_auditor<T>(
     ct: &mut ConfidentialToken<T>,
     _cap: &ManagementCap<T>,
-    new_pk: Option<Element<G>>,
+    new_pk: Option<PublicKey>,
     expiration_epoch: u64,
 ) {
+    let current_pk = new_pk.map!(|pk| *pk.as_element());
     let previous_pk = ct.auditor.update(new_pk, expiration_epoch);
-    events::emit_update_auditors<T>(new_pk, previous_pk, expiration_epoch);
+    events::emit_update_auditors<T>(current_pk, previous_pk, expiration_epoch);
 }
 
 // === Helpers ===
@@ -1095,7 +1093,7 @@ public fun accepts_deposits<T>(account: &Account): bool {
 /// The account's optional default key (used by `register_with_default_pk`), or `none` if unset. This
 /// is independent of any `TokenAccount.pk`.
 public fun default_pk(account: &Account): Option<Element<G>> {
-    account.default_pk
+    account.default_pk.map!(|pk| *pk.as_element())
 }
 
 #[test_only]

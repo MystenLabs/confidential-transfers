@@ -90,6 +90,7 @@ import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
 import * as policy from './policy.js';
+import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::contra';
 export const TokenRegistry = new MoveStruct({
@@ -125,7 +126,7 @@ export const Account = new MoveStruct({
 	fields: {
 		id: bcs.Address,
 		owner: bcs.Address,
-		default_pk: bcs.option(group_ops.Element),
+		default_pk: bcs.option(twisted_elgamal.PublicKey),
 	},
 });
 export const TokenAccount = new MoveStruct({
@@ -186,7 +187,7 @@ export const TransferBatch = new MoveEnum({
 			name: `TransferBatch.Ok`,
 			fields: {
 				sender: bcs.Address,
-				sender_pk: group_ops.Element,
+				sender_pk: twisted_elgamal.PublicKey,
 				coins: bcs.vector(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),

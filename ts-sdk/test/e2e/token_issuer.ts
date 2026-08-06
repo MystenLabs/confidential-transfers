@@ -16,12 +16,9 @@ import {
 } from 'contra-utils/node';
 
 import * as contraContracts from '../../src/contracts/contra/contra.js';
-import { point } from '../../src/helpers.js';
+import { buildOptionalPublicKey } from '../../src/helpers.js';
 import { G } from '../../src/ristretto255.js';
 import type { RistrettoPoint } from '../../src/ristretto255.js';
-
-/** Move type of the auditor public key wrapped in an `Option`. */
-const ELEMENT_TYPE = '0x2::group_ops::Element<0x2::ristretto255::G>';
 
 /**
  * Token issuer: publishes a coin and registers it as a confidential token.
@@ -110,10 +107,7 @@ export class TokenIssuer {
 				arguments: {
 					registry: tokenRegistryId,
 					T: treasuryCapId,
-					auditorPk: regTx.moveCall({
-						target: '0x1::option::none',
-						typeArguments: [ELEMENT_TYPE],
-					}),
+					auditorPk: buildOptionalPublicKey(contraPackageId, undefined),
 				},
 			}),
 		);
@@ -203,13 +197,6 @@ export class TokenIssuer {
 		const publicKey = privateKey === undefined ? undefined : G.multiply(privateKey);
 
 		const tx = new Transaction();
-		const newPk = publicKey
-			? tx.moveCall({
-					target: '0x1::option::some',
-					typeArguments: [ELEMENT_TYPE],
-					arguments: [point(publicKey.toBytes())],
-				})
-			: tx.moveCall({ target: '0x1::option::none', typeArguments: [ELEMENT_TYPE] });
 		tx.add(
 			contraContracts.updateAuditor({
 				package: this.contraPackageId,
@@ -217,7 +204,7 @@ export class TokenIssuer {
 				arguments: {
 					ct: this.confidentialTokenId,
 					Cap: this.managementCapId,
-					newPk,
+					newPk: buildOptionalPublicKey(this.contraPackageId, publicKey),
 					expirationEpoch,
 				},
 			}),
