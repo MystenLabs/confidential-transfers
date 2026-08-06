@@ -702,7 +702,10 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
             false
         },
         TransferBatch::Ok { coins, auditor_decryption_handles, .. } => {
-            assert!(coins.is_empty() && auditor_decryption_handles.is_empty(), EAllAmountsMustBeUsed);
+            assert!(
+                coins.is_empty() && auditor_decryption_handles.is_empty(),
+                EAllAmountsMustBeUsed,
+            );
             coins.destroy_empty();
             true
         },
