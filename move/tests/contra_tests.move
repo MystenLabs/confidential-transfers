@@ -1109,9 +1109,9 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     scenario.end();
 }
 
-/// `try_rekey_token_account` soft-fails on a bad proof (returns `false`, token left stale — the normal
-/// not-yet-re-keyed state) and succeeds on a good one (returns `true`, token caught up), without
-/// aborting either way. This is what lets a rotation + re-keys ride in one PTB without pausing.
+/// `try_rekey_token_account` soft-fails on a bad proof (token left stale — the normal not-yet-re-keyed
+/// state) and succeeds on a good one (token caught up), without aborting either way. This is what lets
+/// a rotation + re-keys ride in one PTB without pausing.
 #[test]
 fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     let setup_addr = @0x0;
@@ -1190,27 +1190,23 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
 
     // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
-    assert!(
-        !contra::try_rekey_token_account<TestCurrency>(
-            &mut account_1,
-            &auth,
-            pk_new,
-            new_ea.decryption_handles_for_testing(),
-            bad_proof,
-        ),
+    contra::try_rekey_token_account<TestCurrency>(
+        &mut account_1,
+        &auth,
+        pk_new,
+        new_ea.decryption_handles_for_testing(),
+        bad_proof,
     );
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
 
     // Good proof: succeeds, token caught up to the account key.
-    assert!(
-        contra::try_rekey_token_account<TestCurrency>(
-            &mut account_1,
-            &auth,
-            pk_new,
-            new_ea.decryption_handles_for_testing(),
-            good_proof,
-        ),
+    contra::try_rekey_token_account<TestCurrency>(
+        &mut account_1,
+        &auth,
+        pk_new,
+        new_ea.decryption_handles_for_testing(),
+        good_proof,
     );
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);

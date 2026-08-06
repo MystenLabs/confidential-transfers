@@ -653,10 +653,10 @@ export interface TryRekeyTokenAccountOptions {
 	typeArguments: [string];
 }
 /**
- * Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
- * deposit raced the caller's read). In that case, it instead emits `TryTokenRekeyFailedEvent` and
- * returns `false`, leaving the token unchanged for a retry. Still aborts on an identity `new_pk` or
- * unmerged pending deposits.
+ * Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify
+ * (e.g. a deposit raced the caller's read). In that case it emits `TryTokenRekeyFailedEvent` and
+ * leaves the token unchanged for a retry (detectable off-chain via the event or the token's key).
+ * Still aborts on an identity `new_pk` or unmerged pending deposits.
  */
 export function tryRekeyTokenAccount(options: TryRekeyTokenAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

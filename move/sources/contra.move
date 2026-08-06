@@ -449,25 +449,23 @@ public fun rekey_token_account<T>(
     );
 }
 
-/// Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
-/// deposit raced the caller's read). In that case, it instead emits `TryTokenRekeyFailedEvent` and returns `false`, leaving
-/// the token unchanged for a retry. Still aborts on an identity `new_pk` or unmerged pending deposits.
+/// Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify
+/// (e.g. a deposit raced the caller's read). In that case it emits `TryTokenRekeyFailedEvent` and
+/// leaves the token unchanged for a retry (detectable off-chain via the event or the token's key).
+/// Still aborts on an identity `new_pk` or unmerged pending deposits.
 public fun try_rekey_token_account<T>(
     account: &mut Account,
     auth: &Auth<T>,
     new_pk: Element<G>,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
-): bool {
+) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
-        true
-    } else {
+    if (!rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
         events::emit_try_token_rekey_failed<T>(owner);
-        false
-    }
+    };
 }
 
 /// Shared re-key: Assert `new_pk` is non-identity and the token's pending is empty, then re-key its
