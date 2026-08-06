@@ -591,17 +591,17 @@ export function setDefaultPkForObject(options: SetDefaultPkForObjectOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface RekeyTokenArguments {
+export interface RekeyTokenAccountArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
 	newPk: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
 }
-export interface RekeyTokenOptions {
+export interface RekeyTokenAccountOptions {
 	package?: string;
 	arguments:
-		| RekeyTokenArguments
+		| RekeyTokenAccountArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
@@ -619,7 +619,7 @@ export interface RekeyTokenOptions {
  * first), or the proof fails. Authorized by `auth`, which must be for the
  * `PERMISSIONED_REGISTER` operation and for `account.owner`.
  */
-export function rekeyToken(options: RekeyTokenOptions) {
+export function rekeyTokenAccount(options: RekeyTokenAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
 	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
@@ -627,22 +627,22 @@ export function rekeyToken(options: RekeyTokenOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'rekey_token',
+			function: 'rekey_token_account',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
 }
-export interface TryRekeyTokenArguments {
+export interface TryRekeyTokenAccountArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
 	newPk: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
 }
-export interface TryRekeyTokenOptions {
+export interface TryRekeyTokenAccountOptions {
 	package?: string;
 	arguments:
-		| TryRekeyTokenArguments
+		| TryRekeyTokenAccountArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
@@ -653,12 +653,12 @@ export interface TryRekeyTokenOptions {
 	typeArguments: [string];
 }
 /**
- * Like `rekey_token` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
+ * Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
  * deposit raced the caller's read). In that case, it instead emits `TryTokenRekeyFailedEvent` and
  * returns `false`, leaving the token unchanged for a retry. Still aborts on an identity `new_pk` or
  * unmerged pending deposits.
  */
-export function tryRekeyToken(options: TryRekeyTokenOptions) {
+export function tryRekeyTokenAccount(options: TryRekeyTokenAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
 	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
@@ -666,7 +666,7 @@ export function tryRekeyToken(options: TryRekeyTokenOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'try_rekey_token',
+			function: 'try_rekey_token_account',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});

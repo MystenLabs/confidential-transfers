@@ -632,16 +632,16 @@ export async function executeIssuerTx(opts: {
 
 /** Decrypt the amount of a single transfer from its `TransferEvent`, from the auditor's
  *  perspective. Regroups the receiver's four u16 limbs into the two u32-limb commitments and pairs
- *  them with the event's two `auditor_handles`, then BSGS-decrypts with the auditor key. Returns
+ *  them with the event's two `auditor_decryption_handles`, then BSGS-decrypts with the auditor key. Returns
  *  `null` if the event isn't a valid `TransferEvent`, carried no auditor data, or is out of range. */
 export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array): bigint | null {
 	try {
 		const decoded = TransferEventBcs.parse(eventBcs);
-		if (!decoded.auditor_handles || decoded.auditor_handles.handles.length !== 2) return null;
+		if (!decoded.auditor_decryption_handles || decoded.auditor_decryption_handles.handles.length !== 2) return null;
 		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
 		return auditor.decryptTransferAmount(
 			encryptedAmount,
-			decoded.auditor_handles.handles.map((h) => pointFromBcs(h)),
+			decoded.auditor_decryption_handles.handles.map((h) => pointFromBcs(h)),
 		);
 	} catch (e) {
 		console.error('[sdk] failed to audit-decrypt TransferEvent', e);

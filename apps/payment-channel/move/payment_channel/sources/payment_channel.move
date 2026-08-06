@@ -104,7 +104,7 @@
 module payment_channel::payment_channel;
 
 use contra::{contra::{Self, Account, AccountRegistry, ConfidentialToken}, policy::Auth};
-use sui::{clock::Clock, group_ops::Element, ristretto255::G};
+use sui::clock::Clock;
 
 // === Errors ===
 
@@ -142,17 +142,16 @@ public fun new<T>(ctx: &mut TxContext) {
     transfer::share_object(c);
 }
 
-/// Create the contra `Account` owned by the channel's address, with account key `pk`. Restricted to
-/// the channel `sender`, and object-bound (the channel self-authenticates via its own `&mut UID`), so
-/// no one else can squat the channel's account with a key they control.
+/// Create the contra `Account` owned by the channel's address (no default key — the channel registers
+/// its token account explicitly). Restricted to the channel `sender`, and object-bound (the channel
+/// self-authenticates via its own `&mut UID`), so no one else can squat the channel's account.
 public fun new_account<T>(
     c: &mut Channel<T>,
     registry: &mut AccountRegistry,
-    pk: Element<G>,
     ctx: &TxContext,
 ): Account {
     assert!(ctx.sender() == c.sender, EUnauthorized);
-    contra::new_account_for_object(registry, &mut c.id, option::some(pk))
+    contra::new_account_for_object(registry, &mut c.id, option::none())
 }
 
 // === Operations ===

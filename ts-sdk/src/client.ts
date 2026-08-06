@@ -57,14 +57,14 @@ import type {
 	PauseAccountOptions,
 	RegisterOptions,
 	RegisterWithDefaultPkOptions,
-	RekeyTokenOptions,
+	RekeyTokenAccountOptions,
 	SetDefaultPkOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
 	TokenKeyStatus,
 	TransferOptions,
-	TryRekeyTokensOptions,
+	TryRekeyTokenAccountsOptions,
 	UnpauseAccountOptions,
 	UnwrapOptions,
 	UpdateBalanceOptions,
@@ -350,7 +350,7 @@ export class ContraClient {
 	 * Report, for each token, the key that token's balances are currently encrypted under. Pass
 	 * `tokenTypes` to query specific tokens, or omit it to enumerate every token registered on the
 	 * account (its `TokenAccount` dynamic fields). Use it to see each token's current key — e.g. after
-	 * `tryRekeyTokens`, compare each token's reported key against the key you intended and retry any
+	 * `tryRekeyTokenAccounts`, compare each token's reported key against the key you intended and retry any
 	 * that didn't take (a soft-failed re-key still reports the old key). A token's balance can only be
 	 * re-keyed or decrypted with the key it currently reports (`publicKey`), so an old private key is
 	 * safe to delete only once **no** token still reports it (omit `tokenTypes` to check them all).
@@ -889,7 +889,7 @@ export class ContraClient {
 	 * Set the account's optional default key (`Account.default_pk`) to `defaultPk`, or clear it by
 	 * passing `null`/omitting it (which disables permissionless auto-registration for this account).
 	 * This is purely the key `register_with_default_pk` uses; per-token keys are unaffected and are
-	 * rotated independently via `rekeyToken`. Restricted to the owner: the transaction must be signed
+	 * rotated independently via `rekeyTokenAccount`. Restricted to the owner: the transaction must be signed
 	 * by `account` (the account owner). For an object-owned account, call
 	 * `contra::set_default_pk_for_object` directly.
 	 *
@@ -945,7 +945,7 @@ export class ContraClient {
 		const newPk = newTokenAccount.publicKey;
 		const { balance, pending, pendingPublicBalance } = await this.getBalance(tokenAccount);
 
-		// `rekey_token` requires an empty pending balance; merge folds pending (encrypted + public)
+		// `rekey_token_account` requires an empty pending balance; merge folds pending (encrypted + public)
 		// into active first. Public deposits contribute a zero handle, so they don't affect the
 		// handle mapping — only the encrypted pending handles do.
 		const shouldMerge =
@@ -983,11 +983,11 @@ export class ContraClient {
 	}
 
 	/**
-	 * Emit the `rekey_token` (or `try_rekey_token`) Move call re-keying the token's active balance
+	 * Emit the `rekey_token_account` (or `try_rekey_token_account`) Move call re-keying the token's active balance
 	 * from its current `TokenAccount.pk` to `newPk` (explicit and independent of the account's default
-	 * key). Shared by `rekeyToken`, `tryRekeyToken`, and `tryRekeyTokens`.
+	 * key). Shared by `rekeyTokenAccount`, `tryRekeyTokenAccount`, and `tryRekeyTokenAccounts`.
 	 */
-	#rekeyTokenCall(
+	#rekeyTokenAccountCall(
 		tx: Transaction,
 		tokenAccount: TokenAccount,
 		newPk: PublicKey,
@@ -1009,7 +1009,9 @@ export class ContraClient {
 			},
 		};
 		return tx.add(
-			soft ? contraContracts.tryRekeyToken(options) : contraContracts.rekeyToken(options),
+			soft
+				? contraContracts.tryRekeyTokenAccount(options)
+				: contraContracts.rekeyTokenAccount(options),
 		);
 	}
 
@@ -1026,14 +1028,14 @@ export class ContraClient {
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `EPendingDepositsMustBeMerged` — the token still has pending deposits (e.g. `merge=false`).
 	 * - `EAmountsEqualityProofFailed` — the re-key proof did not verify (e.g. a deposit raced the
-	 *   SDK's balance read). Use `tryRekeyToken` to soft-fail instead of aborting.
+	 *   SDK's balance read). Use `tryRekeyTokenAccount` to soft-fail instead of aborting.
 	 */
-	async rekeyToken({
+	async rekeyTokenAccount({
 		tokenAccount,
 		newTokenAccount,
 		merge = true,
 		auth,
-	}: RekeyTokenOptions): Promise<(tx: Transaction) => TransactionResult> {
+	}: RekeyTokenAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
 			tokenAccount,
 			newTokenAccount,
@@ -1042,7 +1044,7 @@ export class ContraClient {
 		return (tx: Transaction) => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			return this.#rekeyTokenCall(
+			return this.#rekeyTokenAccountCall(
 				tx,
 				tokenAccount,
 				newTokenAccount.publicKey,
@@ -1055,17 +1057,17 @@ export class ContraClient {
 	}
 
 	/**
-	 * Like `rekeyToken`, but soft-fails instead of aborting when the re-key proof does not verify
+	 * Like `rekeyTokenAccount`, but soft-fails instead of aborting when the re-key proof does not verify
 	 * (e.g. a deposit raced the balance read): the token is left stale for a retry and a
 	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultPk` and re-keys of several tokens ride
 	 * in one PTB without pausing.
 	 */
-	async tryRekeyToken({
+	async tryRekeyTokenAccount({
 		tokenAccount,
 		newTokenAccount,
 		merge = true,
 		auth,
-	}: RekeyTokenOptions): Promise<(tx: Transaction) => TransactionResult> {
+	}: RekeyTokenAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
 			tokenAccount,
 			newTokenAccount,
@@ -1074,7 +1076,7 @@ export class ContraClient {
 		return (tx: Transaction) => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
 			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			return this.#rekeyTokenCall(
+			return this.#rekeyTokenAccountCall(
 				tx,
 				tokenAccount,
 				newTokenAccount.publicKey,
@@ -1088,8 +1090,8 @@ export class ContraClient {
 
 	/**
 	 * Optimistically re-key one or more tokens in one PTB, without pausing — the batched, soft-failing
-	 * plural of `tryRekeyToken`. For each `(current, new)` pair in `rotations`, an optional `merge` then
-	 * `tryRekeyToken` from the current key to the paired new key. Because each re-key soft-fails (it does
+	 * plural of `tryRekeyTokenAccount`. For each `(current, new)` pair in `rotations`, an optional `merge` then
+	 * `tryRekeyTokenAccount` from the current key to the paired new key. Because each re-key soft-fails (it does
 	 * not abort), any token whose re-key races a concurrent deposit is left stale for a later retry while
 	 * the rest still land — so it never reverts. Different tokens may re-key to different keys.
 	 *
@@ -1098,7 +1100,7 @@ export class ContraClient {
 	 * (same `address`).
 	 *
 	 * There is no SDK-side key check: if a pair's `tokenAccount` key doesn't match the token's real
-	 * on-chain `TokenAccount.pk`, its re-key proof won't verify, so `try_rekey_token` soft-fails and it
+	 * on-chain `TokenAccount.pk`, its re-key proof won't verify, so `try_rekey_token_account` soft-fails and it
 	 * stays stale. After the tx, re-query `getTokenKeys` and compare each token's key against the key you
 	 * intended — any that still reports its old key needs a retry.
 	 *
@@ -1106,24 +1108,24 @@ export class ContraClient {
 	 *
 	 * @example
 	 * ```ts
-	 * const rekey = await client.contra.tryRekeyTokens({
+	 * const rekey = await client.contra.tryRekeyTokenAccounts({
 	 *   rotations: [{ tokenAccount, newTokenAccount }],
 	 * });
 	 * const tx = new Transaction();
 	 * rekey(tx);
 	 * ```
 	 */
-	async tryRekeyTokens({
+	async tryRekeyTokenAccounts({
 		rotations,
 		merge = true,
-	}: TryRekeyTokensOptions): Promise<(tx: Transaction) => void> {
+	}: TryRekeyTokenAccountsOptions): Promise<(tx: Transaction) => void> {
 		if (rotations.length === 0) {
-			throw new InvalidArgumentError('tryRekeyTokens: `rotations` must not be empty.');
+			throw new InvalidArgumentError('tryRekeyTokenAccounts: `rotations` must not be empty.');
 		}
 		const { address } = rotations[0].tokenAccount;
 		if (rotations.some((r) => r.tokenAccount.address !== address)) {
 			throw new InvalidArgumentError(
-				'tryRekeyTokens: all token accounts must be for the same account.',
+				'tryRekeyTokenAccounts: all token accounts must be for the same account.',
 			);
 		}
 		// Re-key material per pair: from the current `tokenAccount`'s key to the paired `newTokenAccount`.
@@ -1136,7 +1138,7 @@ export class ContraClient {
 				const { shouldMerge, newHandles, rekeyProof } = materials[i];
 				const authArg = this.#asSenderAuth(tx, r.tokenAccount.tokenType);
 				if (shouldMerge) tx.add(this.#merge({ tokenAccount: r.tokenAccount, auth: authArg }));
-				this.#rekeyTokenCall(
+				this.#rekeyTokenAccountCall(
 					tx,
 					r.tokenAccount,
 					r.newTokenAccount.publicKey,

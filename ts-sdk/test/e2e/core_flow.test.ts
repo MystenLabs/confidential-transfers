@@ -368,7 +368,7 @@ describe('core user flows (devnet)', () => {
 		{ timeout: 120_000 },
 		async () => {
 			// Per-transfer auditing: the auditor never recovers a user key. It decrypts each transfer's
-			// amount from the `TransferEvent` (`encrypted_amount_receiver` + `auditor_handles`) with the
+			// amount from the `TransferEvent` (`encrypted_amount_receiver` + `auditor_decryption_handles`) with the
 			// token's auditor private key. The sender still recovers its own outgoing amount from the
 			// commitments via `seed_point`, and the receiver decrypts with its own key.
 			const auditor = new ContraAuditor({
@@ -402,7 +402,7 @@ describe('core user flows (devnet)', () => {
 			expect(decodedTransfer.sender).toBe(user1Address);
 			expect(decodedTransfer.receiver).toBe(user2Address);
 			// Two u32-limb auditor handles are attached when auditing is enabled.
-			expect(decodedTransfer.auditor_handles!.handles).toHaveLength(2);
+			expect(decodedTransfer.auditor_decryption_handles!.handles).toHaveLength(2);
 
 			const encryptedAmountReceiver = EncryptedAmount.fromBcs(
 				decodedTransfer.encrypted_amount_receiver,
@@ -411,7 +411,7 @@ describe('core user flows (devnet)', () => {
 			// Auditor recovers the amount from the event.
 			const auditorAmount = auditor.decryptTransferAmount(
 				encryptedAmountReceiver,
-				decodedTransfer.auditor_handles!.handles.map((h) => pointFromBcs(h)),
+				decodedTransfer.auditor_decryption_handles!.handles.map((h) => pointFromBcs(h)),
 			);
 			expect(auditorAmount).toBe(transferAmount);
 
@@ -436,7 +436,7 @@ describe('core user flows (devnet)', () => {
 			try {
 				wrong = wrongAuditor.decryptTransferAmount(
 					encryptedAmountReceiver,
-					decodedTransfer.auditor_handles!.handles.map((h) => pointFromBcs(h)),
+					decodedTransfer.auditor_decryption_handles!.handles.map((h) => pointFromBcs(h)),
 				);
 			} catch {
 				wrong = undefined;
@@ -577,7 +577,7 @@ describe('core user flows (devnet)', () => {
 	);
 
 	it(
-		'tryRekeyTokens: re-keys the token, preserving balance and folding pending deposits',
+		'tryRekeyTokenAccounts: re-keys the token, preserving balance and folding pending deposits',
 		{ timeout: 300_000 },
 		async () => {
 			// Fresh user. Bootstrap funding + account + register, then wrap + merge so the active
@@ -612,8 +612,8 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 1: no pending deposits. `tryRekeyTokens` re-keys the token in one PTB
-			// (try_rekey_token catches the token up to the new key). ---
+			// --- Rotation 1: no pending deposits. `tryRekeyTokenAccounts` re-keys the token in one PTB
+			// (try_rekey_token_account catches the token up to the new key). ---
 			const oldPrivateKey = userTokenAccount.privateKey;
 			const oldPublicKeyBytes = userTokenAccount.publicKey.toBytes();
 
@@ -623,7 +623,7 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn = await client.contra.tryRekeyTokens({
+			const rotateFn = await client.contra.tryRekeyTokenAccounts({
 				rotations: [{ tokenAccount: userTokenAccount, newTokenAccount }],
 			});
 			const rotateTx = new Transaction();
@@ -645,8 +645,8 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 2: with a pending public deposit outstanding so `tryRekeyTokens`' inline merge
-			// runs (rekey_token requires an empty pending). ---
+			// --- Rotation 2: with a pending public deposit outstanding so `tryRekeyTokenAccounts`' inline merge
+			// runs (rekey_token_account requires an empty pending). ---
 			const extra = 3n * ONE;
 			await tokenIssuer.mint(userAddress, extra);
 			await wrapCoin(userAddress, userKp, userAddress, extra);
@@ -664,7 +664,7 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn2 = await client.contra.tryRekeyTokens({
+			const rotateFn2 = await client.contra.tryRekeyTokenAccounts({
 				rotations: [{ tokenAccount: newTokenAccount, newTokenAccount: rotated2 }],
 			});
 			const rotateTx2 = new Transaction();

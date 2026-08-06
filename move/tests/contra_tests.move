@@ -958,7 +958,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
 
     // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate: set the
-    // account key (target), then `rekey_token` catches the token's balance up from token.pk to it.
+    // account key (target), then `rekey_token_account` catches the token's balance up from token.pk to it.
     let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_batch_ddh(),
     );
@@ -980,7 +980,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     // The default key is now pk_new, but the token's balance still lags under pk_old.
     assert_eq!(account_1.default_pk(), option::some(pk_new));
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
-    contra::rekey_token<TestCurrency>(
+    contra::rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
         pk_new,
@@ -1008,10 +1008,10 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     scenario.end();
 }
 
-/// `rekey_token` aborts on a bad re-key proof (here a wrong witness, standing in for a raced balance
+/// `rekey_token_account` aborts on a bad re-key proof (here a wrong witness, standing in for a raced balance
 /// whose handles no longer match), reverting the PTB — nothing is committed.
 #[test, expected_failure(abort_code = ::contra::contra::EAmountsEqualityProofFailed)]
-fun test_rekey_token_aborts_on_bad_proof() {
+fun test_rekey_token_account_aborts_on_bad_proof() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
 
@@ -1084,7 +1084,7 @@ fun test_rekey_token_aborts_on_bad_proof() {
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
     // Aborts here with `EAmountsEqualityProofFailed`.
-    contra::rekey_token<TestCurrency>(
+    contra::rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
         pk_new,
@@ -1109,11 +1109,11 @@ fun test_rekey_token_aborts_on_bad_proof() {
     scenario.end();
 }
 
-/// `try_rekey_token` soft-fails on a bad proof (returns `false`, token left stale — the normal
+/// `try_rekey_token_account` soft-fails on a bad proof (returns `false`, token left stale — the normal
 /// not-yet-re-keyed state) and succeeds on a good one (returns `true`, token caught up), without
 /// aborting either way. This is what lets a rotation + re-keys ride in one PTB without pausing.
 #[test]
-fun test_try_rekey_token_soft_fails_then_succeeds() {
+fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
 
@@ -1191,7 +1191,7 @@ fun test_try_rekey_token_soft_fails_then_succeeds() {
 
     // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
     assert!(
-        !contra::try_rekey_token<TestCurrency>(
+        !contra::try_rekey_token_account<TestCurrency>(
             &mut account_1,
             &auth,
             pk_new,
@@ -1204,7 +1204,7 @@ fun test_try_rekey_token_soft_fails_then_succeeds() {
 
     // Good proof: succeeds, token caught up to the account key.
     assert!(
-        contra::try_rekey_token<TestCurrency>(
+        contra::try_rekey_token_account<TestCurrency>(
             &mut account_1,
             &auth,
             pk_new,

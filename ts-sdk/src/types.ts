@@ -346,8 +346,8 @@ export interface SetDefaultPkOptions {
 	defaultPk?: RistrettoPoint | null;
 }
 
-/** Arguments to `ContraClient.rekeyToken` / `tryRekeyToken`. */
-export interface RekeyTokenOptions {
+/** Arguments to `ContraClient.rekeyTokenAccount` / `tryRekeyTokenAccount`. */
+export interface RekeyTokenAccountOptions {
 	/** The token account carrying the token's current (old) key — its balance is re-keyed from here. */
 	tokenAccount: TokenAccount;
 	/**
@@ -368,7 +368,7 @@ export interface RekeyTokenOptions {
 	auth?: AuthThunk;
 }
 
-/** A single re-key in `ContraClient.tryRekeyTokens`: the token's current account and its new one. */
+/** A single re-key in `ContraClient.tryRekeyTokenAccounts`: the token's current account and its new one. */
 export interface KeyRotation {
 	/** The token's current account — its `address`, `tokenType`, and current key. */
 	tokenAccount: TokenAccount;
@@ -380,10 +380,10 @@ export interface KeyRotation {
 }
 
 /**
- * Arguments to `ContraClient.tryRekeyTokens`: optimistically re-key one or more tokens in one PTB, each
- * to its own new key (the batched, soft-failing plural of `tryRekeyToken`).
+ * Arguments to `ContraClient.tryRekeyTokenAccounts`: optimistically re-key one or more tokens in one PTB, each
+ * to its own new key (the batched, soft-failing plural of `tryRekeyTokenAccount`).
  */
-export interface TryRekeyTokensOptions {
+export interface TryRekeyTokenAccountsOptions {
 	/**
 	 * The tokens to re-key, as (current, new) pairs. Each token re-keys from its `tokenAccount`'s key
 	 * to the paired `newTokenAccount`'s key; different tokens may go to different keys. All accounts

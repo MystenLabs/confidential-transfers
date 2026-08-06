@@ -41,7 +41,7 @@
 ///    types; when set, others can auto-register tokens for you via `register_with_default_pk`).
 /// 2. Register a token account for a token type `T` under a key of your choice (`register`). Per-token
 ///    keys are independent of the account's default key.
-/// 3. Rotate a token's key with `rekey_token` (to any `new_pk`), and set/clear the account's default
+/// 3. Rotate a token's key with `rekey_token_account` (to any `new_pk`), and set/clear the account's default
 ///    key with `set_default_pk`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
@@ -434,7 +434,7 @@ fun set_default_pk_internal(account: &mut Account, default_pk: Option<Element<G>
 /// the token has unmerged pending deposits (which are under the old key, so they must be merged
 /// first), or the proof fails. Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER`
 /// operation and for `account.owner`.
-public fun rekey_token<T>(
+public fun rekey_token_account<T>(
     account: &mut Account,
     auth: &Auth<T>,
     new_pk: Element<G>,
@@ -444,15 +444,15 @@ public fun rekey_token<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(
-        rekey_token_internal<T>(account, new_pk, new_handles, rekey_proof),
+        rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof),
         EAmountsEqualityProofFailed,
     );
 }
 
-/// Like `rekey_token` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
+/// Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify (e.g. a
 /// deposit raced the caller's read). In that case, it instead emits `TryTokenRekeyFailedEvent` and returns `false`, leaving
 /// the token unchanged for a retry. Still aborts on an identity `new_pk` or unmerged pending deposits.
-public fun try_rekey_token<T>(
+public fun try_rekey_token_account<T>(
     account: &mut Account,
     auth: &Auth<T>,
     new_pk: Element<G>,
@@ -462,7 +462,7 @@ public fun try_rekey_token<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (rekey_token_internal<T>(account, new_pk, new_handles, rekey_proof)) {
+    if (rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
         true
     } else {
         events::emit_try_token_rekey_failed<T>(owner);
@@ -474,7 +474,7 @@ public fun try_rekey_token<T>(
 /// active balance from `TokenAccount.pk` to `new_pk`. On a verifying proof, commits the new handles,
 /// sets `token.pk = new_pk`, emits `TokenRekeyedEvent`, and returns `true`. Otherwise leaves the token
 /// unchanged and returns `false`.
-fun rekey_token_internal<T>(
+fun rekey_token_account_internal<T>(
     account: &mut Account,
     new_pk: Element<G>,
     new_handles: vector<Element<G>>,

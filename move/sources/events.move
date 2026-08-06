@@ -34,7 +34,7 @@ public struct TokenRekeyedEvent<phantom T> has copy, drop {
     new_pk: Element<G>,
 }
 
-/// Emitted when `try_rekey_token` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
+/// Emitted when `try_rekey_token_account` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
 /// Token `T` is left stale (unchanged) for a retry.
 public struct TryTokenRekeyFailedEvent<phantom T> has copy, drop {
     owner: address,
@@ -55,7 +55,7 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// by re-deriving the per-transfer blinding from `seed = HKDF(sk * seed_point)` and
 /// the receiver's `batch_index` within this transfer.
 ///
-/// `auditor_handles` are the two u32-limb auditor decryption handles for this transfer (`none` when
+/// `auditor_decryption_handles` are the two u32-limb auditor decryption handles for this transfer (`none` when
 /// auditing is disabled), paired off-chain with the two commitments derived from
 /// `encrypted_amount_receiver` (`encrypted_amount::ciphertexts_as_u32_limbs`). `auditor_pk` is the
 /// auditor public key they are encrypted under — the key that verified this transfer's auditor proof
@@ -70,7 +70,7 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver: address,
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_handles: Option<U32LimbHandles>,
+    auditor_decryption_handles: Option<U32LimbHandles>,
     auditor_pk: Option<Element<G>>,
     memo: vector<u8>,
 }
@@ -170,7 +170,7 @@ public(package) fun emit_transfer<T>(
     receiver: address,
     receiver_pk: Element<G>,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_handles: Option<U32LimbHandles>,
+    auditor_decryption_handles: Option<U32LimbHandles>,
     auditor_pk: Option<Element<G>>,
     memo: vector<u8>,
 ) {
@@ -182,7 +182,7 @@ public(package) fun emit_transfer<T>(
         receiver,
         receiver_pk,
         encrypted_amount_receiver,
-        auditor_handles,
+        auditor_decryption_handles,
         auditor_pk,
         memo,
     });

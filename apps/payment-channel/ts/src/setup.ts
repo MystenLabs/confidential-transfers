@@ -5,7 +5,7 @@ import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { executeOrThrow } from 'contra-utils';
-import { ContraClient, contraContracts, point, TokenAccount } from 'ts-sdk';
+import { ContraClient, contraContracts, TokenAccount } from 'ts-sdk';
 
 import { PaymentChannelClient } from './client.ts';
 import { type Deployment } from './deploy.ts';
@@ -87,11 +87,7 @@ export async function setupChannelContraAccount(opts: {
 	const account = tx.moveCall({
 		target: `${deployment.packageId}::payment_channel::new_account`,
 		typeArguments: [deployment.buType],
-		arguments: [
-			channelArg,
-			tx.object(deployment.contra.accountRegistryId),
-			point(channelTokenAccount.publicKey.toBytes()),
-		],
+		arguments: [channelArg, tx.object(deployment.contra.accountRegistryId)],
 	});
 	tx.add(
 		await contraClient.register({
