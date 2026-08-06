@@ -23,7 +23,7 @@ export const WellFormedEncryptedAmount = new MoveStruct({
 	name: `${$moduleName}::WellFormedEncryptedAmount`,
 	fields: {
 		amount: EncryptedAmount,
-		pk: group_ops.Element,
+		pk: twisted_elgamal.PublicKey,
 	},
 });
 export const ConsistencyProof = new MoveStruct({

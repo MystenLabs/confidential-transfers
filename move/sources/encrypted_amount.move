@@ -5,7 +5,7 @@ module contra::encrypted_amount;
 
 use contra::{
     nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
-    twisted_elgamal::{Self, Encryption, g, encrypt_trivial, encrypt_zero}
+    twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_trivial, encrypt_zero}
 };
 use sui::{
     group_ops::Element,
@@ -56,7 +56,7 @@ public struct EncryptedAmount has copy, drop, store {
 /// 2) All limbs are valid encryptions with respect to the given public key (in the Proof of Knowledge sense).
 public struct WellFormedEncryptedAmount has copy, drop {
     amount: EncryptedAmount,
-    pk: Element<G>,
+    pk: PublicKey,
 }
 
 /// Per-amount ElGamal consistency. The public key isn't stored
@@ -130,7 +130,7 @@ public(package) fun verify(
     elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
     amounts: &vector<EncryptedAmount>,
-    pks: &vector<Element<G>>,
+    pks: &vector<PublicKey>,
 ): bool {
     let n = amounts.length();
     assert!(pks.length() == n, EMismatchedBatchLength);
@@ -150,7 +150,7 @@ public(package) fun into_well_formed(
     amount: EncryptedAmount,
     elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
-    pk: Element<G>,
+    pk: PublicKey,
     proof: WellFormedProof,
 ): WellFormedEncryptedAmount {
     assert!(
@@ -168,7 +168,7 @@ public(package) fun batch_into_well_formed(
     amounts: vector<EncryptedAmount>,
     elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
-    pks: vector<Element<G>>,
+    pks: vector<PublicKey>,
     proof: WellFormedProof,
 ): vector<WellFormedEncryptedAmount> {
     assert!(proof.verify(elgamal_dst, range_dst, &amounts, &pks), EWellFormedProofFailed);
@@ -181,7 +181,7 @@ public(package) fun amount(self: &WellFormedEncryptedAmount): &EncryptedAmount {
 }
 
 /// The public key `self.amount()` is encrypted under.
-public(package) fun pk(self: &WellFormedEncryptedAmount): &Element<G> {
+public(package) fun pk(self: &WellFormedEncryptedAmount): &PublicKey {
     &self.pk
 }
 
@@ -228,7 +228,7 @@ public(package) fun verify_equal(
     proof.verify_ddh(
         dst,
         &vector[g(), *encryption.ciphertext()],
-        &vector[ea1.pk, *encryption.decryption_handle()],
+        &vector[*ea1.pk.as_element(), *encryption.decryption_handle()],
     )
 }
 
@@ -240,16 +240,16 @@ public(package) fun verify_equal(
 /// per-limb values under `new_pk` by construction.
 public(package) fun try_rekey(
     old_amount: &EncryptedAmount,
-    old_pk: &Element<G>,
-    new_pk: &Element<G>,
+    old_pk: &PublicKey,
+    new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
     proof: &DdhProof,
     dst: vector<u8>,
 ): Option<EncryptedAmount> {
     assert!(new_handles.length() == U16_LIMBS, EMismatchedBatchLength);
     // Pair 0 re-keys the public key; pairs 1..4 re-key each limb's decryption handle.
-    let mut bases = vector[*old_pk];
-    let mut images = vector[*new_pk];
+    let mut bases = vector[*old_pk.as_element()];
+    let mut images = vector[*new_pk.as_element()];
     U16_LIMBS.do!(|i| {
         bases.push_back(*old_amount[i].decryption_handle());
         images.push_back(new_handles[i]);
@@ -401,7 +401,7 @@ fun batch_sizes(n: u64): vector<u64> {
 fun verify_well_formed_knowledge(
     amounts: &vector<EncryptedAmount>,
     proofs: &vector<ConsistencyProof>,
-    pks: &vector<Element<G>>,
+    pks: &vector<PublicKey>,
     dst: vector<u8>,
 ): bool {
     let n = amounts.length();

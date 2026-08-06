@@ -424,8 +424,8 @@ export class ContraClient {
 	async getAuditor(tokenType: string): Promise<TokenAuditor> {
 		const { auditor } = await this.#getConfidentialToken(tokenType);
 		return {
-			currentPk: auditor.current_pk ? pointFromBcs(auditor.current_pk) : undefined,
-			previousPk: auditor.previous_pk ? pointFromBcs(auditor.previous_pk) : undefined,
+			currentPk: auditor.current_pk ? pointFromBcs(auditor.current_pk.element) : undefined,
+			previousPk: auditor.previous_pk ? pointFromBcs(auditor.previous_pk.element) : undefined,
 			previousExpirationEpoch: BigInt(auditor.previous_expiration_epoch),
 		};
 	}

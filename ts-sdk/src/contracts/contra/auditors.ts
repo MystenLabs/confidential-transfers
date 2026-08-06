@@ -5,16 +5,16 @@ import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
-import * as group_ops from './deps/sui/group_ops.js';
 import * as encrypted_amount from './encrypted_amount.js';
 import * as nizk from './nizk.js';
+import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::auditors';
 export const Auditor = new MoveStruct({
 	name: `${$moduleName}::Auditor`,
 	fields: {
-		current_pk: bcs.option(group_ops.Element),
-		previous_pk: bcs.option(group_ops.Element),
+		current_pk: bcs.option(twisted_elgamal.PublicKey),
+		previous_pk: bcs.option(twisted_elgamal.PublicKey),
 		previous_expiration_epoch: bcs.u64(),
 	},
 });

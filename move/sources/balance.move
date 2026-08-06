@@ -15,7 +15,7 @@ use contra::{
         sum_commitments,
     },
     nizk::{DdhProof, ElGamalProof, verify_elgamal},
-    twisted_elgamal::{Self, Encryption}
+    twisted_elgamal::{Self, Encryption, PublicKey}
 };
 use sui::{
     balance::withdraw_funds_from_object,
@@ -143,7 +143,7 @@ public(package) fun merge_into<T>(self: &mut EncryptedBalance<T>, other: &mut En
 /// `pk`.
 public(package) fun merge_encrypted<T>(
     self: &mut EncryptedBalance<T>,
-    pk: &Element<G>,
+    pk: &PublicKey,
     coin: EncryptedCoin<T>,
 ) {
     let EncryptedCoin { amount } = coin;
@@ -164,7 +164,7 @@ public(package) fun merge_public<T>(self: &mut EncryptedBalance<T>, coin: Public
 /// return `value` as a `PublicCoin`; else return `none`. Aborts if `new_balance.pk() != sender_pk`.
 public(package) fun try_split_to_public<T>(
     self: &mut EncryptedBalance<T>,
-    sender_pk: &Element<G>,
+    sender_pk: &PublicKey,
     new_balance: WellFormedEncryptedAmount,
     value: u64,
     proof: &DdhProof,
@@ -193,7 +193,7 @@ public(package) fun try_split_to_public<T>(
 /// + 5 muls + 1 FS hash per transfer.
 public(package) fun try_split_batch<T>(
     self: &mut EncryptedBalance<T>,
-    sender_pk: &Element<G>,
+    sender_pk: &PublicKey,
     new_balance: WellFormedEncryptedAmount,
     receiver_amounts: vector<WellFormedEncryptedAmount>,
     total_sender_handle: Element<G>,
@@ -232,7 +232,7 @@ public(package) fun try_split_batch<T>(
 /// verified. Aborts if `new_balance.pk() != sender_pk`.
 public(package) fun try_update<T>(
     self: &mut EncryptedBalance<T>,
-    sender_pk: &Element<G>,
+    sender_pk: &PublicKey,
     new_balance: WellFormedEncryptedAmount,
     proof: &DdhProof,
     dst: vector<u8>,
@@ -253,8 +253,8 @@ public(package) fun try_update<T>(
 /// responsible for updating its own record of the active key.
 public(package) fun try_set_public_key<T>(
     self: &mut EncryptedBalance<T>,
-    old_pk: &Element<G>,
-    new_pk: &Element<G>,
+    old_pk: &PublicKey,
+    new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
     eq_proof: DdhProof,
     dst: vector<u8>,

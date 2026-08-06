@@ -6,9 +6,8 @@ module contra::auditors;
 use contra::{
     encrypted_amount::{U32LimbHandles, WellFormedEncryptedAmount, u32_limb_encryptions},
     nizk::{ElGamalProof, verify_elgamal},
-    twisted_elgamal::{PublicKey, public_key}
+    twisted_elgamal::PublicKey
 };
-use sui::{group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
@@ -28,8 +27,8 @@ const EUnexpectedAuditorData: u64 = 3;
 /// `previous_expiration_epoch` (inclusive), so transfers built against the old key just before a
 /// rotation still verify.
 public struct Auditor has store {
-    current_pk: Option<Element<G>>,
-    previous_pk: Option<Element<G>>,
+    current_pk: Option<PublicKey>,
+    previous_pk: Option<PublicKey>,
     previous_expiration_epoch: u64,
 }
 
@@ -55,11 +54,7 @@ public(package) fun unpack(self: AuditorPackage): (vector<U32LimbHandles>, ElGam
 }
 
 public(package) fun new(pk: Option<PublicKey>): Auditor {
-    Auditor {
-        current_pk: pk.map!(|k| *k.as_element()),
-        previous_pk: option::none(),
-        previous_expiration_epoch: 0,
-    }
+    Auditor { current_pk: pk, previous_pk: option::none(), previous_expiration_epoch: 0 }
 }
 
 /// Rotate the auditor key. The old `current_pk` (if any) becomes `previous_pk` and remains valid for
@@ -74,8 +69,8 @@ public(package) fun update(
     let previous_pk = auditor.current_pk;
     auditor.previous_pk = previous_pk;
     auditor.previous_expiration_epoch = expiration_epoch;
-    auditor.current_pk = new_pk.map!(|k| *k.as_element());
-    previous_pk.map!(|e| public_key(e))
+    auditor.current_pk = new_pk;
+    previous_pk
 }
 
 /// Verify a transfer's per-transfer auditor data against this auditor. `receiver_amounts` are the
@@ -88,7 +83,7 @@ public(package) fun verify_transfer(
     auditor_package: Option<AuditorPackage>,
     epoch: u64,
     dst: vector<u8>,
-): (vector<U32LimbHandles>, Option<Element<G>>) {
+): (vector<U32LimbHandles>, Option<PublicKey>) {
     if (auditor_package.is_none()) {
         assert!(auditor.current_pk.is_none(), EMissingAuditorData);
         return (vector[], option::none())

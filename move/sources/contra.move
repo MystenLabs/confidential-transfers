@@ -468,13 +468,7 @@ fun rekey_token_account_internal<T>(
     if (
         token_account
             .active
-            .try_set_public_key(
-                token_account.pk.as_element(),
-                new_pk.as_element(),
-                new_handles,
-                rekey_proof,
-                dst,
-            )
+            .try_set_public_key(&token_account.pk, &new_pk, new_handles, rekey_proof, dst)
     ) {
         token_account.pk = new_pk;
         events::emit_token_rekeyed<T>(owner, new_pk);
@@ -566,7 +560,8 @@ public fun batched_transfer<T>(
     // under `[receiver_pks..., sender.pk]`; verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
     receiver_amounts.push_back(new_balance);
-    receiver_pks.push_back(*sender.pk.as_element());
+    let mut receiver_pks = receiver_pks.map!(|pk| public_key(pk));
+    receiver_pks.push_back(sender.pk);
     let mut wfeas = encrypted_amount::batch_into_well_formed(
         receiver_amounts,
         sender.session_id.dst(DST_ELGAMAL),
@@ -589,7 +584,7 @@ public fun batched_transfer<T>(
     let withdrawn = sender
         .active
         .try_split_batch(
-            sender.pk.as_element(),
+            &sender.pk,
             new_balance,
             receiver_amounts,
             total_sender_handle,
@@ -612,7 +607,7 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_decryption_handles,
-            auditor_pk: auditor_pk.map!(|pk| public_key(pk)),
+            auditor_pk,
         }
     } else {
         withdrawn.destroy_none();
@@ -678,7 +673,7 @@ public fun add_to_batch<T>(
                 auditor_pk,
                 memo,
             );
-            receiver.pending.merge_encrypted(receiver_pk.as_element(), coin);
+            receiver.pending.merge_encrypted(&receiver_pk, coin);
             TransferBatch::Ok {
                 sender,
                 sender_pk,
@@ -770,10 +765,10 @@ fun try_update_active<T>(
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
         sid.dst(DST_RANGE_PROOF_16),
-        *self.pk.as_element(),
+        self.pk,
         new_balance_proof,
     );
-    self.active.try_update(self.pk.as_element(), new_balance, balance_proof, sid.dst(DST_DDH))
+    self.active.try_update(&self.pk, new_balance, balance_proof, sid.dst(DST_DDH))
 }
 
 /// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
@@ -868,13 +863,13 @@ fun try_unwrap_internal<T>(
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
         sid.dst(DST_RANGE_PROOF_16),
-        *account.pk.as_element(),
+        account.pk,
         new_balance_proof,
     );
     let withdrawn = account
         .active
         .try_split_to_public(
-            account.pk.as_element(),
+            &account.pk,
             new_balance,
             amount,
             balance_proof,

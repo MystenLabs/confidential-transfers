@@ -3,7 +3,7 @@
 
 module contra::nizk;
 
-use contra::twisted_elgamal::{Self, Encryption};
+use contra::twisted_elgamal::{Self, Encryption, PublicKey};
 use std::bcs;
 use sui::{
     group_ops::Element,
@@ -72,9 +72,10 @@ public(package) fun verify_ddh(
 public(package) fun verify_elgamal(
     proof: &ElGamalProof,
     dst: vector<u8>,
-    pk: &Element<G>,
+    pk: &PublicKey,
     encryptions: &vector<Encryption>,
 ): bool {
+    let pk = pk.as_element();
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
     // Can skip hashing fixed g, h (left as a defense in depth)
@@ -379,7 +380,7 @@ fun elgamal_proof_round_trip() {
         &scalar_from_u64(1234),
         &scalar_from_u64(5678),
     );
-    assert!(verify_elgamal(&proof, vector[], &pk, &encryptions));
+    assert!(verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(pk), &encryptions));
 }
 
 #[test]
@@ -402,16 +403,18 @@ fun elgamal_proof_batch_round_trip() {
         &scalar_from_u64(24680),
         &scalar_from_u64(13579),
     );
-    assert!(verify_elgamal(&proof, vector[], &pk, &encryptions));
+    assert!(verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(pk), &encryptions));
 
     // Tampering with any ciphertext breaks verification.
     let mut bad = encryptions;
     *bad.borrow_mut(2) = twisted_elgamal::encrypt_trivial_for_testing(1, &pk, 333);
-    assert!(!verify_elgamal(&proof, vector[], &pk, &bad));
+    assert!(!verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(pk), &bad));
 
     // A different key breaks verification.
     let other_pk = g_mul(&scalar_from_u64(99999), &twisted_elgamal::g());
-    assert!(!verify_elgamal(&proof, vector[], &other_pk, &encryptions));
+    assert!(
+        !verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(other_pk), &encryptions),
+    );
 }
 
 /// The challenge binds the whole batch, so a proof cannot be replayed against any other statement
@@ -438,17 +441,17 @@ fun elgamal_proof_statement_substitution_fails() {
     // A prefix of the proven batch.
     let mut prefix = encryptions;
     prefix.pop_back();
-    assert!(!verify_elgamal(&proof, vector[], &pk, &prefix));
+    assert!(!verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(pk), &prefix));
 
     // The proven batch extended by one more valid ciphertext.
     let mut extended = encryptions;
     extended.push_back(twisted_elgamal::encrypt_trivial_for_testing(9, &pk, 666));
-    assert!(!verify_elgamal(&proof, vector[], &pk, &extended));
+    assert!(!verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(pk), &extended));
 
     // The proven ciphertexts in a different order.
     let mut swapped = encryptions;
     swapped.swap(0, 1);
-    assert!(!verify_elgamal(&proof, vector[], &pk, &swapped));
+    assert!(!verify_elgamal(&proof, vector[], &twisted_elgamal::public_key(pk), &swapped));
 }
 
 /// Pin the Fiat-Shamir transcript layout of both proof types (not just the hash primitive, which
