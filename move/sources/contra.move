@@ -1014,7 +1014,7 @@ fun has_deposit_slot<T>(self: &TokenAccount<T>): bool {
 }
 
 /// 20-byte session_id for `account`'s `TokenAccount<T>`.
-public(package) fun session_id<T>(account: &Account): vector<u8> {
+fun session_id<T>(account: &Account): vector<u8> {
     // `derive_address` hashes the account ID together with the full `TokenAccountKey<T>` type
     // tag. The account ID is itself derived from the `AccountRegistry`, which is unique per
     // standalone deployment of contra.
@@ -1023,7 +1023,7 @@ public(package) fun session_id<T>(account: &Account): vector<u8> {
 }
 
 /// 21-byte Fiat-Shamir DST `session_id || protocol_id`.
-public(package) fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
+fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
     let mut bytes = session_id;
     bytes.push_back(protocol_id);
     bytes

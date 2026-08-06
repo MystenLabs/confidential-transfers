@@ -286,7 +286,7 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
 
 /// The two u32-limb commitments `[C_0 + 2^16 C_1, C_2 + 2^16 C_3]` regrouped from `ea`'s four
 /// u16-limb ciphertext components.
-public(package) fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
+fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
     let shift = scalar_from_u64(1 << 16);
     vector[
         g_add(ea.l0.ciphertext(), &g_mul(&shift, ea.l1.ciphertext())),
@@ -307,12 +307,7 @@ public(package) fun with_decryption_handles(
 }
 
 /// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.
-public(package) fun collapse_limbs(
-    l0: &Element<G>,
-    l1: &Element<G>,
-    l2: &Element<G>,
-    l3: &Element<G>,
-): Element<G> {
+fun collapse_limbs(l0: &Element<G>, l1: &Element<G>, l2: &Element<G>, l3: &Element<G>): Element<G> {
     g_add(
         l0,
         &g_add(

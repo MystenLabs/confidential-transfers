@@ -48,7 +48,7 @@ public fun new_auditor_package(
 }
 
 /// Consume `self` into its per-receiver handles and batched proof.
-public(package) fun unpack(self: AuditorPackage): (vector<DecryptionHandles>, ElGamalProof) {
+fun unpack(self: AuditorPackage): (vector<DecryptionHandles>, ElGamalProof) {
     let AuditorPackage { handles, proof } = self;
     (handles, proof)
 }
