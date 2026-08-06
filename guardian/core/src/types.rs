@@ -6,12 +6,9 @@
 use fastcrypto::ed25519::{Ed25519PublicKey, Ed25519Signature};
 use fastcrypto::groups::ristretto255::RistrettoPoint;
 use fastcrypto::pedersen::Blinding;
-use fastcrypto::serde_helpers::{BytesRepresentation, ToFromByteArray};
+use fastcrypto::serde_helpers::ToFromByteArray;
 use fastcrypto::twisted_elgamal::{Ciphertext, PrivateKey, PublicKey};
 use serde::{Deserialize, Serialize};
-
-/// The X25519 key clients seal to.
-pub type EncryptionPublicKey = BytesRepresentation<32>;
 
 /// Mirrors `sui::group_ops::Element<T>`, which BCS-encodes as a length-prefixed `Vec<u8>`
 /// rather than `RistrettoPoint`'s bare 32 bytes.
@@ -60,16 +57,16 @@ pub enum RequestPayload {
 
 /// The enclave's public keys as BCS-encoded into the attestation's `user_data`, 32 bytes of
 /// `signing_pk` then 32 of `enc_pk`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct EnclaveKeys {
     pub signing_pk: Ed25519PublicKey,
-    pub enc_pk: EncryptionPublicKey,
+    pub enc_pk: [u8; 32],
 }
 
 /// What a client asks the guardian to approve, where `x_a` opens both balances and
 /// `old_balance` is supplied so the enclave never solves a discrete log.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum EnclaveRequest {
+pub enum UnsealedRequest {
     TransferRequest {
         old_encrypted_balance: Ciphertext,
         new_encrypted_balance: Ciphertext,
@@ -99,17 +96,11 @@ pub struct Recipient {
     pub blinding: Blinding,
 }
 
-/// The enclave's reply: a signature over the rebuilt payload, or the reason it refused.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum EnclaveResponse {
-    Success {
-        signing_pk: Ed25519PublicKey,
-        signature: Box<Ed25519Signature>,
-    },
-    Error {
-        error: String,
-    },
+/// The enclave's signature over the payload, together with the key that produced it.
+#[derive(Debug, Serialize)]
+pub struct EnclaveResponse {
+    pub signing_pk: Ed25519PublicKey,
+    pub signature: Ed25519Signature,
 }
 
 #[cfg(test)]
@@ -168,7 +159,7 @@ mod tests {
     fn enclave_keys_match_move_user_data() {
         let keys = EnclaveKeys {
             signing_pk: Ed25519PublicKey::from_bytes(&[0xaa; 32]).unwrap(),
-            enc_pk: BytesRepresentation([0xbb; 32]),
+            enc_pk: [0xbb; 32],
         };
         let bytes = bcs::to_bytes(&keys).unwrap();
         assert_eq!(bytes.len(), 64);

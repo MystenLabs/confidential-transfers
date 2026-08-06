@@ -1,11 +1,19 @@
 [package]
 name = "contra-guardian-core"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
-fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "11fdc522f048b08ae6073a3f06162009a33f6f1b" }
-bcs = "0.1"
-serde = { version = "1", features = ["derive"] }
+fastcrypto.workspace = true
+anyhow.workspace = true
+bcs.workspace = true
+serde.workspace = true
 thiserror = "2"
+hpke = "0.12"
+rand = "0.8"
+
+[features]
+non-enclave-dev = ["testing"]
+# Exposes deterministic constructors for tests.
+testing = []

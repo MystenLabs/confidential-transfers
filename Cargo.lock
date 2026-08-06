@@ -584,8 +584,11 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 name = "contra-guardian-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bcs",
  "fastcrypto",
+ "hpke",
+ "rand",
  "serde",
  "thiserror 2.0.19",
 ]
@@ -600,8 +603,6 @@ dependencies = [
  "bcs",
  "contra-guardian-core",
  "fastcrypto",
- "hpke",
- "rand",
  "serde",
  "serde_json",
  "tokio",
@@ -917,7 +918,7 @@ dependencies = [
 [[package]]
 name = "fastcrypto"
 version = "0.1.11"
-source = "git+https://github.com/MystenLabs/fastcrypto?rev=11fdc522f048b08ae6073a3f06162009a33f6f1b#11fdc522f048b08ae6073a3f06162009a33f6f1b"
+source = "git+https://github.com/MystenLabs/fastcrypto?rev=d2589a2f2617493ac900f55e41a24aa6eb9506cc#d2589a2f2617493ac900f55e41a24aa6eb9506cc"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -977,7 +978,7 @@ dependencies = [
 [[package]]
 name = "fastcrypto-derive"
 version = "0.1.4"
-source = "git+https://github.com/MystenLabs/fastcrypto?rev=11fdc522f048b08ae6073a3f06162009a33f6f1b#11fdc522f048b08ae6073a3f06162009a33f6f1b"
+source = "git+https://github.com/MystenLabs/fastcrypto?rev=d2589a2f2617493ac900f55e41a24aa6eb9506cc#d2589a2f2617493ac900f55e41a24aa6eb9506cc"
 dependencies = [
  "quote",
  "syn 1.0.109",

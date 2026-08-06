@@ -6,19 +6,28 @@
 //! `guardian/README.md`).
 
 pub(crate) mod checks;
+pub mod sealing;
 pub mod types;
 
 use fastcrypto::ed25519::Ed25519KeyPair;
 use fastcrypto::traits::{KeyPair, Signer};
+use hpke::kem::X25519HkdfSha256;
+use hpke::{Kem, Serializable};
+#[cfg(any(test, feature = "testing"))]
+use rand::{rngs::StdRng, SeedableRng};
 use thiserror::Error;
 
-use crate::types::{EnclaveKeys, EnclaveRequest, EnclaveResponse, EncryptionPublicKey};
+use crate::types::{EnclaveKeys, EnclaveResponse, UnsealedRequest};
 
 pub type Result<T> = std::result::Result<T, GuardianError>;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GuardianError {
     #[error("transfer has no recipients")]
+    EmptyTransfer,
+    #[error("not a recipient")]
+    NotARecipient,
+    #[error("sealed body is not a BCS UnsealedRequest")]
     MalformedRequest,
     #[error("old balance does not open to the claimed value")]
     OldBalanceMismatch,
@@ -30,39 +39,71 @@ pub enum GuardianError {
     Overdraft,
 }
 
-/// An enclave's keys, where `signing_key` never leaves the enclave and `enc_pk` is the
-/// X25519 key clients seal requests to.
-pub struct Guardian {
-    keypair: Ed25519KeyPair,
-    enc_pk: EncryptionPublicKey,
+/// An enclave's signing key and encryption key, with the public halves cached.
+pub struct EnclaveKeyPair {
+    signing_sk: Ed25519KeyPair,
+    hpke_sk: <X25519HkdfSha256 as Kem>::PrivateKey,
+    keys: EnclaveKeys,
 }
 
-impl Guardian {
-    pub fn new(keypair: Ed25519KeyPair, enc_pk: EncryptionPublicKey) -> Self {
-        Self { keypair, enc_pk }
+impl EnclaveKeyPair {
+    /// Generate fresh keys at boot.
+    pub fn generate() -> Self {
+        let mut rng = rand::thread_rng();
+        let (hpke_sk, hpke_pk) = X25519HkdfSha256::gen_keypair(&mut rng);
+        let signing_sk = Ed25519KeyPair::generate(&mut rng);
+        let keys = EnclaveKeys {
+            signing_pk: signing_sk.public().clone(),
+            enc_pk: hpke_pk.to_bytes().into(),
+        };
+        Self {
+            signing_sk,
+            hpke_sk,
+            keys,
+        }
     }
 
-    /// The keys to embed in the attestation's `user_data`, laid out as
+    /// Deterministic keys for tests, derived from an all-zero seed.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn from_seed_for_testing() -> Self {
+        let mut rng = StdRng::from_seed([0; 32]);
+        let (hpke_sk, hpke_pk) = X25519HkdfSha256::gen_keypair(&mut rng);
+        let signing_sk = Ed25519KeyPair::generate(&mut rng);
+        let keys = EnclaveKeys {
+            signing_pk: signing_sk.public().clone(),
+            enc_pk: hpke_pk.to_bytes().into(),
+        };
+        Self {
+            signing_sk,
+            hpke_sk,
+            keys,
+        }
+    }
+
+    /// The public keys to embed in the attestation's `user_data`, laid out as
     /// `guardian::parse_user_data` expects.
-    pub fn keys(&self) -> EnclaveKeys {
-        EnclaveKeys {
-            signing_pk: self.keypair.public().clone(),
-            enc_pk: self.enc_pk.clone(),
-        }
+    pub fn keys(&self) -> &EnclaveKeys {
+        &self.keys
     }
 
-    /// Validate the request and sign the payload the chain will rebuild, answering a bad
-    /// request with the reason it was refused.
-    pub fn approve(&self, req: &EnclaveRequest) -> EnclaveResponse {
-        match checks::construct_payload(req) {
-            Ok(payload) => EnclaveResponse::Success {
-                signing_pk: self.keypair.public().clone(),
-                signature: Box::new(self.keypair.sign(&payload.to_bytes())),
-            },
-            Err(e) => EnclaveResponse::Error {
-                error: e.to_string(),
-            },
+    /// Open whichever envelope is addressed to this instance and decode the request.
+    pub fn unseal(&self, envelopes: &[sealing::SealedEnvelope]) -> Result<UnsealedRequest> {
+        for envelope in envelopes {
+            match sealing::open(&self.hpke_sk, envelope) {
+                Err(GuardianError::NotARecipient) => continue,
+                result => return result,
+            }
         }
+        Err(GuardianError::NotARecipient)
+    }
+
+    /// Verify the request and sign the payload the chain will rebuild.
+    pub fn verify_and_sign(&self, req: &UnsealedRequest) -> Result<EnclaveResponse> {
+        let payload = checks::verify_payload(req)?;
+        Ok(EnclaveResponse {
+            signing_pk: self.signing_sk.public().clone(),
+            signature: self.signing_sk.sign(&payload.to_bytes()),
+        })
     }
 }
 
@@ -70,12 +111,11 @@ impl Guardian {
 mod tests {
 
     use super::*;
-    use crate::types::{EnclaveRequest, Recipient};
+    use crate::types::{Recipient, UnsealedRequest};
     use fastcrypto::encoding::{Encoding, Hex};
     use fastcrypto::groups::ristretto255::{RistrettoPoint, RistrettoScalar};
     use fastcrypto::groups::GroupElement;
     use fastcrypto::pedersen::{Blinding, PedersenCommitment, H};
-    use fastcrypto::serde_helpers::BytesRepresentation;
     use fastcrypto::traits::ToFromBytes;
     use fastcrypto::twisted_elgamal::{Ciphertext, PrivateKey, PublicKey};
 
@@ -87,12 +127,10 @@ mod tests {
         let pk_a = PublicKey::from(&x_a);
         let pk_b = PublicKey::from(&PrivateKey::new(RistrettoScalar::from(67890u64)));
         let seed: Vec<u8> = (0u8..32).collect();
-        let guardian = Guardian::new(
-            Ed25519KeyPair::from_bytes(&seed).unwrap(),
-            BytesRepresentation([0xaa; 32]),
-        );
+        let mut keypair = EnclaveKeyPair::from_seed_for_testing();
+        keypair.signing_sk = Ed25519KeyPair::from_bytes(&seed).unwrap();
 
-        let req = EnclaveRequest::TransferRequest {
+        let req = UnsealedRequest::TransferRequest {
             old_encrypted_balance: Ciphertext::new(
                 PedersenCommitment(*H * RistrettoScalar::from(100u64)),
                 RistrettoPoint::zero(),
@@ -120,13 +158,12 @@ mod tests {
             old_balance: 100,
         };
 
-        let EnclaveResponse::Success {
+        let EnclaveResponse {
             signing_pk,
             signature,
-        } = guardian.approve(&req)
-        else {
-            panic!("valid request must be approved")
-        };
+        } = keypair
+            .verify_and_sign(&req)
+            .expect("valid request must be signed");
         assert_eq!(
             Hex::encode(signature.as_ref()),
             "7118ad4962063ce9f9bd3460ab0d361ec7ae3ade7571089c93ed0d5d6794ac3baec5c3546d4209bdfcf2c666cd4a36ac1b74a7e6f17ecbf99142380ad940c700"
@@ -141,13 +178,11 @@ mod tests {
     #[test]
     fn refuses_with_the_failed_checks_reason() {
         let seed: Vec<u8> = (0u8..32).collect();
-        let guardian = Guardian::new(
-            Ed25519KeyPair::from_bytes(&seed).unwrap(),
-            BytesRepresentation([0xaa; 32]),
-        );
+        let mut keypair = EnclaveKeyPair::from_seed_for_testing();
+        keypair.signing_sk = Ed25519KeyPair::from_bytes(&seed).unwrap();
         let x_a = PrivateKey::new(RistrettoScalar::from(12345u64));
         // Claims 200 while the balance ciphertext encrypts 100.
-        let req = EnclaveRequest::UnwrapRequest {
+        let req = UnsealedRequest::UnwrapRequest {
             old_encrypted_balance: Ciphertext::new(
                 PedersenCommitment(*H * RistrettoScalar::from(100u64)),
                 RistrettoPoint::zero(),
@@ -160,9 +195,13 @@ mod tests {
             x_a,
             old_balance: 200,
         };
-        let EnclaveResponse::Error { error } = guardian.approve(&req) else {
-            panic!("bad request must be refused")
-        };
-        assert_eq!(error, "old balance does not open to the claimed value");
+        let error = keypair
+            .verify_and_sign(&req)
+            .expect_err("bad request must be refused");
+        assert_eq!(error, GuardianError::OldBalanceMismatch);
+        assert_eq!(
+            error.to_string(),
+            "old balance does not open to the claimed value"
+        );
     }
 }

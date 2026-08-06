@@ -6,10 +6,10 @@
 use fastcrypto::groups::ristretto255::RistrettoScalar;
 use fastcrypto::twisted_elgamal::{Ciphertext, PrivateKey, PublicKey};
 
-use crate::types::{EnclaveRequest, RequestPayload};
+use crate::types::{RequestPayload, UnsealedRequest};
 use crate::{GuardianError, Result};
 
-/// Envelope for [EnclaveRequest] after validation.
+/// Envelope for [UnsealedRequest] after validation.
 #[derive(Debug)]
 pub struct VerifiedRequestPayload(RequestPayload);
 
@@ -21,9 +21,9 @@ impl VerifiedRequestPayload {
 }
 
 /// Validate a request and construct the payload.
-pub fn construct_payload(req: &EnclaveRequest) -> Result<VerifiedRequestPayload> {
+pub fn verify_payload(req: &UnsealedRequest) -> Result<VerifiedRequestPayload> {
     let payload = match req {
-        EnclaveRequest::TransferRequest {
+        UnsealedRequest::TransferRequest {
             old_encrypted_balance,
             new_encrypted_balance,
             recipients,
@@ -31,7 +31,7 @@ pub fn construct_payload(req: &EnclaveRequest) -> Result<VerifiedRequestPayload>
             old_balance,
         } => {
             if recipients.is_empty() {
-                return Err(GuardianError::MalformedRequest);
+                return Err(GuardianError::EmptyTransfer);
             }
 
             let total_txn_amount = recipients
@@ -72,7 +72,7 @@ pub fn construct_payload(req: &EnclaveRequest) -> Result<VerifiedRequestPayload>
                     .collect(),
             }
         }
-        EnclaveRequest::UnwrapRequest {
+        UnsealedRequest::UnwrapRequest {
             old_encrypted_balance,
             new_encrypted_balance,
             amount,
@@ -98,8 +98,8 @@ pub fn construct_payload(req: &EnclaveRequest) -> Result<VerifiedRequestPayload>
     Ok(VerifiedRequestPayload(payload))
 }
 
-/// Check both new and old balances open under `x_a` and `new_balance = old_balance - total_txn_amount`.
-/// Used by both transfer and unwrap.
+/// Check, for both transfers and unwraps, that the old and new balances open under `x_a`
+/// and `new_balance = old_balance - total_txn_amount`.
 fn check_balances(
     old_encrypted_balance: &Ciphertext,
     new_encrypted_balance: &Ciphertext,
@@ -169,10 +169,10 @@ mod tests {
     }
 
     impl Transfer {
-        fn build(self) -> EnclaveRequest {
+        fn build(self) -> UnsealedRequest {
             let x_a = sk(SENDER);
             let pk_a = PublicKey::from(&x_a);
-            EnclaveRequest::TransferRequest {
+            UnsealedRequest::TransferRequest {
                 old_encrypted_balance: encrypt(self.encrypted_old_balance, &pk_a, 1),
                 new_encrypted_balance: encrypt(self.encrypted_new_balance, &pk_a, 2),
                 recipients: self.recipients,
@@ -191,10 +191,10 @@ mod tests {
     }
 
     impl Unwrap {
-        fn build(self) -> EnclaveRequest {
+        fn build(self) -> UnsealedRequest {
             let x_a = sk(SENDER);
             let pk_a = PublicKey::from(&x_a);
-            EnclaveRequest::UnwrapRequest {
+            UnsealedRequest::UnwrapRequest {
                 old_encrypted_balance: encrypt(self.encrypted_old_balance, &pk_a, 1),
                 new_encrypted_balance: encrypt(self.encrypted_new_balance, &pk_a, 2),
                 amount: self.amount,
@@ -213,7 +213,7 @@ mod tests {
             encrypted_new_balance: 50,
             recipients: vec![recipient(RECIPIENT_1, 30, 3), recipient(RECIPIENT_2, 20, 4)],
         };
-        assert!(construct_payload(&req.build()).is_ok());
+        assert!(verify_payload(&req.build()).is_ok());
     }
 
     /// Sender holds 100, unwraps 40, keeps 60.
@@ -225,7 +225,7 @@ mod tests {
             encrypted_new_balance: 60,
             amount: 40,
         };
-        assert!(construct_payload(&req.build()).is_ok());
+        assert!(verify_payload(&req.build()).is_ok());
     }
 
     /// Unwrap the entire balance so new balance is 0 passes.
@@ -237,7 +237,7 @@ mod tests {
             encrypted_new_balance: 0,
             amount: 100,
         };
-        assert!(construct_payload(&req.build()).is_ok());
+        assert!(verify_payload(&req.build()).is_ok());
     }
 
     /// Claims 200 while the balance ciphertext encrypts 100.
@@ -250,7 +250,7 @@ mod tests {
             recipients: vec![recipient(RECIPIENT_1, 30, 3), recipient(RECIPIENT_2, 20, 4)],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::OldBalanceMismatch
         );
     }
@@ -265,7 +265,7 @@ mod tests {
             recipients: vec![recipient(RECIPIENT_1, 30, 3)],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::Overdraft
         );
     }
@@ -280,7 +280,7 @@ mod tests {
             recipients: vec![recipient(RECIPIENT_1, 30, 3), recipient(RECIPIENT_2, 20, 4)],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::NewBalanceMismatch
         );
     }
@@ -303,7 +303,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::AmountMismatch(1)
         );
     }
@@ -326,7 +326,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::AmountMismatch(0)
         );
     }
@@ -341,8 +341,8 @@ mod tests {
             recipients: vec![],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
-            GuardianError::MalformedRequest
+            verify_payload(&req.build()).unwrap_err(),
+            GuardianError::EmptyTransfer
         );
     }
 
@@ -361,7 +361,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::Overdraft
         );
     }
@@ -376,7 +376,7 @@ mod tests {
             amount: 40,
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::OldBalanceMismatch
         );
     }
@@ -391,7 +391,7 @@ mod tests {
             amount: 40,
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::NewBalanceMismatch
         );
     }
@@ -406,7 +406,7 @@ mod tests {
             amount: 200,
         };
         assert_eq!(
-            construct_payload(&req.build()).unwrap_err(),
+            verify_payload(&req.build()).unwrap_err(),
             GuardianError::Overdraft
         );
     }
