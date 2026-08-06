@@ -385,11 +385,11 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
 }
 
 /**
- * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: one `U32LimbHandles`
+ * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: one `DecryptionHandles`
  * (two u32-limb handles) per receiver plus one batched `ElGamalProof`. `option::some` wrapping
  * `auditors::new_auditor_package(handles, proof)` when `data` is provided, `option::none` when
  * auditing is disabled. The flattened `data.handles` (two per receiver, in receiver order) are grouped
- * into per-receiver pairs on-chain by `decode::u32_limb_handles`.
+ * into per-receiver pairs on-chain by `decode::decryption_handles`.
  */
 export function buildAuditorPackageOption(
 	packageId: string,
@@ -405,7 +405,7 @@ export function buildAuditorPackageOption(
 					auditorsContracts.newAuditorPackage({
 						package: packageId,
 						arguments: {
-							handles: decodeContracts.u32LimbHandles({
+							handles: decodeContracts.decryptionHandles({
 								package: packageId,
 								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
 							}),

@@ -21,7 +21,7 @@ export const Auditor = new MoveStruct({
 export const AuditorPackage = new MoveStruct({
 	name: `${$moduleName}::AuditorPackage`,
 	fields: {
-		handles: bcs.vector(encrypted_amount.U32LimbHandles),
+		handles: bcs.vector(encrypted_amount.DecryptionHandles),
 		proof: nizk.ElGamalProof,
 	},
 });

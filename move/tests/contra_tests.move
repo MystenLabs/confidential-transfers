@@ -846,14 +846,14 @@ fun total_consistency_proof_for_testing(
 /// Build the flattened per-transfer auditor handles and the batched auditor `ElGamalProof` for a
 /// batch of limb-0-only receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`).
 /// Each amount contributes two u32-limb auditor encryptions matching
-/// `encrypted_amount::u32_limb_encryptions`: the low half `(r*g + v*h, r*aud_pk)` and the high
+/// `encrypted_amount::with_decryption_handles`: the low half `(r*g + v*h, r*aud_pk)` and the high
 /// half `(identity, identity)` (its committed value and blinding are both zero).
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
     auditor_pk: &Element<G>,
     dst: vector<u8>,
-): (vector<encrypted_amount::U32LimbHandles>, nizk::ElGamalProof) {
+): (vector<encrypted_amount::DecryptionHandles>, nizk::ElGamalProof) {
     let mut handles = vector[];
     let mut encryptions = vector[];
     let mut messages = vector[];
@@ -861,7 +861,7 @@ fun build_auditor_data(
     values.length().do!(|i| {
         let low = encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]);
         handles.push_back(
-            encrypted_amount::new_u32_limb_handles(vector[
+            encrypted_amount::new_decryption_handles(vector[
                 *low.decryption_handle(),
                 ristretto255::g_identity(),
             ]),

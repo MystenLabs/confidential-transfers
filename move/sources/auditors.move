@@ -4,7 +4,7 @@
 module contra::auditors;
 
 use contra::{
-    encrypted_amount::{U32LimbHandles, WellFormedEncryptedAmount, u32_limb_encryptions},
+    encrypted_amount::{DecryptionHandles, WellFormedEncryptedAmount, with_decryption_handles},
     nizk::{ElGamalProof, verify_elgamal},
     twisted_elgamal::PublicKey
 };
@@ -34,21 +34,21 @@ public struct Auditor has store {
 
 /// The per-transfer auditor data a sender attaches to a `batched_transfer`.
 public struct AuditorPackage has drop {
-    handles: vector<U32LimbHandles>,
+    handles: vector<DecryptionHandles>,
     proof: ElGamalProof,
 }
 
 // === Functions ===
 
 public fun new_auditor_package(
-    handles: vector<U32LimbHandles>,
+    handles: vector<DecryptionHandles>,
     proof: ElGamalProof,
 ): AuditorPackage {
     AuditorPackage { handles, proof }
 }
 
 /// Consume `self` into its per-receiver handles and batched proof.
-public(package) fun unpack(self: AuditorPackage): (vector<U32LimbHandles>, ElGamalProof) {
+public(package) fun unpack(self: AuditorPackage): (vector<DecryptionHandles>, ElGamalProof) {
     let AuditorPackage { handles, proof } = self;
     (handles, proof)
 }
@@ -83,7 +83,7 @@ public(package) fun verify_transfer(
     auditor_package: Option<AuditorPackage>,
     epoch: u64,
     dst: vector<u8>,
-): (vector<U32LimbHandles>, Option<PublicKey>) {
+): (vector<DecryptionHandles>, Option<PublicKey>) {
     if (auditor_package.is_none()) {
         assert!(auditor.current_pk.is_none(), EMissingAuditorData);
         return (vector[], option::none())
@@ -94,7 +94,9 @@ public(package) fun verify_transfer(
         EUnexpectedAuditorData,
     );
     let (handles, proof) = auditor_package.destroy_some().unpack();
-    let encryptions = u32_limb_encryptions(receiver_amounts, &handles);
+    let encryptions = receiver_amounts
+        .zip_map_ref!(&handles, |wfea, dh| wfea.with_decryption_handles(dh))
+        .flatten();
     // Accept under the current key, or the previous key while in its grace window.
     if (auditor.current_pk.is_some_and!(|pk| proof.verify_elgamal(dst, pk, &encryptions))) {
         return (handles, auditor.current_pk)

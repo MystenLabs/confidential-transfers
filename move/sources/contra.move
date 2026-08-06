@@ -73,7 +73,7 @@ use contra::{
     encrypted_amount::{
         Self,
         EncryptedAmount,
-        U32LimbHandles,
+        DecryptionHandles,
         WellFormedEncryptedAmount,
         WellFormedProof,
     },
@@ -196,7 +196,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_decryption_handles: vector<U32LimbHandles>,
+        auditor_decryption_handles: vector<DecryptionHandles>,
         auditor_pk: Option<PublicKey>,
     },
 }

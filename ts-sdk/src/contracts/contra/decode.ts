@@ -30,14 +30,14 @@ export function gVector(options: GVectorOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface U32LimbHandlesArguments {
+export interface DecryptionHandlesArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
-export interface U32LimbHandlesOptions {
+export interface DecryptionHandlesOptions {
 	package?: string;
-	arguments: U32LimbHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+	arguments: DecryptionHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
-export function u32LimbHandles(options: U32LimbHandlesOptions) {
+export function decryptionHandles(options: DecryptionHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
 	const parameterNames = ['parts'];
@@ -45,7 +45,7 @@ export function u32LimbHandles(options: U32LimbHandlesOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'decode',
-			function: 'u32_limb_handles',
+			function: 'decryption_handles',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

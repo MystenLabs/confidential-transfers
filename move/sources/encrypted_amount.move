@@ -39,7 +39,7 @@ const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 const EWellFormedProofFailed: u64 = 4;
 const ERangeProofRequired: u64 = 5;
-const EMalformedU32LimbHandles: u64 = 6;
+const EMalformedDecryptionHandles: u64 = 6;
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -77,7 +77,7 @@ public struct WellFormedProof has drop {
 /// The two u32-limb auditor decryption handles for one transferred amount (`D̃_0`, `D̃_1`). Paired
 /// with the amount's two `ciphertexts_as_u32_limbs` commitments, they let an auditor recover the
 /// amount off-chain.
-public struct U32LimbHandles has copy, drop, store {
+public struct DecryptionHandles has copy, drop, store {
     handles: vector<Element<G>>,
 }
 
@@ -113,9 +113,9 @@ public fun new_well_formed_proof(
 
 /// Wrap one amount's two u32-limb auditor decryption handles. Aborts unless exactly `U32_LIMBS`
 /// handles are given.
-public fun new_u32_limb_handles(handles: vector<Element<G>>): U32LimbHandles {
-    assert!(handles.length() == U32_LIMBS, EMalformedU32LimbHandles);
-    U32LimbHandles { handles }
+public fun new_decryption_handles(handles: vector<Element<G>>): DecryptionHandles {
+    assert!(handles.length() == U32_LIMBS, EMalformedDecryptionHandles);
+    DecryptionHandles { handles }
 }
 
 /// Check `proof` against `amounts` under `pks`: every limb of every amount is u16 (range proof,
@@ -294,18 +294,16 @@ public(package) fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Eleme
     ]
 }
 
-/// Pair each amount's two `ciphertexts_as_u32_limbs` with the matching amount's `U32LimbHandles`, in
-/// amount order, into `U32_LIMBS * amounts.length()` `Encryption`s. Aborts unless the batch lengths
-/// match.
-public(package) fun u32_limb_encryptions(
-    amounts: &vector<WellFormedEncryptedAmount>,
-    handles: &vector<U32LimbHandles>,
+/// Pair this amount's two `ciphertexts_as_u32_limbs` commitments with `handles`' two handles, in
+/// limb order, into the amount's two u32-limb auditor `Encryption`s.
+public(package) fun with_decryption_handles(
+    self: &WellFormedEncryptedAmount,
+    handles: &DecryptionHandles,
 ): vector<Encryption> {
-    assert!(handles.length() == amounts.length(), EMismatchedBatchLength);
-    amounts.zip_map_ref!(handles, |wfea, u32_handles| {
-        let commitments = wfea.amount.ciphertexts_as_u32_limbs();
-        commitments.zip_map!(u32_handles.handles, |c, h| twisted_elgamal::new(c, h))
-    }).flatten()
+    self
+        .amount
+        .ciphertexts_as_u32_limbs()
+        .zip_map!(handles.handles, |c, h| twisted_elgamal::new(c, h))
 }
 
 /// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.

@@ -3,7 +3,7 @@
 
 module contra::events;
 
-use contra::{encrypted_amount::{EncryptedAmount, U32LimbHandles}, twisted_elgamal::PublicKey};
+use contra::{encrypted_amount::{EncryptedAmount, DecryptionHandles}, twisted_elgamal::PublicKey};
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -70,7 +70,7 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_decryption_handles: Option<U32LimbHandles>,
+    auditor_decryption_handles: Option<DecryptionHandles>,
     auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 }
@@ -170,7 +170,7 @@ public(package) fun emit_transfer<T>(
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_decryption_handles: Option<U32LimbHandles>,
+    auditor_decryption_handles: Option<DecryptionHandles>,
     auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 ) {
