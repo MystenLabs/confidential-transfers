@@ -25,7 +25,7 @@ On-chain counterpart: `../move/sources/guardian.move`.
 ## Registration
 
 - The token holds `Option<GuardianPolicy>`: `Some` enables the guardian, `None`
-  disables it — no `enabled` flag needed.
+  disables it.
 - Issuer (`ManagementCap`) sets / unsets the policy, and updates it in one call —
   each of `pcrs` / `min_version` / `operator` is an `Option`, `None` a no-op.
 - The operator (a single address) runs one serving endpoint (`url`) backed by
@@ -135,8 +135,9 @@ GuardianEnclaveKey {
 
 ## Transfer Flow
 
-- Alice calls the enclave with an `EnclaveRequest` encrypted under all `enc_pk`s.
-  Ciphertexts are collapses of the onchain 4-limb structures.
+- Alice posts a BCS `SealedRequest` — a version byte plus the `UnsealedRequest` below,
+  HPKE-sealed once per live `enc_pk`. Ciphertexts are collapses of the onchain 4-limb
+  structures.
 
 ```
 {
@@ -161,8 +162,7 @@ GuardianEnclaveKey {
 ```
 derive sender_pk = x_a * G
 
-checks run cheapest first, so a bad request is rejected before the per-recipient
-curve operations:
+checks, cheapest first:
 
 total_txn_amount = sum of recipients[i].amount           // checked u64 add
 new_balance = old_balance - total_txn_amount
@@ -195,8 +195,7 @@ Unwrap {
 ```
 
 - Returns an `EnclaveResponse`: `{ signing_pk, signature }` on success, or a
-  `{ error }` naming the failed check — the sender already knows every value in its
-  own request, so the reason leaks nothing and saves a debugging round trip.
+  `{ error }` naming the failed check.
 - Wallet sends onchain:
 
 ```move
@@ -222,14 +221,13 @@ in `pending`, so they don't invalidate an in-flight signed request.)
 
 ## Code layout
 
-- `core/` — wire types, plaintext checks, response signing. No Nitro, no networking.
-- `enclave/` — the binary: key generation at boot, `/attestation`, `/health` +
-  `/ready`, and `/approve` for sealed requests.
+- `core/` — wire types, plaintext checks, HPKE sealing, keys, and response signing.
+- `enclave/` — the binary: `/attestation`, `/health` + `/ready`, and `/approve` for
+  sealed requests.
 
 Deployment lives in `sui-operations` (`contra-guardian-enclave`, and
-`contra-guardian-proxy` for the ALB + Envoy config). There is no proxy crate here:
-routing is round robin plus a retry when an instance answers 422 ("not a recipient"),
-which is Envoy config, not app logic.
+`contra-guardian-proxy` for the ALB + Envoy config). Routing is round robin plus a
+retry when an instance answers 422 ("not a recipient"), configured in Envoy.
 
 ## Test
 
@@ -238,11 +236,10 @@ cargo test --workspace --all-features   # or: --features contra-guardian-enclave
 cargo fmt && cargo xclippy              # lint
 ```
 
-`--features non-enclave-dev` stubs the NSM attestation call so the guardian runs
-outside an enclave; everything else — HPKE unseal, checks, signing — is the
-production path, and the binary warns once so a dev build is never mistaken for a
-real enclave. `enclave/tests/e2e.rs` serves a guardian in-process and verifies each
-response against the payload the chain would rebuild.
+`non-enclave-dev` stubs the NSM attestation call so the guardian runs outside an
+enclave; everything else — HPKE unseal, checks, signing — is the production path.
+`enclave/tests/e2e.rs` serves a guardian in-process and verifies each response
+against the payload the chain would rebuild.
 
 ## Local fleet
 
@@ -257,5 +254,5 @@ workflow does in production. Set `PACKAGE_ID`, `TOKEN_ID`, `TOKEN_TYPE` (plus
 ```
 
 State lives in `.fleet/`. Registration uses `contra::register_guardian_enclave_for_dev`
-because a mock attestation cannot pass `sui::nitro_attestation`; everything after
+(a mock attestation cannot pass `sui::nitro_attestation`); everything after
 registration is the production path.
