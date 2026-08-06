@@ -1188,8 +1188,10 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
+    // Pause the token for the rotation; a successful re-key resumes deposits.
+    contra::set_accepts_encrypted_deposits<TestCurrency>(&mut account_1, &auth, false);
 
-    // Bad proof: soft-fails, leaves the token stale (still under pk_old), no abort.
+    // Bad proof: soft-fails, leaves the token stale (still under pk_old) and paused, no abort.
     contra::try_rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
@@ -1199,8 +1201,9 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     );
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
+    assert!(!account_1.accepts_deposits<TestCurrency>());
 
-    // Good proof: succeeds, token caught up to the account key.
+    // Good proof: succeeds, token caught up to the account key and deposits resume.
     contra::try_rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
@@ -1210,6 +1213,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     );
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
+    assert!(account_1.accepts_deposits<TestCurrency>());
 
     unit_test::destroy(account_1);
     unit_test::destroy(acc_reg);

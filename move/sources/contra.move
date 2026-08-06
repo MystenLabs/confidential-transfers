@@ -450,9 +450,11 @@ public fun rekey_token_account<T>(
 }
 
 /// Like `rekey_token_account` but soft-fails instead of aborting if the re-key proof does not verify
-/// (e.g. a deposit raced the caller's read). In that case it emits `TryTokenRekeyFailedEvent` and
-/// leaves the token unchanged for a retry (detectable off-chain via the event or the token's key).
-/// Still aborts on an identity `new_pk` or unmerged pending deposits.
+/// (e.g. a deposit raced the caller's read). The re-key flow pauses the token first (`accepts_deposits
+/// = false`) so no deposit lands under the old key mid-rotation; on success this re-keys the token and
+/// resumes deposits (`accepts_deposits = true`), now under the new key. On failure it emits
+/// `TryTokenRekeyFailedEvent` and leaves the token unchanged (still paused) for a retry. Still aborts
+/// on an identity `new_pk` or unmerged pending deposits.
 public fun try_rekey_token_account<T>(
     account: &mut Account,
     auth: &Auth<T>,
@@ -463,7 +465,9 @@ public fun try_rekey_token_account<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (!rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
+    if (rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
+        account[TokenAccountKey<T>()].accepts_deposits = true;
+    } else {
         events::emit_try_token_rekey_failed<T>(owner);
     };
 }

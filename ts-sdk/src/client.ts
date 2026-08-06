@@ -807,7 +807,9 @@ export class ContraClient {
 	 * Pause new encrypted deposits to `tokenAccount`. Subsequent `transfer` /
 	 * `transferBatch` calls targeting this account abort on the receiver-side
 	 * `add_to_batch` step (the sender-side balance is not consumed). Required
-	 * before `rotateKeyAndUnpauseAccount`; the rotation PTB unpauses deposits at the end.
+	 * before re-keying: a successful `tryRekeyTokenAccount` / `tryRekeyTokenAccounts` resumes deposits
+	 * (unpauses) at the end, now under the new key; a token whose re-key soft-fails stays paused for a
+	 * retry.
 	 *
 	 * @example
 	 * ```ts
