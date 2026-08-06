@@ -1008,7 +1008,7 @@ fun has_token<T>(account: &Account): bool {
 /// `merge_public` bump, so the cap compared against is `max_upper_bound() - 1` rather than
 /// `max_upper_bound()`.
 fun has_deposit_slot<T>(self: &TokenAccount<T>): bool {
-    let cap = balance::max_upper_bound_minus_1();
+    let cap = balance::max_upper_bound() - 1;
     let used = self.active.upper_bound() + self.pending.upper_bound();
     cap > used
 }

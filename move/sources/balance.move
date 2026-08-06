@@ -116,11 +116,6 @@ public(package) fun max_upper_bound(): u16 {
     0xFFFF
 }
 
-/// `max_upper_bound() - 1`.
-public(package) fun max_upper_bound_minus_1(): u16 {
-    0xFFFE
-}
-
 /// Whether `self` is in its post-construction state (nothing merged in).
 public(package) fun is_empty<T>(self: &EncryptedBalance<T>): bool {
     self.upper_bound == 0

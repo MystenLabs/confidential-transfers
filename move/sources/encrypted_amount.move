@@ -284,16 +284,6 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
     collapse_limbs(&c0, &c1, &c2, &c3)
 }
 
-/// The two u32-limb commitments `[C_0 + 2^16 C_1, C_2 + 2^16 C_3]` regrouped from `ea`'s four
-/// u16-limb ciphertext components.
-fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
-    let shift = scalar_from_u64(1 << 16);
-    vector[
-        g_add(ea.l0.ciphertext(), &g_mul(&shift, ea.l1.ciphertext())),
-        g_add(ea.l2.ciphertext(), &g_mul(&shift, ea.l3.ciphertext())),
-    ]
-}
-
 /// Pair this amount's two `ciphertexts_as_u32_limbs` commitments with `handles`' two handles, in
 /// limb order, into the amount's two u32-limb auditor `Encryption`s.
 public(package) fun with_decryption_handles(
@@ -304,6 +294,16 @@ public(package) fun with_decryption_handles(
         .amount
         .ciphertexts_as_u32_limbs()
         .zip_map!(handles.handles, |c, h| twisted_elgamal::new(c, h))
+}
+
+/// The two u32-limb commitments `[C_0 + 2^16 C_1, C_2 + 2^16 C_3]` regrouped from `ea`'s four
+/// u16-limb ciphertext components.
+fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
+    let shift = scalar_from_u64(1 << 16);
+    vector[
+        g_add(ea.l0.ciphertext(), &g_mul(&shift, ea.l1.ciphertext())),
+        g_add(ea.l2.ciphertext(), &g_mul(&shift, ea.l3.ciphertext())),
+    ]
 }
 
 /// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.

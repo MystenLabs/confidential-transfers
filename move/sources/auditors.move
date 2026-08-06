@@ -47,12 +47,6 @@ public fun new_auditor_package(
     AuditorPackage { handles, proof }
 }
 
-/// Consume `self` into its per-receiver handles and batched proof.
-fun unpack(self: AuditorPackage): (vector<DecryptionHandles>, ElGamalProof) {
-    let AuditorPackage { handles, proof } = self;
-    (handles, proof)
-}
-
 public(package) fun new(pk: Option<PublicKey>): Auditor {
     Auditor { current_pk: pk, previous_pk: option::none(), previous_expiration_epoch: 0 }
 }
@@ -108,4 +102,10 @@ public(package) fun verify_transfer(
         return (handles, auditor.previous_pk)
     };
     abort EAuditorProofFailed
+}
+
+/// Consume `self` into its per-receiver handles and batched proof.
+fun unpack(self: AuditorPackage): (vector<DecryptionHandles>, ElGamalProof) {
+    let AuditorPackage { handles, proof } = self;
+    (handles, proof)
 }
