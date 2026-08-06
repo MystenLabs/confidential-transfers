@@ -6,7 +6,7 @@ module contra::auditors;
 use contra::{
     encrypted_amount::{U32LimbHandles, WellFormedEncryptedAmount, u32_limb_encryptions},
     nizk::{ElGamalProof, verify_elgamal},
-    twisted_elgamal::PublicKey
+    twisted_elgamal::{PublicKey, public_key}
 };
 use sui::{group_ops::Element, ristretto255::G};
 
@@ -70,12 +70,12 @@ public(package) fun update(
     auditor: &mut Auditor,
     new_pk: Option<PublicKey>,
     expiration_epoch: u64,
-): Option<Element<G>> {
+): Option<PublicKey> {
     let previous_pk = auditor.current_pk;
     auditor.previous_pk = previous_pk;
     auditor.previous_expiration_epoch = expiration_epoch;
     auditor.current_pk = new_pk.map!(|k| *k.as_element());
-    previous_pk
+    previous_pk.map!(|e| public_key(e))
 }
 
 /// Verify a transfer's per-transfer auditor data against this auditor. `receiver_amounts` are the

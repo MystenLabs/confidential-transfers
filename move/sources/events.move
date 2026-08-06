@@ -3,7 +3,7 @@
 
 module contra::events;
 
-use contra::encrypted_amount::{EncryptedAmount, U32LimbHandles};
+use contra::{encrypted_amount::{EncryptedAmount, U32LimbHandles}, twisted_elgamal::PublicKey};
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -17,7 +17,7 @@ public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop
 /// A new token account is registered for an account for a token type `T` with a public key `pk`.
 public struct NewRegistrationEvent<phantom T> has copy, drop {
     owner: address,
-    pk: Element<G>,
+    pk: PublicKey,
 }
 
 /// An account set its optional default key (used by `register_with_default_pk`) to `new_pk`, or
@@ -25,13 +25,13 @@ public struct NewRegistrationEvent<phantom T> has copy, drop {
 /// by a token type.
 public struct DefaultPkRotatedEvent has copy, drop {
     owner: address,
-    new_pk: Option<Element<G>>,
+    new_pk: Option<PublicKey>,
 }
 
 /// Token `T`'s balance was re-keyed to `new_pk` (an explicit new key, independent of other tokens).
 public struct TokenRekeyedEvent<phantom T> has copy, drop {
     owner: address,
-    new_pk: Element<G>,
+    new_pk: PublicKey,
 }
 
 /// Emitted when `try_rekey_token_account` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
@@ -64,14 +64,14 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
-    sender_pk: Element<G>,
+    sender_pk: PublicKey,
     seed_point: Element<G>,
     batch_index: u8,
     receiver: address,
-    receiver_pk: Element<G>,
+    receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
     auditor_decryption_handles: Option<U32LimbHandles>,
-    auditor_pk: Option<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 }
 
@@ -127,8 +127,8 @@ public struct AccountUnfreezeEvent<phantom T> has copy, drop {
 /// new key (`none` if auditing was disabled); `previous_pk` is the outgoing key, valid for transfers
 /// through `previous_expiration_epoch`.
 public struct UpdateAuditorsEvent<phantom T> has copy, drop {
-    current_pk: Option<Element<G>>,
-    previous_pk: Option<Element<G>>,
+    current_pk: Option<PublicKey>,
+    previous_pk: Option<PublicKey>,
     previous_expiration_epoch: u64,
 }
 
@@ -142,15 +142,15 @@ public(package) fun emit_policy_update<T, W>(permissioned_operations: vector<u8>
     event::emit(PolicyUpdateEvent<T, W>(permissioned_operations));
 }
 
-public(package) fun emit_new_registration<T>(owner: address, pk: Element<G>) {
+public(package) fun emit_new_registration<T>(owner: address, pk: PublicKey) {
     event::emit(NewRegistrationEvent<T> { owner, pk });
 }
 
-public(package) fun emit_default_pk_rotated(owner: address, new_pk: Option<Element<G>>) {
+public(package) fun emit_default_pk_rotated(owner: address, new_pk: Option<PublicKey>) {
     event::emit(DefaultPkRotatedEvent { owner, new_pk });
 }
 
-public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: Element<G>) {
+public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: PublicKey) {
     event::emit(TokenRekeyedEvent<T> { owner, new_pk });
 }
 
@@ -164,14 +164,14 @@ public(package) fun emit_wrap<T>(receiver: address, amount: u64, memo: vector<u8
 
 public(package) fun emit_transfer<T>(
     sender: address,
-    sender_pk: Element<G>,
+    sender_pk: PublicKey,
     seed_point: Element<G>,
     batch_index: u8,
     receiver: address,
-    receiver_pk: Element<G>,
+    receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
     auditor_decryption_handles: Option<U32LimbHandles>,
-    auditor_pk: Option<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 ) {
     event::emit(TransferEvent<T> {
@@ -229,8 +229,8 @@ public(package) fun emit_account_unfreeze<T>(account: address) {
 }
 
 public(package) fun emit_update_auditors<T>(
-    current_pk: Option<Element<G>>,
-    previous_pk: Option<Element<G>>,
+    current_pk: Option<PublicKey>,
+    previous_pk: Option<PublicKey>,
     previous_expiration_epoch: u64,
 ) {
     event::emit(UpdateAuditorsEvent<T> { current_pk, previous_pk, previous_expiration_epoch });

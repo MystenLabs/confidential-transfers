@@ -349,7 +349,7 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
 /// registered. The caller is responsible for any authorization.
 fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vector<u8>) {
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
-    events::emit_new_registration<T>(account.owner, *pk.as_element());
+    events::emit_new_registration<T>(account.owner, pk);
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
@@ -404,7 +404,7 @@ public fun set_default_pk_as_object(
 
 fun set_default_pk_internal(account: &mut Account, default_pk: Option<PublicKey>) {
     account.default_pk = default_pk;
-    events::emit_default_pk_rotated(account.owner, default_pk.map!(|pk| *pk.as_element()));
+    events::emit_default_pk_rotated(account.owner, default_pk);
 }
 
 /// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
@@ -477,7 +477,7 @@ fun rekey_token_account_internal<T>(
             )
     ) {
         token_account.pk = new_pk;
-        events::emit_token_rekeyed<T>(owner, *new_pk.as_element());
+        events::emit_token_rekeyed<T>(owner, new_pk);
         true
     } else {
         false
@@ -668,14 +668,14 @@ public fun add_to_batch<T>(
 
             events::emit_transfer<T>(
                 sender,
-                *sender_pk.as_element(),
+                sender_pk,
                 seed_point,
                 next_index,
                 receiver_addr,
-                *receiver_pk.as_element(),
+                receiver_pk,
                 *coin.amount().amount(),
                 receiver_auditor_decryption_handles,
-                auditor_pk.map!(|pk| *pk.as_element()),
+                auditor_pk,
                 memo,
             );
             receiver.pending.merge_encrypted(receiver_pk.as_element(), coin);
@@ -998,9 +998,8 @@ public fun update_auditor<T>(
     new_pk: Option<PublicKey>,
     expiration_epoch: u64,
 ) {
-    let current_pk = new_pk.map!(|pk| *pk.as_element());
     let previous_pk = ct.auditor.update(new_pk, expiration_epoch);
-    events::emit_update_auditors<T>(current_pk, previous_pk, expiration_epoch);
+    events::emit_update_auditors<T>(new_pk, previous_pk, expiration_epoch);
 }
 
 // === Helpers ===

@@ -6,6 +6,7 @@ import { bcs } from '@mysten/sui/bcs';
 import { MoveStruct, MoveTuple } from '../utils/index.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as encrypted_amount from './encrypted_amount.js';
+import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::events';
 export const NewConfidentialTokenEvent = new MoveTuple({
@@ -20,21 +21,21 @@ export const NewRegistrationEvent = new MoveStruct({
 	name: `${$moduleName}::NewRegistrationEvent<phantom T>`,
 	fields: {
 		owner: bcs.Address,
-		pk: group_ops.Element,
+		pk: twisted_elgamal.PublicKey,
 	},
 });
 export const DefaultPkRotatedEvent = new MoveStruct({
 	name: `${$moduleName}::DefaultPkRotatedEvent`,
 	fields: {
 		owner: bcs.Address,
-		new_pk: bcs.option(group_ops.Element),
+		new_pk: bcs.option(twisted_elgamal.PublicKey),
 	},
 });
 export const TokenRekeyedEvent = new MoveStruct({
 	name: `${$moduleName}::TokenRekeyedEvent<phantom T>`,
 	fields: {
 		owner: bcs.Address,
-		new_pk: group_ops.Element,
+		new_pk: twisted_elgamal.PublicKey,
 	},
 });
 export const TryTokenRekeyFailedEvent = new MoveStruct({
@@ -55,14 +56,14 @@ export const TransferEvent = new MoveStruct({
 	name: `${$moduleName}::TransferEvent<phantom T>`,
 	fields: {
 		sender: bcs.Address,
-		sender_pk: group_ops.Element,
+		sender_pk: twisted_elgamal.PublicKey,
 		seed_point: group_ops.Element,
 		batch_index: bcs.u8(),
 		receiver: bcs.Address,
-		receiver_pk: group_ops.Element,
+		receiver_pk: twisted_elgamal.PublicKey,
 		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
 		auditor_decryption_handles: bcs.option(encrypted_amount.U32LimbHandles),
-		auditor_pk: bcs.option(group_ops.Element),
+		auditor_pk: bcs.option(twisted_elgamal.PublicKey),
 		memo: bcs.vector(bcs.u8()),
 	},
 });
@@ -124,8 +125,8 @@ export const AccountUnfreezeEvent = new MoveStruct({
 export const UpdateAuditorsEvent = new MoveStruct({
 	name: `${$moduleName}::UpdateAuditorsEvent<phantom T>`,
 	fields: {
-		current_pk: bcs.option(group_ops.Element),
-		previous_pk: bcs.option(group_ops.Element),
+		current_pk: bcs.option(twisted_elgamal.PublicKey),
+		previous_pk: bcs.option(twisted_elgamal.PublicKey),
 		previous_expiration_epoch: bcs.u64(),
 	},
 });
