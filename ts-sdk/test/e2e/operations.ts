@@ -168,8 +168,7 @@ export function createOperations(
 
 	/**
 	 * Fund `count` fresh addresses from the issuer in one PTB, then have each user create+share its
-	 * own `Account` (no `TokenAccount`s yet). Account creation is restricted to the owner, so it can't
-	 * be folded into the issuer tx — each user signs its own creation (run in parallel).
+	 * own `Account` (no `TokenAccount`s yet). Each user signs its own creation (run in parallel).
 	 */
 	async function setupFreshAccounts(count: number): Promise<FreshUser[]> {
 		const users: FreshUser[] = Array.from({ length: count }, () => {

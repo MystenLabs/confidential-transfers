@@ -108,6 +108,7 @@ export class Gated {
 			arguments: [
 				tx.object(this.tokenIssuer.confidentialTokenId),
 				tx.object(this.client.contra.getAccountId(user.address)),
+				point(user.tokenAccount.publicKey.toBytes()),
 			],
 		});
 		tx.setSender(user.address);
@@ -136,20 +137,21 @@ export class Gated {
 	 */
 	async vaultRegister(vault: string, tokenAccount: TokenAccount, signer: Signer): Promise<void> {
 		const tx = new Transaction();
-		// Account creation is owner-only; the vault self-authenticates via its `&mut UID` inside
-		// `gated::vault_new_account`, so the account is created there rather than via `newAccount`.
+		// `new_account` is permissionless, but the account is created inside `gated::vault_new_account`
+		// (from the vault's address) rather than via `newAccount` to mirror the object-bound flow.
 		const account = tx.moveCall({
 			target: `${this.packageId}::gated::vault_new_account`,
-			arguments: [
-				tx.object(vault),
-				tx.object(this.client.contra.accountRegistryId),
-				point(tokenAccount.publicKey.toBytes()),
-			],
+			arguments: [tx.object(vault), tx.object(this.client.contra.accountRegistryId)],
 		});
 		tx.moveCall({
 			target: `${this.packageId}::gated::vault_register`,
 			typeArguments: [this.tokenIssuer.tokenType],
-			arguments: [tx.object(vault), tx.object(this.tokenIssuer.confidentialTokenId), account],
+			arguments: [
+				tx.object(vault),
+				tx.object(this.tokenIssuer.confidentialTokenId),
+				account,
+				point(tokenAccount.publicKey.toBytes()),
+			],
 		});
 		tx.add(this.client.contra.shareAccount({ account }));
 		tx.setSender(signer.address);

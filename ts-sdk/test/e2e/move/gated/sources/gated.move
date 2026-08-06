@@ -39,10 +39,8 @@ public fun vault_address(vault: &Vault): address {
 
 // === Permissioned ops (`authorize_with_witness`) ===
 
-public fun gated_register<T>(ct: &ConfidentialToken<T>, account: &mut Account) {
+public fun gated_register<T>(ct: &ConfidentialToken<T>, account: &mut Account, pk: Element<G>) {
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), GatedWitness {});
-    // Key the token account under the account's default key (set at account creation).
-    let pk = *contra::default_pk(account).borrow();
     contra::register(account, &auth, pk);
 }
 
@@ -60,22 +58,19 @@ public fun gated_wrap<T>(
 
 // === Object-bound ops (`authorize_as_object`) ===
 
-/// Create the contra `Account` owned by `vault`'s address and set its default key to `pk`. Only this
-/// module can supply the vault's `&mut UID`, so the default-key set self-authenticates as the owner.
-public fun vault_new_account(
-    vault: &mut Vault,
-    registry: &mut AccountRegistry,
-    pk: Element<G>,
-): Account {
-    let mut account = contra::new_account(registry, vault.id.to_inner().to_address());
-    contra::set_default_pk_as_object(&mut account, option::some(pk), &mut vault.id);
-    account
+/// Create the contra `Account` owned by `vault`'s address. `new_account` is permissionless, so this
+/// is a thin wrapper; the vault's token account is keyed explicitly at `vault_register`.
+public fun vault_new_account(vault: &Vault, registry: &mut AccountRegistry): Account {
+    contra::new_account(registry, vault.id.to_inner().to_address())
 }
 
-public fun vault_register<T>(vault: &mut Vault, ct: &ConfidentialToken<T>, account: &mut Account) {
+public fun vault_register<T>(
+    vault: &mut Vault,
+    ct: &ConfidentialToken<T>,
+    account: &mut Account,
+    pk: Element<G>,
+) {
     let auth = ct.authorize_as_object(&mut vault.id);
-    // Key the token account under the account's default key (set at account creation).
-    let pk = *contra::default_pk(account).borrow();
     contra::register(account, &auth, pk);
 }
 
