@@ -18,14 +18,12 @@ const EUnexpectedAuditorData: u64 = 3;
 
 // === Main Type ===
 
-/// The auditor configuration for a confidential token under the per-transfer auditing model: a
+/// The auditor configuration for a confidential token: a
 /// single auditor public key, plus a grace window on rotation.
 ///
-/// Auditing is per-transfer — every transfer carries auditor-readable ciphertexts of the amount
-/// (see `verify_transfer`) — so the auditor never learns the user's viewing key and balances are
-/// encrypted only under the user's own key.
+/// Auditing is per-transfer — every transfer carries auditor-readable ciphertexts of the amount.
 ///
-/// `current_pk == none` means auditing is disabled: transfers must carry no auditor data. On
+/// `current_pk == none` means auditing is disabled: transfers may carry no auditor data. On
 /// `update`, the outgoing key is retained as `previous_pk` and stays valid for transfers through
 /// `previous_expiration_epoch` (inclusive), so transfers built against the old key just before a
 /// rotation still verify.
@@ -35,9 +33,7 @@ public struct Auditor has store {
     previous_expiration_epoch: u64,
 }
 
-/// The per-transfer auditor data a sender attaches to a `batched_transfer`: one `U32LimbHandles`
-/// (two u32-limb decryption handles) per receiver, in receiver order, plus one batched `ElGamalProof`
-/// proving those handles well-formed under the auditor key.
+/// The per-transfer auditor data a sender attaches to a `batched_transfer`.
 public struct AuditorPackage has drop {
     handles: vector<U32LimbHandles>,
     proof: ElGamalProof,
