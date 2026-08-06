@@ -168,7 +168,7 @@ public struct Account has key {
 
 /// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
-    pk: Element<G>,
+    pk: PublicKey,
     session_id: vector<u8>,
     is_frozen: bool,
     accepts_deposits: bool,
@@ -354,7 +354,7 @@ fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vecto
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
-            pk: *pk.as_element(),
+            pk,
             session_id,
             is_frozen: false,
             accepts_deposits: true,
@@ -423,7 +423,7 @@ public fun rekey_token_account<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(
-        rekey_token_account_internal<T>(account, *new_pk.as_element(), new_handles, rekey_proof),
+        rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof),
         EAmountsEqualityProofFailed,
     );
 }
@@ -444,7 +444,7 @@ public fun try_rekey_token_account<T>(
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (rekey_token_account_internal<T>(account, *new_pk.as_element(), new_handles, rekey_proof)) {
+    if (rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
         account[TokenAccountKey<T>()].accepts_deposits = true;
     } else {
         events::emit_try_token_rekey_failed<T>(owner);
@@ -457,7 +457,7 @@ public fun try_rekey_token_account<T>(
 /// unchanged and returns `false`.
 fun rekey_token_account_internal<T>(
     account: &mut Account,
-    new_pk: Element<G>,
+    new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ): bool {
@@ -468,10 +468,16 @@ fun rekey_token_account_internal<T>(
     if (
         token_account
             .active
-            .try_set_public_key(&token_account.pk, &new_pk, new_handles, rekey_proof, dst)
+            .try_set_public_key(
+                token_account.pk.as_element(),
+                new_pk.as_element(),
+                new_handles,
+                rekey_proof,
+                dst,
+            )
     ) {
         token_account.pk = new_pk;
-        events::emit_token_rekeyed<T>(owner, new_pk);
+        events::emit_token_rekeyed<T>(owner, *new_pk.as_element());
         true
     } else {
         false
@@ -560,7 +566,7 @@ public fun batched_transfer<T>(
     // under `[receiver_pks..., sender.pk]`; verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
     receiver_amounts.push_back(new_balance);
-    receiver_pks.push_back(sender.pk);
+    receiver_pks.push_back(*sender.pk.as_element());
     let mut wfeas = encrypted_amount::batch_into_well_formed(
         receiver_amounts,
         sender.session_id.dst(DST_ELGAMAL),
@@ -583,7 +589,7 @@ public fun batched_transfer<T>(
     let withdrawn = sender
         .active
         .try_split_batch(
-            &sender.pk,
+            sender.pk.as_element(),
             new_balance,
             receiver_amounts,
             total_sender_handle,
@@ -601,7 +607,7 @@ public fun batched_transfer<T>(
         auditor_decryption_handles.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
-            sender_pk: public_key(sender.pk),
+            sender_pk: sender.pk,
             coins,
             seed_point,
             next_index: 0,
@@ -666,13 +672,13 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index,
                 receiver_addr,
-                receiver_pk,
+                *receiver_pk.as_element(),
                 *coin.amount().amount(),
                 receiver_auditor_decryption_handles,
                 auditor_pk.map!(|pk| *pk.as_element()),
                 memo,
             );
-            receiver.pending.merge_encrypted(&receiver_pk, coin);
+            receiver.pending.merge_encrypted(receiver_pk.as_element(), coin);
             TransferBatch::Ok {
                 sender,
                 sender_pk,
@@ -764,10 +770,10 @@ fun try_update_active<T>(
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
         sid.dst(DST_RANGE_PROOF_16),
-        self.pk,
+        *self.pk.as_element(),
         new_balance_proof,
     );
-    self.active.try_update(&self.pk, new_balance, balance_proof, sid.dst(DST_DDH))
+    self.active.try_update(self.pk.as_element(), new_balance, balance_proof, sid.dst(DST_DDH))
 }
 
 /// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
@@ -862,13 +868,13 @@ fun try_unwrap_internal<T>(
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
         sid.dst(DST_RANGE_PROOF_16),
-        account.pk,
+        *account.pk.as_element(),
         new_balance_proof,
     );
     let withdrawn = account
         .active
         .try_split_to_public(
-            &account.pk,
+            account.pk.as_element(),
             new_balance,
             amount,
             balance_proof,
@@ -1098,7 +1104,7 @@ public fun default_pk(account: &Account): Option<Element<G>> {
 
 #[test_only]
 public fun token_public_key<T>(account: &Account): Element<G> {
-    account[TokenAccountKey<T>()].pk
+    *account[TokenAccountKey<T>()].pk.as_element()
 }
 
 #[test_only]

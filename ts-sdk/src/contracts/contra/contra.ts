@@ -132,7 +132,7 @@ export const Account = new MoveStruct({
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
-		pk: group_ops.Element,
+		pk: twisted_elgamal.PublicKey,
 		session_id: bcs.vector(bcs.u8()),
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),

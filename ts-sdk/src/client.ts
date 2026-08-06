@@ -210,7 +210,7 @@ export class ContraClient {
 			}
 			const parsed = TokenAccountField.parse(object.content).value;
 			return {
-				pk: pointFromBcs(parsed.pk),
+				pk: pointFromBcs(parsed.pk.element),
 				acceptsEncryptedDeposits: parsed.accepts_deposits,
 				isFrozen: parsed.is_frozen,
 				needsRegistration: false,
@@ -378,7 +378,7 @@ export class ContraClient {
 			if (object instanceof Error) {
 				return { tokenType: types[i], registered: false };
 			}
-			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk);
+			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk.element);
 			return { tokenType: types[i], registered: true, publicKey };
 		});
 	}
