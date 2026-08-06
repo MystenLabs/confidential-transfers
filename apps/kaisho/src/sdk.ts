@@ -137,10 +137,10 @@ export function createContraClient(
  *  because each auditor limb is up to 32 bits. */
 export function createContraAuditor(
 	tokenType: string,
-	privateKey: bigint,
+	privateKeys: bigint[],
 	table: DiscreteLogTable,
 ): ContraAuditor {
-	return new ContraAuditor({ tokenType, privateKey, table });
+	return new ContraAuditor({ tokenType, privateKeys, table });
 }
 
 /** Helper for callers that already have a `TokenConfig`. */
@@ -640,10 +640,13 @@ export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array
 		const decoded = TransferEventBcs.parse(eventBcs);
 		const auditorHandles = decoded.auditor_decryption_handles;
 		if (!auditorHandles || auditorHandles.handles.length !== 2) return null;
+		// The transfer names the auditor key it was encrypted under; pick the matching held key.
+		if (!decoded.auditor_pk) return null;
 		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
 		return auditor.decryptTransferAmount(
 			encryptedAmount,
 			auditorHandles.handles.map((h) => pointFromBcs(h)),
+			pointFromBcs(decoded.auditor_pk.element),
 		);
 	} catch (e) {
 		console.error('[sdk] failed to audit-decrypt TransferEvent', e);

@@ -109,8 +109,13 @@ export interface ContraClientOptions {
 export interface ContraAuditorOptions {
 	/** The fully-qualified Move type of the token this auditor is scoped to, e.g. `0x2::sui::SUI`. */
 	tokenType: string;
-	/** The auditor's twisted ElGamal private key (the secret for the token's current auditor pk). */
-	privateKey: PrivateKey;
+	/**
+	 * The auditor's twisted ElGamal private key(s). Provide every key the auditor has held — the
+	 * current one plus any rotated-out keys — so transfers made before a rotation, which stay
+	 * encrypted under an old key, still decrypt; `decryptTransferAmount` matches the transfer's
+	 * `auditor_pk` to the right key. More can be added later with `ContraAuditor.addKey`.
+	 */
+	privateKeys: PrivateKey[];
 	/**
 	 * Precomputed discrete-log table used for decryption. The per-transfer auditor encryption is
 	 * over u32 limbs, so the standard `numBits = 16` table (which covers 2^32) is sufficient.

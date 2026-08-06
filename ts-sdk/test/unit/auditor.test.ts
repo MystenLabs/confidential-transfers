@@ -46,44 +46,62 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 	const [receiverPk] = generateKeyPair();
 
 	function auditorFor(): ContraAuditor {
-		return new ContraAuditor({ tokenType: '0x2::sui::SUI', privateKey: auditorSk, table });
+		return new ContraAuditor({ tokenType: '0x2::sui::SUI', privateKeys: [auditorSk], table });
 	}
 
 	it('recovers a small amount from the transfer commitments and handles', () => {
 		const amount = 12345n;
 		const { ea, handles } = buildTransfer(receiverPk, auditorPk, amount);
-		expect(auditorFor().decryptTransferAmount(ea, handles)).toBe(amount);
+		expect(auditorFor().decryptTransferAmount(ea, handles, auditorPk)).toBe(amount);
 	});
 
 	it('recovers an amount spanning all four limbs (>2^32)', () => {
 		const amount = (7n << 48n) | (3n << 32n) | (9n << 16n) | 42n;
 		const { ea, handles } = buildTransfer(receiverPk, auditorPk, amount);
-		expect(auditorFor().decryptTransferAmount(ea, handles)).toBe(amount);
+		expect(auditorFor().decryptTransferAmount(ea, handles, auditorPk)).toBe(amount);
 	});
 
 	it('throws when the transfer carried no auditor data', () => {
 		const { ea } = buildTransfer(receiverPk, auditorPk, 1n);
-		expect(() => auditorFor().decryptTransferAmount(ea, [])).toThrow(/2 auditor handles/);
+		expect(() => auditorFor().decryptTransferAmount(ea, [], auditorPk)).toThrow(
+			/2 auditor handles/,
+		);
 	});
 
-	// A wrong key yields an out-of-range point, so the u32 BSGS search runs to exhaustion
-	// (~2^16 giant steps per limb) before it gives up — legitimately slow, hence the timeout.
-	it('a wrong auditor key does not recover the amount', { timeout: 30_000 }, () => {
-		const amount = 500n;
-		const { ea, handles } = buildTransfer(receiverPk, auditorPk, amount);
+	it('throws when it holds no key matching the transfer auditor_pk', () => {
+		const { ea, handles } = buildTransfer(receiverPk, auditorPk, 500n);
 		const [, wrongSk] = generateKeyPair();
 		const wrongAuditor = new ContraAuditor({
 			tokenType: '0x2::sui::SUI',
-			privateKey: wrongSk,
+			privateKeys: [wrongSk],
 			table,
 		});
-		// The wrong key yields a different point; if it decrypts at all it is not `amount`.
-		let recovered: bigint | undefined;
-		try {
-			recovered = wrongAuditor.decryptTransferAmount(ea, handles);
-		} catch {
-			recovered = undefined;
-		}
-		expect(recovered).not.toBe(amount);
+		expect(() => wrongAuditor.decryptTransferAmount(ea, handles, auditorPk)).toThrow(
+			/no private key matching/,
+		);
+	});
+
+	it('decrypts transfers under either key across a rotation', () => {
+		const [oldPk, oldSk] = generateKeyPair();
+		const [newPk, newSk] = generateKeyPair();
+		const auditor = new ContraAuditor({
+			tokenType: '0x2::sui::SUI',
+			privateKeys: [oldSk, newSk],
+			table,
+		});
+		const oldTransfer = buildTransfer(receiverPk, oldPk, 111n);
+		const newTransfer = buildTransfer(receiverPk, newPk, 222n);
+		// Matches each transfer's auditor_pk to the right held key.
+		expect(auditor.decryptTransferAmount(oldTransfer.ea, oldTransfer.handles, oldPk)).toBe(111n);
+		expect(auditor.decryptTransferAmount(newTransfer.ea, newTransfer.handles, newPk)).toBe(222n);
+	});
+
+	it('addKey extends the set of decryptable keys', () => {
+		const [rotatedPk, rotatedSk] = generateKeyPair();
+		const auditor = auditorFor();
+		const { ea, handles } = buildTransfer(receiverPk, rotatedPk, 777n);
+		expect(() => auditor.decryptTransferAmount(ea, handles, rotatedPk)).toThrow(/no private key/);
+		auditor.addKey(rotatedSk);
+		expect(auditor.decryptTransferAmount(ea, handles, rotatedPk)).toBe(777n);
 	});
 });

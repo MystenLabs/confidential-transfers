@@ -41,6 +41,6 @@ export function useContraAuditor(
 
 	return useMemo(() => {
 		if (!config || !tokenType || !table || privateKey === null) return null;
-		return createContraAuditor(tokenType, privateKey, table);
+		return createContraAuditor(tokenType, [privateKey], table);
 	}, [config, tokenType, table, privateKey]);
 }

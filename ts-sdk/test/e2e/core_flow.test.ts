@@ -373,7 +373,7 @@ describe('core user flows (devnet)', () => {
 			// commitments via `seed_point`, and the receiver decrypts with its own key.
 			const auditor = new ContraAuditor({
 				tokenType: tokenIssuer.tokenType,
-				privateKey: tokenIssuer.auditorPrivateKey!,
+				privateKeys: [tokenIssuer.auditorPrivateKey!],
 				table,
 			});
 
@@ -408,10 +408,11 @@ describe('core user flows (devnet)', () => {
 				decodedTransfer.encrypted_amount_receiver,
 			);
 
-			// Auditor recovers the amount from the event.
+			// Auditor recovers the amount from the event, selecting its key by the event's `auditor_pk`.
 			const auditorAmount = auditor.decryptTransferAmount(
 				encryptedAmountReceiver,
 				decodedTransfer.auditor_decryption_handles!.handles.map((h) => pointFromBcs(h)),
+				pointFromBcs(decodedTransfer.auditor_pk!.element),
 			);
 			expect(auditorAmount).toBe(transferAmount);
 
@@ -426,10 +427,10 @@ describe('core user flows (devnet)', () => {
 			expect(decryptedSender).toBe(transferAmount);
 			expect(decryptedReceiver).toBe(transferAmount);
 
-			// A wrong auditor key does not recover the amount.
+			// An auditor without the transfer's key can't decrypt it (no key matches `auditor_pk`).
 			const wrongAuditor = new ContraAuditor({
 				tokenType: tokenIssuer.tokenType,
-				privateKey: randomScalar(),
+				privateKeys: [randomScalar()],
 				table,
 			});
 			let wrong: bigint | undefined;
@@ -437,6 +438,7 @@ describe('core user flows (devnet)', () => {
 				wrong = wrongAuditor.decryptTransferAmount(
 					encryptedAmountReceiver,
 					decodedTransfer.auditor_decryption_handles!.handles.map((h) => pointFromBcs(h)),
+					pointFromBcs(decodedTransfer.auditor_pk!.element),
 				);
 			} catch {
 				wrong = undefined;

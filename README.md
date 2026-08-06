@@ -15,7 +15,7 @@ Confidential token transfers on the [Sui](https://sui.io) blockchain. Balances a
 
 Yellow nodes live in the public domain (amounts visible on-chain), blue nodes live in the confidential domain (amounts encrypted).
 
-**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under a public key `pk` she chooses (per-token keys are independent). For a permissionless token, if Alice set an optional default key on her `Account`, anyone can register the token account on her behalf up front with `register_with_default_pk`. Registration carries no auditor data (auditing is per-transfer).
+**1. Register** — one-time setup per `(user, token T)` pair. Alice creates her `TokenAccount<T>`, keyed under a public key `pk` she chooses (per-token keys are independent). For a permissionless token, if Alice set an optional default key on her `Account`, anyone can register the token account on her behalf up front with `register_with_default_pk`.
 
 ```mermaid
 flowchart LR
@@ -226,7 +226,7 @@ The contract implements **per-transfer auditing**: the sender attaches an audito
 
 ### Reading transfer amounts
 
-Auditing is per transfer, not per account. For each [`TransferEvent`](move/sources/events.move), the auditor calls `decryptTransferAmount(encryptedAmountReceiver, auditorHandles)`: it regroups the receiver's four u16 limbs into the two u32-limb commitments (mirroring `encrypted_amount::ciphertexts_as_u32_limbs`), pairs each with the event's matching handle, and BSGS-decrypts to recover that transfer's amount. The auditor sees each transfer's amount, sender, and receiver — but never a user's viewing key or account balance.
+Auditing is per transfer, not per account. For each [`TransferEvent`](move/sources/events.move), the auditor calls `decryptTransferAmount(encryptedAmountReceiver, auditorHandles, auditorPk)`: it regroups the receiver's four u16 limbs into the two u32-limb commitments (mirroring `encrypted_amount::ciphertexts_as_u32_limbs`), pairs each with the event's matching handle, and BSGS-decrypts to recover that transfer's amount. An auditor can hold several keys and matches each transfer's `auditor_pk` to the right one, so keeping the rotated-out keys lets it read transfers made both before and after a key rotation. The auditor sees each transfer's amount, sender, and receiver — but never a user's viewing key or account balance.
 
 See the auditor case in [`core_flow.test.ts`](ts-sdk/test/e2e/core_flow.test.ts) for an end-to-end example of constructing a `ContraAuditor` and decrypting a transfer amount from its `TransferEvent`.
 
