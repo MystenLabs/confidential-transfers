@@ -222,7 +222,7 @@ in `pending`, so they don't invalidate an in-flight signed request.)
 ## Code layout
 
 - `core/` — wire types, plaintext checks, HPKE sealing, keys, and response signing.
-- `enclave/` — the binary: `/attestation`, `/health` + `/ready`, and `/approve` for
+- `enclave/` — the binary: `/attestation`, `/health` + `/registered`, and `/verify` for
   sealed requests.
 
 Deployment lives in `sui-operations` (`contra-guardian-enclave`, and

@@ -143,7 +143,7 @@ Note on Fiat-Shamir hash functions:
 ### Guardian (`guardian/`)
 Rust workspace for the off-chain half of the TEE second factor (design: `guardian/README.md`; on-chain counterpart: `move/sources/guardian.move`).
 - **core/**: all the crypto — wire types, plaintext checks, HPKE sealing, the enclave keypair, response signing. 
-- **enclave/**: the binary — `/attestation`, `/health` + `/ready` (the proxy's readiness gate), and `/approve` for HPKE-sealed requests. `--features non-enclave-dev` stubs the NSM attestation call so it runs outside an enclave.
+- **enclave/**: the binary — `/attestation`, `/health` + `/registered` (the proxy's readiness gate), and `/verify` for HPKE-sealed requests. `--features non-enclave-dev` stubs the NSM attestation call so it runs outside an enclave.
 - **scripts/**: bootstrap / scale / remove for a local fleet against a localnet.
 Deployment (EIF build, Pulumi stacks, CI) lives in `sui-operations`.
 

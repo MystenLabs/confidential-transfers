@@ -26,7 +26,7 @@ type EncappedKey = <X25519HkdfSha256 as Kem>::EncappedKey;
 /// The sealed request wire-format version.
 pub const SEALED_REQUEST_VERSION: u8 = 1;
 
-/// The `/approve` body: the request sealed to every live enclave key, one envelope each,
+/// The `/verify` body: the request sealed to every live enclave key, one envelope each,
 /// BCS-encoded.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SealedRequest {
