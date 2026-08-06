@@ -20,8 +20,7 @@
 /// 6. Rotate or disable the auditor key via `update_auditor` (using the ManagementCap). The
 ///    outgoing key stays valid for transfers through a caller-set `expiration_epoch` (a grace
 ///    window for in-flight transfers). Passing `none` disables auditing going forward. Auditing is
-///    per-transfer and each transfer carries auditor-readable ciphertexts of the amount, so the auditor
-///    never learns users' viewing keys.
+///    per-transfer and each transfer carries auditor-readable ciphertexts of the amount.
 /// 7. [Advanced] Set the policy for the confidential token (using the TreasuryCap). Policies define
 ///    which operations are permissioned. Currently supported permissioned operations are:
 ///    - `register`: Register a token account for a token type `T`. E.g., caller ensures the user is
