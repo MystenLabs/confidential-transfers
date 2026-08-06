@@ -37,12 +37,13 @@
 ///    The default policy is fully permissionless.
 ///
 /// ## Key Flows for Users:
-/// 1. Create an account for an address with an optional default key `pk` (needed once for all token
-///    types; when set, others can auto-register tokens for you via `register_with_default_pk`).
+/// 1. Create an account for an address (permissionless, needed once for all token types). Optionally
+///    set a default key later (`set_default_pk_as_sender`) so others can auto-register tokens for you
+///    via `register_with_default_pk`.
 /// 2. Register a token account for a token type `T` under a key of your choice (`register`). Per-token
 ///    keys are independent of the account's default key.
 /// 3. Rotate a token's key with `rekey_token_account` (to any `new_pk`), and set/clear the account's default
-///    key with `set_default_pk`.
+///    key with `set_default_pk_as_sender`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to one or more token accounts. Every receiver must already have a
@@ -195,7 +196,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_handles: vector<U32LimbHandles>,
+        auditor_decryption_handles: vector<U32LimbHandles>,
         auditor_pk: Option<Element<G>>,
     },
 }
@@ -305,38 +306,14 @@ public fun share_confidential_token<T>(ct: ConfidentialToken<T>) {
 
 public use fun new_account as AccountRegistry.new;
 
-/// Create a new account for `ctx.sender()` with optional `default_pk` (see `Account`). Pass `none`
-/// to create without one (no third party can then auto-register tokens for this account).
-public fun new_account(
-    registry: &mut AccountRegistry,
-    default_pk: Option<Element<G>>,
-    ctx: &TxContext,
-): Account {
-    new_account_internal(registry, ctx.sender(), default_pk)
-}
-
-/// Create a new account owned by the object identified by `uid`, with optional `default_pk`. Holding
-/// `&mut UID` proves custody of the object, so it self-authenticates as its own owner.
-#[allow(unused_mut_parameter)]
-public fun new_account_for_object(
-    registry: &mut AccountRegistry,
-    uid: &mut UID,
-    default_pk: Option<Element<G>>,
-): Account {
-    new_account_internal(registry, uid.to_inner().to_address(), default_pk)
-}
-
-/// Claim the derived account for `owner` and initialize it with optional `default_pk`. Aborts if
-/// `owner` already has an account or `default_pk` is set to the group identity.
-fun new_account_internal(
-    registry: &mut AccountRegistry,
-    owner: address,
-    default_pk: Option<Element<G>>,
-): Account {
+/// Create a new account owned by `owner`, with no default key set (set one later with
+/// `set_default_pk_as_sender` / `set_default_pk_as_object`). Permissionless: anyone can create the
+/// account for any owner — it only reserves the owner's derived slot and sets no key. Aborts if
+/// `owner` already has an account.
+public fun new_account(registry: &mut AccountRegistry, owner: address): Account {
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
-    assert!(default_pk.is_none() || *default_pk.borrow() != g_identity(), EIdentityPublicKey);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    Account { id, owner, default_pk }
+    Account { id, owner, default_pk: option::none() }
 }
 
 /// Share the account object.
@@ -405,7 +382,11 @@ public fun set_accepts_encrypted_deposits<T>(
 
 /// Set the account's optional `default_pk` (pass `none` to clear it, which disables permissionless
 /// auto-registration).
-public fun set_default_pk(account: &mut Account, default_pk: Option<Element<G>>, ctx: &TxContext) {
+public fun set_default_pk_as_sender(
+    account: &mut Account,
+    default_pk: Option<Element<G>>,
+    ctx: &TxContext,
+) {
     assert!(ctx.sender() == account.owner, EAuthorizationError);
     account.set_default_pk_internal(default_pk);
 }
@@ -413,7 +394,7 @@ public fun set_default_pk(account: &mut Account, default_pk: Option<Element<G>>,
 /// Set the `default_pk` of an account owned by the object identified by `uid`. Holding `&mut UID`
 /// proves custody of the object, so it self-authenticates as its own owner.
 #[allow(unused_mut_parameter)]
-public fun set_default_pk_for_object(
+public fun set_default_pk_as_object(
     account: &mut Account,
     default_pk: Option<Element<G>>,
     uid: &mut UID,
@@ -593,7 +574,7 @@ public fun batched_transfer<T>(
     let new_balance = wfeas.pop_back();
     let receiver_amounts = wfeas;
 
-    let (mut auditor_handles, auditor_pk) = ct
+    let (mut auditor_decryption_handles, auditor_pk) = ct
         .auditor
         .verify_transfer(
             &receiver_amounts,
@@ -620,14 +601,14 @@ public fun batched_transfer<T>(
         // Reverse coins and auditor handles so `add_to_batch`'s `pop_back` consumes them in
         // submission order.
         coins.reverse();
-        auditor_handles.reverse();
+        auditor_decryption_handles.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
             sender_pk: sender.pk,
             coins,
             seed_point,
             next_index: 0,
-            auditor_handles,
+            auditor_decryption_handles,
             auditor_pk,
         }
     } else {
@@ -659,7 +640,7 @@ public fun add_to_batch<T>(
             mut coins,
             seed_point,
             next_index,
-            mut auditor_handles,
+            mut auditor_decryption_handles,
             auditor_pk,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
@@ -670,10 +651,10 @@ public fun add_to_batch<T>(
 
             let coin = coins.pop_back();
 
-            let receiver_auditor_handles = if (auditor_handles.is_empty()) {
+            let receiver_auditor_decryption_handles = if (auditor_decryption_handles.is_empty()) {
                 option::none()
             } else {
-                option::some(auditor_handles.pop_back())
+                option::some(auditor_decryption_handles.pop_back())
             };
 
             let receiver = &mut receiver[TokenAccountKey<T>()];
@@ -690,7 +671,7 @@ public fun add_to_batch<T>(
                 receiver_addr,
                 receiver_pk,
                 *coin.amount().amount(),
-                receiver_auditor_handles,
+                receiver_auditor_decryption_handles,
                 auditor_pk,
                 memo,
             );
@@ -701,7 +682,7 @@ public fun add_to_batch<T>(
                 coins,
                 seed_point,
                 next_index: next_index + 1,
-                auditor_handles,
+                auditor_decryption_handles,
                 auditor_pk,
             }
         },
@@ -720,8 +701,8 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
             events::emit_try_transfer_failed();
             false
         },
-        TransferBatch::Ok { coins, auditor_handles, .. } => {
-            assert!(coins.is_empty() && auditor_handles.is_empty(), EAllAmountsMustBeUsed);
+        TransferBatch::Ok { coins, auditor_decryption_handles, .. } => {
+            assert!(coins.is_empty() && auditor_decryption_handles.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
             true
         },

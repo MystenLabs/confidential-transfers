@@ -190,7 +190,7 @@ export const TransferBatch = new MoveEnum({
 				coins: bcs.vector(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),
-				auditor_handles: bcs.vector(group_ops.Element),
+				auditor_decryption_handles: bcs.vector(group_ops.Element),
 			},
 		}),
 	},
@@ -362,58 +362,29 @@ export function shareConfidentialToken(options: ShareConfidentialTokenOptions) {
 }
 export interface NewAccountArguments {
 	registry: RawTransactionArgument<string>;
-	defaultPk: TransactionArgument;
+	owner: RawTransactionArgument<string>;
 }
 export interface NewAccountOptions {
 	package?: string;
 	arguments:
 		| NewAccountArguments
-		| [registry: RawTransactionArgument<string>, defaultPk: TransactionArgument];
+		| [registry: RawTransactionArgument<string>, owner: RawTransactionArgument<string>];
 }
 /**
- * Create a new account for `ctx.sender()` with optional `default_pk` (see `Account`). Pass `none` to
- * create without one (no third party can then auto-register tokens for this account).
+ * Create a new account owned by `owner`, with no default key set (set one later with
+ * `set_default_pk_as_sender` / `set_default_pk_as_object`). Permissionless: anyone can create the
+ * account for any owner — it only reserves the owner's derived slot and sets no key. Aborts if
+ * `owner` already has an account.
  */
 export function newAccount(options: NewAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null] satisfies (string | null)[];
-	const parameterNames = ['registry', 'defaultPk'];
+	const argumentsTypes = [null, 'address'] satisfies (string | null)[];
+	const parameterNames = ['registry', 'owner'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
 			function: 'new_account',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewAccountForObjectArguments {
-	registry: RawTransactionArgument<string>;
-	uid: RawTransactionArgument<string>;
-	defaultPk: TransactionArgument;
-}
-export interface NewAccountForObjectOptions {
-	package?: string;
-	arguments:
-		| NewAccountForObjectArguments
-		| [
-				registry: RawTransactionArgument<string>,
-				uid: RawTransactionArgument<string>,
-				defaultPk: TransactionArgument,
-		  ];
-}
-/**
- * Create a new account owned by the object identified by `uid`, with optional `default_pk`. Holding
- * `&mut UID` proves custody of the object, so it self-authenticates as its own owner.
- */
-export function newAccountForObject(options: NewAccountForObjectOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['registry', 'uid', 'defaultPk'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'contra',
-			function: 'new_account_for_object',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
@@ -534,21 +505,21 @@ export function setAcceptsEncryptedDeposits(options: SetAcceptsEncryptedDeposits
 			typeArguments: options.typeArguments,
 		});
 }
-export interface SetDefaultPkArguments {
+export interface SetDefaultPkAsSenderArguments {
 	account: RawTransactionArgument<string>;
 	defaultPk: TransactionArgument;
 }
-export interface SetDefaultPkOptions {
+export interface SetDefaultPkAsSenderOptions {
 	package?: string;
 	arguments:
-		| SetDefaultPkArguments
+		| SetDefaultPkAsSenderArguments
 		| [account: RawTransactionArgument<string>, defaultPk: TransactionArgument];
 }
 /**
  * Set the account's optional `default_pk` (pass `none` to clear it, which disables permissionless
  * auto-registration).
  */
-export function setDefaultPk(options: SetDefaultPkOptions) {
+export function setDefaultPkAsSender(options: SetDefaultPkAsSenderOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null] satisfies (string | null)[];
 	const parameterNames = ['account', 'defaultPk'];
@@ -556,19 +527,19 @@ export function setDefaultPk(options: SetDefaultPkOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'set_default_pk',
+			function: 'set_default_pk_as_sender',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface SetDefaultPkForObjectArguments {
+export interface SetDefaultPkAsObjectArguments {
 	account: RawTransactionArgument<string>;
 	defaultPk: TransactionArgument;
 	uid: RawTransactionArgument<string>;
 }
-export interface SetDefaultPkForObjectOptions {
+export interface SetDefaultPkAsObjectOptions {
 	package?: string;
 	arguments:
-		| SetDefaultPkForObjectArguments
+		| SetDefaultPkAsObjectArguments
 		| [
 				account: RawTransactionArgument<string>,
 				defaultPk: TransactionArgument,
@@ -579,7 +550,7 @@ export interface SetDefaultPkForObjectOptions {
  * Set the `default_pk` of an account owned by the object identified by `uid`. Holding `&mut UID`
  * proves custody of the object, so it self-authenticates as its own owner.
  */
-export function setDefaultPkForObject(options: SetDefaultPkForObjectOptions) {
+export function setDefaultPkAsObject(options: SetDefaultPkAsObjectOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null] satisfies (string | null)[];
 	const parameterNames = ['account', 'defaultPk', 'uid'];
@@ -587,7 +558,7 @@ export function setDefaultPkForObject(options: SetDefaultPkForObjectOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'set_default_pk_for_object',
+			function: 'set_default_pk_as_object',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

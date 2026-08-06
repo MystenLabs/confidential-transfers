@@ -33,7 +33,7 @@ fun create_account() {
     let ctx = &mut tx_context::dummy();
     let owner = ctx.sender();
     let mut acc_reg = contra::new_account_registry_for_testing(ctx);
-    let account = acc_reg.new(option::some(pk), ctx);
+    let account = acc_reg.new(ctx.sender());
 
     assert_eq!(account.owner(), owner);
 
@@ -109,13 +109,13 @@ fun test_simple_flow() {
     ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_with_witness<TestCurrency, Witness>(0u8, addr1, Witness {});
     account_1.register<TestCurrency>(&auth, pk_1);
 
     // Register second account and deposit
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_with_witness<TestCurrency, Witness>(0u8, addr2, Witness {});
     account_2.register<TestCurrency>(&auth, pk_2);
 
@@ -285,17 +285,17 @@ fun test_batched_transfer() {
 
     // Register all three accounts.
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
 
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth, pk_2);
 
     scenario.next_tx(addr3);
-    let mut account_3 = acc_reg.new(option::some(pk_3), scenario.ctx());
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_3.register<TestCurrency>(&auth, pk_3);
 
@@ -456,15 +456,15 @@ fun test_batched_transfer_with_auditor() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth, pk_2);
     scenario.next_tx(addr3);
-    let mut account_3 = acc_reg.new(option::some(pk_3), scenario.ctx());
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_3.register<TestCurrency>(&auth, pk_3);
 
@@ -612,15 +612,15 @@ fun test_batched_transfer_auditor_disable_grace() {
     ct.update_auditor(&management_cap, option::none(), 100);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth, pk_2);
     scenario.next_tx(addr3);
-    let mut account_3 = acc_reg.new(option::some(pk_3), scenario.ctx());
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_3.register<TestCurrency>(&auth, pk_3);
 
@@ -747,7 +747,7 @@ fun test_deny_list() {
         option::none(),
         scenario.ctx(),
     );
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
 
@@ -935,7 +935,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_old), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_old);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -976,7 +976,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
+    contra::set_default_pk_as_sender(&mut account_1, option::some(pk_new), scenario.ctx());
     // The default key is now pk_new, but the token's balance still lags under pk_old.
     assert_eq!(account_1.default_pk(), option::some(pk_new));
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
@@ -1048,7 +1048,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_old), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_old);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1082,7 +1082,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
+    contra::set_default_pk_as_sender(&mut account_1, option::some(pk_new), scenario.ctx());
     // Aborts here with `EAmountsEqualityProofFailed`.
     contra::rekey_token_account<TestCurrency>(
         &mut account_1,
@@ -1148,7 +1148,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_old), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_old);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1187,7 +1187,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
-    contra::set_default_pk(&mut account_1, option::some(pk_new), scenario.ctx());
+    contra::set_default_pk_as_sender(&mut account_1, option::some(pk_new), scenario.ctx());
     // Pause the token for the rotation; a successful re-key resumes deposits.
     contra::set_accepts_encrypted_deposits<TestCurrency>(&mut account_1, &auth, false);
 
@@ -1266,7 +1266,7 @@ fun test_account_freeze_rejects_non_admin() {
     );
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(option::some(pk), scenario.ctx());
+    let mut account_user = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_user.register<TestCurrency>(&auth, pk);
 
@@ -1320,7 +1320,7 @@ fun test_account_freeze_blocks_wrap() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(option::some(pk), scenario.ctx());
+    let mut account_user = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_user.register<TestCurrency>(&auth, pk);
 
@@ -1388,7 +1388,7 @@ fun test_account_unfreeze_restores_wrap() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(option::some(pk), scenario.ctx());
+    let mut account_user = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_user.register<TestCurrency>(&auth, pk);
 
@@ -1463,11 +1463,11 @@ fun test_account_freeze_blocks_batched_transfer() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth, pk_2);
 
@@ -1576,11 +1576,11 @@ fun test_account_freeze_blocks_add_to_batch() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.register<TestCurrency>(&auth, pk_2);
 
@@ -1688,14 +1688,15 @@ fun test_transfer_after_register_with_default_pk() {
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
 
-    // account_2 has an `Account` but is NOT registered for TestCurrency; on a permissionless token
-    // anyone can register it on the owner's behalf up front.
+    // account_2 has an `Account` with a default key set but is NOT registered for TestCurrency; on a
+    // permissionless token anyone can register it on the owner's behalf up front.
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    contra::set_default_pk_as_sender(&mut account_2, option::some(pk_2), scenario.ctx());
     contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
 
     scenario.next_tx(addr1);
@@ -1795,7 +1796,8 @@ fun test_register_with_default_pk_aborts_when_permissioned() {
     ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
 
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(option::some(pk_2), scenario.ctx());
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    contra::set_default_pk_as_sender(&mut account_2, option::some(pk_2), scenario.ctx());
     // Aborts: registration is not permissionless, so no `Auth`-free registration is allowed.
     contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
 
@@ -1843,7 +1845,7 @@ fun test_account_freeze_blocks_unwrap() {
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(option::some(pk_1), scenario.ctx());
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1.register<TestCurrency>(&auth, pk_1);
 
@@ -1932,15 +1934,16 @@ fun verify_well_formed_proof_dst_match_succeeds() {
 // Identity is the additive zero of the group; an identity public key trivializes the discrete-log
 // statement `sk · g = pk` (the unique witness is `sk = 0`, which anyone has). That cascades
 // through the ElGamal / DDH proofs into a soundness break. The fix is to reject `pk = identity` at
-// every install boundary: `new_account` (the account key) and the `auditors::{new,update}` calls
-// that install the auditor key.
+// every install boundary: `set_default_pk_as_sender` (the account default key), `register` (the
+// per-token key), and the `auditors::{new,update}` calls that install the auditor key.
 
 #[test, expected_failure(abort_code = ::contra::contra::EIdentityPublicKey)]
-fun new_account_rejects_identity_pk() {
+fun set_default_pk_rejects_identity_pk() {
     let ctx = &mut tx_context::dummy();
     let mut acc_reg = contra::new_account_registry_for_testing(ctx);
-    // Identity pk: account creation must reject this.
-    let account = acc_reg.new(option::some(ristretto255::g_identity()), ctx);
+    let mut account = acc_reg.new(ctx.sender());
+    // Identity pk: setting it as the account default must reject this.
+    contra::set_default_pk_as_sender(&mut account, option::some(ristretto255::g_identity()), ctx);
 
     unit_test::destroy(account);
     unit_test::destroy(acc_reg);

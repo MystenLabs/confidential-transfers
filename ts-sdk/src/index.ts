@@ -34,7 +34,7 @@ export type {
 	RegisterOptions,
 	RegisterWithDefaultPkOptions,
 	RekeyTokenAccountOptions,
-	SetDefaultPkOptions,
+	SetDefaultPkAsSenderOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,

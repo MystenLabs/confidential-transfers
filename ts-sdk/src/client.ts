@@ -58,7 +58,7 @@ import type {
 	RegisterOptions,
 	RegisterWithDefaultPkOptions,
 	RekeyTokenAccountOptions,
-	SetDefaultPkOptions,
+	SetDefaultPkAsSenderOptions,
 	ShareAccountOptions,
 	TokenAuditor,
 	TokenBalance,
@@ -236,32 +236,28 @@ export class ContraClient {
 	}
 
 	/**
-	 * Create a new account for the transaction sender with optional default key `publicKey`. Creation
-	 * is restricted to the owner — the account is created for `ctx.sender()`, so the transaction must
-	 * be signed by the intended owner. For an account owned by a Move object, that object's module must
-	 * call `contra::new_account_for_object` with the object's `&mut UID`.
-	 *
-	 * The default key is what `register_with_default_pk` uses when someone auto-registers a token for
-	 * this account; omit `defaultPk` to create without one (no third party can then auto-register
-	 * tokens for the account). Per-token keys are chosen independently at `register`.
+	 * Create a new account owned by `owner`, with no default key set. Permissionless — anyone can
+	 * create the account for any owner; it only reserves the owner's derived slot and sets no key.
+	 * Set a default key afterwards with `setDefaultPkAsSender` (needed only so others can
+	 * auto-register tokens for the account via `register_with_default_pk`). Per-token keys are chosen
+	 * independently at `register`.
 	 *
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * const account = tx.add(contraClient.newAccount({ defaultPk: tokenAccount.publicKey }));
+	 * const account = tx.add(contraClient.newAccount({ owner: address }));
 	 * tx.add(contraClient.shareAccount({ account }));
 	 * ```
 	 *
 	 * On-chain aborts:
-	 * - `EAccountAlreadyRegistered` — the sender already has an account (one per address).
-	 * - `EIdentityPublicKey` — `defaultPk` is the group identity.
+	 * - `EAccountAlreadyRegistered` — `owner` already has an account (one per address).
 	 */
-	newAccount({ defaultPk }: NewAccountOptions) {
+	newAccount({ owner }: NewAccountOptions) {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
 			arguments: {
 				registry: this.#packageConfig.accountRegistryId,
-				defaultPk: buildOptionalPoint(defaultPk),
+				owner,
 			},
 		});
 	}
@@ -893,7 +889,7 @@ export class ContraClient {
 	 * This is purely the key `register_with_default_pk` uses; per-token keys are unaffected and are
 	 * rotated independently via `rekeyTokenAccount`. Restricted to the owner: the transaction must be signed
 	 * by `account` (the account owner). For an object-owned account, call
-	 * `contra::set_default_pk_for_object` directly.
+	 * `contra::set_default_pk_as_object` directly.
 	 *
 	 * IMPORTANT: when you rotate a token's key, retain the OLD private key until that token has been
 	 * re-keyed. A not-yet-re-keyed token's balance remains encrypted under the old key, and both
@@ -904,20 +900,20 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
-	 * tx.add(client.contra.setDefaultPk({ account: address, defaultPk: newTokenAccount.publicKey }));
+	 * tx.add(client.contra.setDefaultPkAsSender({ account: address, defaultPk: newTokenAccount.publicKey }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — the transaction sender is not `account`.
 	 * - `EIdentityPublicKey` — `defaultPk` is the group identity.
 	 */
-	setDefaultPk({
+	setDefaultPkAsSender({
 		account,
 		defaultPk,
-	}: SetDefaultPkOptions): (tx: Transaction) => TransactionResult {
+	}: SetDefaultPkAsSenderOptions): (tx: Transaction) => TransactionResult {
 		return (tx: Transaction) =>
 			tx.add(
-				contraContracts.setDefaultPk({
+				contraContracts.setDefaultPkAsSender({
 					package: this.#packageConfig.packageId,
 					arguments: {
 						account: this.getAccountId(account),
@@ -1019,7 +1015,7 @@ export class ContraClient {
 
 	/**
 	 * Re-key one token's active balance to `newTokenAccount.publicKey`. The target key is explicit and
-	 * independent of the account's default key (`Account.default_pk`), so no `setDefaultPk` is required first.
+	 * independent of the account's default key (`Account.default_pk`), so no `setDefaultPkAsSender` is required first.
 	 * When the token has pending deposits and `merge` is `true` (the default), a `merge` is prepended
 	 * so the re-key (which requires an empty pending) can proceed.
 	 *
@@ -1061,7 +1057,7 @@ export class ContraClient {
 	/**
 	 * Like `rekeyTokenAccount`, but soft-fails instead of aborting when the re-key proof does not verify
 	 * (e.g. a deposit raced the balance read): the token is left stale for a retry and a
-	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultPk` and re-keys of several tokens ride
+	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultPkAsSender` and re-keys of several tokens ride
 	 * in one PTB without pausing.
 	 */
 	async tryRekeyTokenAccount({
@@ -1098,7 +1094,7 @@ export class ContraClient {
 	 * the rest still land — so it never reverts. Different tokens may re-key to different keys.
 	 *
 	 * This does not touch the account's default key (used by `register_with_default_pk`); set that
-	 * separately with `setDefaultPk` if you want it changed. All accounts must be for the same account
+	 * separately with `setDefaultPkAsSender` if you want it changed. All accounts must be for the same account
 	 * (same `address`).
 	 *
 	 * There is no SDK-side key check: if a pair's `tokenAccount` key doesn't match the token's real

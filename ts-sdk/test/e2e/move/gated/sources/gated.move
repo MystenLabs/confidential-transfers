@@ -60,14 +60,16 @@ public fun gated_wrap<T>(
 
 // === Object-bound ops (`authorize_as_object`) ===
 
-/// Create the contra `Account` owned by `vault`'s address, with default key `pk`. Only this module
-/// can supply the vault's `&mut UID`, so it self-authenticates as the object owner.
+/// Create the contra `Account` owned by `vault`'s address and set its default key to `pk`. Only this
+/// module can supply the vault's `&mut UID`, so the default-key set self-authenticates as the owner.
 public fun vault_new_account(
     vault: &mut Vault,
     registry: &mut AccountRegistry,
     pk: Element<G>,
 ): Account {
-    contra::new_account_for_object(registry, &mut vault.id, option::some(pk))
+    let mut account = contra::new_account(registry, vault.id.to_inner().to_address());
+    contra::set_default_pk_as_object(&mut account, option::some(pk), &mut vault.id);
+    account
 }
 
 public fun vault_register<T>(vault: &mut Vault, ct: &ConfidentialToken<T>, account: &mut Account) {

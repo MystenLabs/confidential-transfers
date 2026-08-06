@@ -95,7 +95,7 @@ describe('core user flows (devnet)', () => {
 				] as [Ed25519Keypair, string, TokenAccount][]
 			).map(async ([keypair, address, tokenAccount]) => {
 				const regTx = new Transaction();
-				const account = regTx.add(client.contra.newAccount({ defaultPk: tokenAccount.publicKey }));
+				const account = regTx.add(client.contra.newAccount({ owner: tokenAccount.address }));
 				regTx.add(await client.contra.register({ tokenAccount, account }));
 				regTx.add(client.contra.shareAccount({ account }));
 				regTx.setSender(address);
@@ -588,9 +588,7 @@ describe('core user flows (devnet)', () => {
 
 			await contraInit.fund(userAddress, FUNDING_AMOUNT);
 			const setupTx = new Transaction();
-			const account = setupTx.add(
-				client.contra.newAccount({ defaultPk: userTokenAccount.publicKey }),
-			);
+			const account = setupTx.add(client.contra.newAccount({ owner: userTokenAccount.address }));
 			setupTx.add(client.contra.shareAccount({ account }));
 			setupTx.setSender(userAddress);
 			await exec(setupTx, userKp);

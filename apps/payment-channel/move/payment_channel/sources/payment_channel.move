@@ -143,15 +143,14 @@ public fun new<T>(ctx: &mut TxContext) {
 }
 
 /// Create the contra `Account` owned by the channel's address (no default key — the channel registers
-/// its token account explicitly). Restricted to the channel `sender`, and object-bound (the channel
-/// self-authenticates via its own `&mut UID`), so no one else can squat the channel's account.
+/// its token account explicitly). Restricted to the channel `sender`.
 public fun new_account<T>(
-    c: &mut Channel<T>,
+    c: &Channel<T>,
     registry: &mut AccountRegistry,
     ctx: &TxContext,
 ): Account {
     assert!(ctx.sender() == c.sender, EUnauthorized);
-    contra::new_account_for_object(registry, &mut c.id, option::none())
+    contra::new_account(registry, c.id.to_inner().to_address())
 }
 
 // === Operations ===

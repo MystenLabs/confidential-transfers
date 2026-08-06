@@ -236,13 +236,12 @@ export interface UpdateBalanceOptions {
 /** Arguments to `ContraClient.newAccount`. */
 export interface NewAccountOptions {
 	/**
-	 * The account's optional default key — the key `register_with_default_pk` uses when a third party
-	 * auto-registers a token for this account. Omit it to create the account without one (no third
-	 * party can then auto-register tokens for it). Per-token keys are chosen independently at
-	 * `register` and are not tied to this key. The account is created for the transaction sender, so
-	 * the transaction must be signed by the intended owner.
+	 * The owner address the account is created for. Creation is permissionless — anyone can create
+	 * the account for any owner; it only reserves the owner's derived slot and sets no key. Set a
+	 * default key afterwards with `setDefaultPkAsSender` if others should be able to auto-register
+	 * tokens for it via `register_with_default_pk`.
 	 */
-	defaultPk?: RistrettoPoint;
+	owner: string;
 }
 
 /**
@@ -332,8 +331,8 @@ export interface UnpauseAccountOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.setDefaultPk`. */
-export interface SetDefaultPkOptions {
+/** Arguments to `ContraClient.setDefaultPkAsSender`. */
+export interface SetDefaultPkAsSenderOptions {
 	/**
 	 * The owner address of the account whose default key is being set. The transaction must be signed
 	 * by this address (only the owner can set it).

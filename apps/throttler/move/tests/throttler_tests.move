@@ -138,7 +138,7 @@ fun throttled_unwrap_roundtrip() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
+    let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::register(&mut alice_account, &auth, pk_alice);
 
@@ -231,7 +231,7 @@ fun unwrap_aborts_for_non_owner() {
     let clock = clock::create_for_testing(scenario.ctx());
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
+    let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::register(&mut alice_account, &auth, pk_alice);
 
@@ -313,7 +313,7 @@ fun issuer_can_seize_via_set_pending() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
+    let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::register(&mut alice_account, &auth, pk_alice);
 
@@ -414,7 +414,7 @@ fun set_min_duration_shortens_window() {
     clock.set_for_testing(1_000);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(option::some(pk_alice), scenario.ctx());
+    let mut alice_account = account_registry.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::register(&mut alice_account, &auth, pk_alice);
 
