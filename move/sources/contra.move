@@ -1090,8 +1090,9 @@ public fun accepts_deposits<T>(account: &Account): bool {
     account[TokenAccountKey<T>()].accepts_deposits
 }
 
-/// The account's optional default key (used by `register_with_default_pk`), or `none` if unset. This
-/// is independent of any `TokenAccount.pk`.
+/// The account's optional default key (`none` if unset), as a raw group element. Off-chain readers
+/// decode the `default_pk` field straight from the account object rather than calling this.
+#[test_only]
 public fun default_pk(account: &Account): Option<Element<G>> {
     account.default_pk.map!(|pk| *pk.as_element())
 }
