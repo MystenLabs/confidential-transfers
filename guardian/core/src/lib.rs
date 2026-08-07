@@ -7,6 +7,8 @@
 
 pub(crate) mod checks;
 pub mod sealing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod types;
 
 use fastcrypto::ed25519::Ed25519KeyPair;
@@ -97,7 +99,7 @@ impl EnclaveKeyPair {
         Err(GuardianError::NotARecipient)
     }
 
-    /// Verify the request and sign the payload the chain will rebuild.
+    /// Verify the request and sign the payload.
     pub fn verify_and_sign(&self, req: &UnsealedRequest) -> Result<EnclaveResponse> {
         let payload = checks::verify_payload(req)?;
         Ok(EnclaveResponse {

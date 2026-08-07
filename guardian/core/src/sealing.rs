@@ -26,7 +26,7 @@ type EncappedKey = <X25519HkdfSha256 as Kem>::EncappedKey;
 /// The sealed request wire-format version.
 pub const SEALED_REQUEST_VERSION: u8 = 1;
 
-/// The `/verify` body: the request sealed to every live enclave key, one envelope each,
+/// The `/process_request` body: the request sealed to every live enclave key, one envelope each,
 /// BCS-encoded.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SealedRequest {
@@ -96,37 +96,8 @@ pub(crate) fn open(sk: &PrivateKey, sealed: &SealedEnvelope) -> crate::Result<Un
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Recipient;
+    use crate::testing::transfer_request as request;
     use crate::{EnclaveKeyPair, GuardianError};
-    use fastcrypto::groups::ristretto255::RistrettoScalar;
-    use fastcrypto::pedersen::{Blinding, PedersenCommitment};
-    use fastcrypto::twisted_elgamal::{Ciphertext, PrivateKey, PublicKey};
-
-    /// Sender holds 100, sends 40 to one recipient, keeps 60.
-    fn request() -> UnsealedRequest {
-        let x_a = PrivateKey::new(RistrettoScalar::from(12345u64));
-        let encrypt = |m: u64, pk: &PublicKey, r: u64| {
-            let r = Blinding(RistrettoScalar::from(r));
-            Ciphertext::new(
-                PedersenCommitment::new(&RistrettoScalar::from(m), &r),
-                *pk.as_point() * r.0,
-            )
-        };
-        let pk_a = PublicKey::from(&x_a);
-        let pk_b = PublicKey::from(&PrivateKey::new(RistrettoScalar::from(67890u64)));
-        UnsealedRequest::TransferRequest {
-            old_encrypted_balance: encrypt(100, &pk_a, 1),
-            new_encrypted_balance: encrypt(60, &pk_a, 2),
-            recipients: vec![Recipient {
-                receiver_pk: pk_b.clone(),
-                encrypted_amount: encrypt(40, &pk_b, 3),
-                amount: 40,
-                blinding: Blinding(RistrettoScalar::from(3u64)),
-            }],
-            x_a,
-            old_balance: 100,
-        }
-    }
 
     #[test]
     fn seals_to_many_and_unseals_own_envelope() {

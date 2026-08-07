@@ -14,7 +14,7 @@ use crate::{GuardianError, Result};
 pub struct VerifiedRequestPayload(RequestPayload);
 
 impl VerifiedRequestPayload {
-    /// The BCS bytes the enclave signs and the chain rebuilds.
+    /// The BCS bytes the enclave signs.
     pub fn to_bytes(&self) -> Vec<u8> {
         bcs::to_bytes(&self.0).expect("payload is BCS-serializable")
     }
@@ -121,8 +121,9 @@ fn check_balances(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::encrypt;
     use crate::types::Recipient;
-    use fastcrypto::pedersen::{Blinding, PedersenCommitment};
+    use fastcrypto::pedersen::Blinding;
 
     const SENDER: u64 = 12345;
     const RECIPIENT_1: u64 = 67890;
@@ -139,15 +140,6 @@ mod tests {
 
     fn blinding(r: u64) -> Blinding {
         Blinding(RistrettoScalar::from(r))
-    }
-
-    /// A well-formed encryption of `m` to `pk` with a chosen blinding `r`.
-    fn encrypt(m: u64, pk: &PublicKey, r: u64) -> Ciphertext {
-        let r = blinding(r);
-        Ciphertext::new(
-            PedersenCommitment::new(&RistrettoScalar::from(m), &r),
-            *pk.as_point() * r.0,
-        )
     }
 
     /// A consistent recipient: the ciphertext encrypts the claimed amount to the receiver.
