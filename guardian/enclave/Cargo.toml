@@ -1,0 +1,41 @@
+[package]
+name = "contra-guardian-enclave"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+contra-guardian-core = { path = "../core" }
+fastcrypto.workspace = true
+anyhow.workspace = true
+bcs.workspace = true
+serde.workspace = true
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Real NSM attestation; absent from `non-enclave-dev` builds.
+[target.'cfg(target_os = "linux")'.dependencies]
+nsm_api = { git = "https://github.com/aws/aws-nitro-enclaves-nsm-api.git", rev = "8ec7eac72bbb2097f1058ee32c13e1ff232f13e8", package = "aws-nitro-enclaves-nsm-api", optional = true }
+
+[features]
+default = ["nitro"]
+# Talks to the Nitro Secure Module. Prod builds only.
+nitro = ["dep:nsm_api"]
+# Stubs the NSM attestation call so the guardian runs outside an enclave.
+# Do not enable for prod builds.
+non-enclave-dev = []
+
+[lib]
+name = "contra_guardian_enclave"
+path = "src/lib.rs"
+
+[[bin]]
+name = "contra-guardian-enclave"
+path = "src/main.rs"
+
+[dev-dependencies]
+contra-guardian-core = { path = "../core", features = ["testing"] }
+ureq = { version = "2", features = ["json"] }

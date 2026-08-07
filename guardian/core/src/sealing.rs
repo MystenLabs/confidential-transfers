@@ -4,6 +4,7 @@
 //! HPKE (X25519-HKDF-SHA256 / HKDF-SHA256 / ChaCha20-Poly1305) sealing of the request to
 //! all enclave instances' key in the fleet.
 
+#[cfg(any(test, feature = "testing"))]
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
