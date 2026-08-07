@@ -344,6 +344,11 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
     account.add_token_account<T>(pk, session_id);
 }
 
+/// Like `register_with_default_pk`, but a no-op if `account` already has a `TokenAccount<T>`.
+public fun try_register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
+    if (!account.has_token<T>()) account.register_with_default_pk(ct);
+}
+
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
 /// registered. The caller is responsible for any authorization.
 fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vector<u8>) {

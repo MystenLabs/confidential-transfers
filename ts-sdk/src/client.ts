@@ -566,6 +566,31 @@ export class ContraClient {
 	}
 
 	/**
+	 * Race-safe variant of `registerWithDefaultPk`: a no-op if `receiver` is already registered for
+	 * `T` instead of aborting with `EAccountAlreadyRegistered`. `wrap` and `transferBatch` use this
+	 * for the auto-inserted registration, so concurrent transfers to the same unregistered receiver
+	 * don't abort each other's PTB.
+	 *
+	 * On-chain aborts:
+	 * - `ERegistrationNotPermissionless` — the token's registration is permissioned.
+	 * - `EDefaultPkNotSet` — `receiver`'s account has no default key.
+	 * - `sui::dynamic_field::EFieldDoesNotExist` — `receiver` has no `Account`.
+	 */
+	tryRegisterWithDefaultPk({ receiver, tokenType }: RegisterWithDefaultPkOptions) {
+		return (tx: Transaction): TransactionResult =>
+			tx.add(
+				contraContracts.tryRegisterWithDefaultPk({
+					package: this.#packageConfig.packageId,
+					typeArguments: [tokenType],
+					arguments: {
+						account: this.getAccountId(receiver),
+						ct: this.#getConfidentialTokenId(tokenType),
+					},
+				}),
+			);
+	}
+
+	/**
 	 * Wrap a public coin into the receiver's pending encrypted balance.
 	 *
 	 * The supplied coin is consumed, its value is added to the pool for
@@ -611,7 +636,9 @@ export class ContraClient {
 		});
 		return (tx: Transaction): TransactionResult => {
 			if (needsRegistration) {
-				tx.add(this.registerWithDefaultPk({ receiver, tokenType }));
+				// try_ variant: a concurrent wrap/transfer may register `receiver` first, so a plain
+				// register_with_default_pk here would abort this PTB in that race.
+				tx.add(this.tryRegisterWithDefaultPk({ receiver, tokenType }));
 			}
 			return tx.add(
 				contraContracts.wrap({
@@ -1346,11 +1373,12 @@ export class ContraClient {
 			}
 
 			// Deposits no longer auto-register on chain: any receiver that has an `Account` but no
-			// `TokenAccount<T>` yet is registered on their behalf first via `register_with_default_pk`
-			// (permissionless tokens only; the call aborts otherwise).
+			// `TokenAccount<T>` yet is registered on their behalf first via `try_register_with_default_pk`
+			// (permissionless tokens only; try_ so a concurrent transfer registering the same receiver
+			// doesn't abort this PTB).
 			recipients.forEach((recipient, i) => {
 				if (receiverStates[i].needsRegistration) {
-					tx.add(this.registerWithDefaultPk({ receiver: recipient.receiverAddress, tokenType }));
+					tx.add(this.tryRegisterWithDefaultPk({ receiver: recipient.receiverAddress, tokenType }));
 				}
 			});
 

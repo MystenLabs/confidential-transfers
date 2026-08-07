@@ -471,6 +471,36 @@ export function registerWithDefaultPk(options: RegisterWithDefaultPkOptions) {
 			typeArguments: options.typeArguments,
 		});
 }
+export interface TryRegisterWithDefaultPkArguments {
+	account: RawTransactionArgument<string>;
+	ct: RawTransactionArgument<string>;
+}
+export interface TryRegisterWithDefaultPkOptions {
+	package?: string;
+	arguments:
+		| TryRegisterWithDefaultPkArguments
+		| [account: RawTransactionArgument<string>, ct: RawTransactionArgument<string>];
+	typeArguments: [string];
+}
+/**
+ * Like `register_with_default_pk`, but a no-op if `account` already has a `TokenAccount<T>`. Lets
+ * concurrent permissionless registrations for the same receiver (e.g. the SDK prepending one before
+ * a deposit) race without the losers aborting their whole PTB. Still aborts if `default_pk` is unset
+ * or the token's registration is permissioned.
+ */
+export function tryRegisterWithDefaultPk(options: TryRegisterWithDefaultPkOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'ct'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'try_register_with_default_pk',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+			typeArguments: options.typeArguments,
+		});
+}
 export interface SetAcceptsEncryptedDepositsArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
