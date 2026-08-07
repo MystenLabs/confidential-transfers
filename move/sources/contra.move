@@ -70,7 +70,8 @@ use contra::{
     events,
     guardian::{Self, GuardianPolicy, GuardianApproval, Pcrs},
     nizk::{DdhProof, ElGamalProof},
-    policy::{Self, Auth, Policy}
+    policy::{Self, Auth, Policy},
+    twisted_elgamal::Encryption
 };
 use std::string::String;
 use sui::{
@@ -1065,6 +1066,29 @@ public fun register_guardian_enclave_for_dev<T>(
     events::emit_guardian_enclave_update<T>(true, signing_pk, policy.version());
 }
 
+/// TODO: remove it.
+/// Verify only the guardian-signature half of a transfer, taking the payload's parts the
+/// way `batched_transfer` does — no proofs, no state change, for tooling and e2e harnesses.
+/// TODO: delete once the ts-sdk guardian client can drive a full `batched_transfer`.
+public fun verify_transfer_approval_for_dev<T>(
+    ct: &ConfidentialToken<T>,
+    sender_pk: Element<G>,
+    receiver_pks: vector<Element<G>>,
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
+    encrypted_amounts: vector<Encryption>,
+    approval: GuardianApproval,
+) {
+    let payload = guardian::new_transfer_request_payload(
+        sender_pk,
+        receiver_pks,
+        old_encrypted_balance,
+        new_encrypted_balance,
+        encrypted_amounts,
+    );
+    ct.assert_guardian_approval(&option::some(approval), &payload);
+}
+
 /// Remove a registered enclave key. Operator-only.
 public fun remove_guardian_enclave<T>(
     ct: &mut ConfidentialToken<T>,
@@ -1202,9 +1226,6 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 }
 
 // === Test Helpers ===
-
-#[test_only]
-use contra::twisted_elgamal::Encryption;
 
 #[test_only]
 public fun protocol_id_ddh(): u8 { DST_DDH }

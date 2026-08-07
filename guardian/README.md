@@ -222,8 +222,10 @@ in `pending`, so they don't invalidate an in-flight signed request.)
 ## Code layout
 
 - `core/` — wire types, plaintext checks, HPKE sealing, keys, and response signing.
-- `enclave/` — the binary: `/attestation`, `/health` + `/registered`, and `/verify` for
+- `enclave/` — the binary: `/attestation`, `/registered` (GET gates the proxy, POST marks it), and `/process_request` for
   sealed requests.
+- `docker/` — the reproducible EIF build (`make GIT_REVISION=<commit>
+  [FEATURES=non-enclave-dev]`), consumed by the deploy stacks' user-data.
 
 Deployment lives in `sui-operations` (`contra-guardian-enclave`, and
 `contra-guardian-proxy` for the ALB + Envoy config). Routing is round robin plus a
@@ -239,20 +241,78 @@ cargo fmt && cargo xclippy              # lint
 `non-enclave-dev` stubs the NSM attestation call so the guardian runs outside an
 enclave; everything else — HPKE unseal, checks, signing — is the production path.
 `enclave/tests/e2e.rs` serves a guardian in-process and verifies each response
-against the payload the chain would rebuild.
+against the signed payload.
 
 ## Local fleet
 
-`scripts/` drives a local fleet against a localnet, mirroring what the deploy
-workflow does in production. Set `PACKAGE_ID`, `TOKEN_ID`, `TOKEN_TYPE` (plus
-`CAP_ID` for bootstrap); the active sui address must be the policy's operator.
+`scripts/` drives a full localnet e2e, mirroring the production stacks: issuer
+setup, a registered fleet, the production Envoy routing, and a wallet-role CLI
+whose approval is verified onchain.
+
+Prerequisites: `sui` (devnet toolchain), `jq`, and `envoy` (`brew install envoy`).
+
+Terminal 1 — localnet (leave running; regenesis wipes prior publications):
 
 ```
-./scripts/bootstrap.sh     # set the policy, start + register instance 1
-./scripts/scale.sh 2       # add 2 more instances (issuer not involved)
-./scripts/remove.sh 3002   # remove a key on chain, then stop the process
+sui start --with-faucet --force-regenesis
 ```
 
-State lives in `.fleet/`. Registration uses `contra::register_guardian_enclave_for_dev`
-(a mock attestation cannot pass `sui::nitro_attestation`); everything after
+Terminal 2 — point the client at it and fund the active address:
+
+```
+sui client switch --env local
+```
+
+```
+sui client faucet
+```
+
+Issuer setup: publishes contra + the BU test token (an ephemeral `test-publish`
+with a per-run pubfile, so the committed `Published.toml` is untouched) and
+registers BU as a confidential token; IDs land in `guardian/.fleet/issuer.env`:
+
+```
+./guardian/scripts/issuer_setup.sh
+```
+
+```
+source guardian/.fleet/issuer.env
+```
+
+Fleet: `bootstrap` sets the guardian policy (issuer) and starts + registers
+instance 1 (operator); `scale` adds more. The first start compiles the enclave
+crate, so allow a few minutes:
+
+```
+./guardian/scripts/bootstrap.sh
+```
+
+```
+./guardian/scripts/scale.sh 2
+```
+
+Terminal 3 — Envoy on :8080 with the production routing (`/process_request` only, round
+robin, retry-on-422, `GET /registered`-gated):
+
+```
+./guardian/scripts/proxy.sh
+```
+
+Terminal 2 — the wallet-role CLI: seals a request to every registered key from
+`.fleet/`, POSTs the BCS `SealedRequest` through Envoy, checks the responding
+key is registered and the signature verifies over the payload the chain
+rebuilds; `--submit` then proves it ONCHAIN via
+`contra::verify_transfer_approval_for_dev` (the signature half of
+`batched_transfer`; the ZK proof bundle remains ts-sdk-only):
+
+```
+cargo run -p contra-guardian-enclave --example process_request --no-default-features --features non-enclave-dev -- --submit
+```
+
+Teardown: `./guardian/scripts/remove.sh <port>` per instance (chain first, then
+the process), Ctrl-C Envoy and the localnet, and `rm -rf guardian/.fleet` for a
+clean slate.
+
+Registration uses `contra::register_guardian_enclave_for_dev` (a mock
+attestation cannot pass `sui::nitro_attestation`); everything after
 registration is the production path.
