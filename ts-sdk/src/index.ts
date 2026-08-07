@@ -5,7 +5,7 @@ export { contra, ContraClient } from './client.js';
 export * as contraContracts from './contracts/contra/contra.js';
 export * as eventsContracts from './contracts/contra/events.js';
 export { TransferEvent as TransferEventBcs } from './contracts/contra/events.js';
-export { ContraAuditor } from './auditor.js';
+export { ContraAuditor, type DecodedTransferEvent } from './auditor.js';
 export * from './error.js';
 export {
 	Ciphertext,

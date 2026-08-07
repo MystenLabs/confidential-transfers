@@ -4,7 +4,7 @@
 import { ristretto255 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
 
-import { ContraAuditor } from '../../src/auditor.js';
+import { ContraAuditor, type DecodedTransferEvent } from '../../src/auditor.js';
 import { mul, randomScalar, type RistrettoPoint } from '../../src/ristretto255.js';
 import {
 	Ciphertext,
@@ -13,16 +13,22 @@ import {
 	generateKeyPair,
 } from '../../src/twisted_elgamal.js';
 
+const bcsPoint = (p: RistrettoPoint) => ({ bytes: Array.from(p.toBytes()) });
+const bcsLimb = (c: Ciphertext) => ({
+	ciphertext: bcsPoint(c.ciphertext),
+	decryption_handle: bcsPoint(c.decryptionHandle),
+});
+
 /**
- * Build the per-transfer auditor material for a single receiver amount, mirroring the SDK's
- * `buildAuditorData`: the receiver-keyed `EncryptedAmount` and the two u32-limb auditor handles
- * `D̃_k = ρ̃_k · auditorPk`, `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`.
+ * Build a decoded `TransferEvent` for a single receiver amount, mirroring the SDK's `buildAuditorData`:
+ * the receiver-keyed `EncryptedAmount` and the two u32-limb auditor handles `D̃_k = ρ̃_k · auditorPk`,
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`, packed into the fields `decryptTransferAmount` reads.
  */
-function buildTransfer(
+function buildTransferEvent(
 	receiverPk: RistrettoPoint,
 	auditorPk: RistrettoPoint,
 	amount: bigint,
-): { ea: EncryptedAmount; handles: RistrettoPoint[] } {
+): DecodedTransferEvent {
 	const shift = 1n << 16n;
 	const limbValues = [
 		amount & 0xffffn,
@@ -37,7 +43,18 @@ function buildTransfer(
 	const ea = new EncryptedAmount(limbs[0], limbs[1], limbs[2], limbs[3]);
 	const rho0 = ristretto255.Point.Fn.create(blindings[0] + shift * blindings[1]);
 	const rho1 = ristretto255.Point.Fn.create(blindings[2] + shift * blindings[3]);
-	return { ea, handles: [mul(auditorPk, rho0), mul(auditorPk, rho1)] };
+	return {
+		encrypted_amount_receiver: {
+			l0: bcsLimb(ea.l0),
+			l1: bcsLimb(ea.l1),
+			l2: bcsLimb(ea.l2),
+			l3: bcsLimb(ea.l3),
+		},
+		auditor_decryption_handles: {
+			handles: [bcsPoint(mul(auditorPk, rho0)), bcsPoint(mul(auditorPk, rho1))],
+		},
+		auditor_pk: { element: bcsPoint(auditorPk) },
+	};
 }
 
 describe('ContraAuditor.decryptTransferAmount', () => {
@@ -51,34 +68,33 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 
 	it('recovers a small amount from the transfer commitments and handles', () => {
 		const amount = 12345n;
-		const { ea, handles } = buildTransfer(receiverPk, auditorPk, amount);
-		expect(auditorFor().decryptTransferAmount(ea, handles, auditorPk)).toBe(amount);
+		expect(
+			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, auditorPk, amount)),
+		).toBe(amount);
 	});
 
 	it('recovers an amount spanning all four limbs (>2^32)', () => {
 		const amount = (7n << 48n) | (3n << 32n) | (9n << 16n) | 42n;
-		const { ea, handles } = buildTransfer(receiverPk, auditorPk, amount);
-		expect(auditorFor().decryptTransferAmount(ea, handles, auditorPk)).toBe(amount);
+		expect(
+			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, auditorPk, amount)),
+		).toBe(amount);
 	});
 
-	it('throws when the transfer carried no auditor data', () => {
-		const { ea } = buildTransfer(receiverPk, auditorPk, 1n);
-		expect(() => auditorFor().decryptTransferAmount(ea, [], auditorPk)).toThrow(
-			/2 auditor handles/,
-		);
+	it('returns null when the transfer carried no auditor data', () => {
+		const event = buildTransferEvent(receiverPk, auditorPk, 1n);
+		event.auditor_decryption_handles = null;
+		expect(auditorFor().decryptTransferAmount(event)).toBeNull();
 	});
 
 	it('throws when it holds no key matching the transfer auditor_pk', () => {
-		const { ea, handles } = buildTransfer(receiverPk, auditorPk, 500n);
+		const event = buildTransferEvent(receiverPk, auditorPk, 500n);
 		const [, wrongSk] = generateKeyPair();
 		const wrongAuditor = new ContraAuditor({
 			tokenType: '0x2::sui::SUI',
 			privateKeys: [wrongSk],
 			table,
 		});
-		expect(() => wrongAuditor.decryptTransferAmount(ea, handles, auditorPk)).toThrow(
-			/no private key matching/,
-		);
+		expect(() => wrongAuditor.decryptTransferAmount(event)).toThrow(/no private key matching/);
 	});
 
 	it('decrypts transfers under either key across a rotation', () => {
@@ -89,19 +105,17 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 			privateKeys: [oldSk, newSk],
 			table,
 		});
-		const oldTransfer = buildTransfer(receiverPk, oldPk, 111n);
-		const newTransfer = buildTransfer(receiverPk, newPk, 222n);
 		// Matches each transfer's auditor_pk to the right held key.
-		expect(auditor.decryptTransferAmount(oldTransfer.ea, oldTransfer.handles, oldPk)).toBe(111n);
-		expect(auditor.decryptTransferAmount(newTransfer.ea, newTransfer.handles, newPk)).toBe(222n);
+		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, oldPk, 111n))).toBe(111n);
+		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, newPk, 222n))).toBe(222n);
 	});
 
 	it('addKey extends the set of decryptable keys', () => {
 		const [rotatedPk, rotatedSk] = generateKeyPair();
 		const auditor = auditorFor();
-		const { ea, handles } = buildTransfer(receiverPk, rotatedPk, 777n);
-		expect(() => auditor.decryptTransferAmount(ea, handles, rotatedPk)).toThrow(/no private key/);
+		const event = buildTransferEvent(receiverPk, rotatedPk, 777n);
+		expect(() => auditor.decryptTransferAmount(event)).toThrow(/no private key/);
 		auditor.addKey(rotatedSk);
-		expect(auditor.decryptTransferAmount(ea, handles, rotatedPk)).toBe(777n);
+		expect(auditor.decryptTransferAmount(event)).toBe(777n);
 	});
 });

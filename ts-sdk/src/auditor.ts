@@ -1,17 +1,27 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { G, mul, type RistrettoPoint } from './ristretto255.js';
+import { G, mul, pointFromBcs, type RistrettoPoint } from './ristretto255.js';
 import {
 	Ciphertext,
+	EncryptedAmount,
 	type DiscreteLogTable,
-	type EncryptedAmount,
 	type PrivateKey,
 } from './twisted_elgamal.js';
 import type { ContraAuditorOptions } from './types.js';
 
 const SHIFT_16 = 1n << 16n;
 const SHIFT_32 = 1n << 32n;
+
+/**
+ * The decoded `TransferEvent` fields an auditor reads (`events.ts` `TransferEvent`, via
+ * `TransferEventBcs.parse`). A full decoded event is structurally assignable.
+ */
+export type DecodedTransferEvent = {
+	encrypted_amount_receiver: Parameters<typeof EncryptedAmount.fromBcs>[0];
+	auditor_decryption_handles: { handles: { bytes: number[] }[] } | null;
+	auditor_pk: { element: { bytes: number[] } } | null;
+};
 
 /**
  * Per-transfer auditor SDK. Under per-transfer auditing the auditor never learns a user's viewing
@@ -63,38 +73,34 @@ export class ContraAuditor {
 	}
 
 	/**
-	 * Recover the amount of a single transfer from a `TransferEvent`.
+	 * Recover the transferred amount from a `TransferEvent`, using the held key whose public key
+	 * matches the event's `auditor_pk`. Regroups the receiver's four u16 limbs into the two u32-limb
+	 * commitments (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`, mirroring on-chain
+	 * `encrypted_amount::ciphertexts_as_u32_limbs`), pairs each with the matching handle, and
+	 * BSGS-decrypts.
 	 *
-	 * @param encryptedAmountReceiver the event's `encrypted_amount_receiver`, lifted via
-	 *   `EncryptedAmount.fromBcs`.
-	 * @param auditorHandles the event's two `auditor_decryption_handles` (the `D̃_0`, `D̃_1` for this receiver).
-	 * @param auditorPk the event's `auditor_pk` — the key the transfer was audited under. Selects which
-	 *   held private key decrypts it, so a rotated auditor holding several keys reads old and new transfers.
-	 * @throws if `auditorHandles` does not have exactly two entries (auditing was disabled for the
-	 *   transfer), if this auditor holds no key matching `auditorPk`, or if either u32 limb is outside
+	 * @param event a decoded `TransferEvent` (`TransferEventBcs.parse`).
+	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
+	 *   disabled for it).
+	 * @throws if this auditor holds no key matching the event's `auditor_pk`, or a u32 limb is outside
 	 *   the decryption table's range.
 	 */
-	decryptTransferAmount(
-		encryptedAmountReceiver: EncryptedAmount,
-		auditorHandles: readonly RistrettoPoint[],
-		auditorPk: RistrettoPoint,
-	): bigint {
-		if (auditorHandles.length !== 2) {
-			throw new Error(
-				`Expected exactly 2 auditor handles, got ${auditorHandles.length}; the transfer carried no auditor data.`,
-			);
-		}
+	decryptTransferAmount(event: DecodedTransferEvent): bigint | null {
+		const handles = event.auditor_decryption_handles;
+		if (event.auditor_pk === null || handles === null || handles.handles.length !== 2) return null;
+		const auditorPk = pointFromBcs(event.auditor_pk.element);
 		const privateKey = this.#keys.find((k) => k.publicKey.equals(auditorPk))?.privateKey;
 		if (privateKey === undefined) {
 			throw new Error(
 				"This auditor holds no private key matching the transfer's auditor_pk; add it with `addKey`.",
 			);
 		}
-		const ea = encryptedAmountReceiver;
+		const ea = EncryptedAmount.fromBcs(event.encrypted_amount_receiver);
+		const [d0, d1] = handles.handles.map((h) => pointFromBcs(h));
 		const a0 = ea.l0.ciphertext.add(mul(ea.l1.ciphertext, SHIFT_16));
 		const a1 = ea.l2.ciphertext.add(mul(ea.l3.ciphertext, SHIFT_16));
-		const n0 = new Ciphertext(a0, auditorHandles[0]).decrypt(privateKey, this.#table);
-		const n1 = new Ciphertext(a1, auditorHandles[1]).decrypt(privateKey, this.#table);
+		const n0 = new Ciphertext(a0, d0).decrypt(privateKey, this.#table);
+		const n1 = new Ciphertext(a1, d1).decrypt(privateKey, this.#table);
 		return n0 + n1 * SHIFT_32;
 	}
 }

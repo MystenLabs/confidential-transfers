@@ -637,17 +637,7 @@ export async function executeIssuerTx(opts: {
  *  range. */
 export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array): bigint | null {
 	try {
-		const decoded = TransferEventBcs.parse(eventBcs);
-		const auditorHandles = decoded.auditor_decryption_handles;
-		if (!auditorHandles || auditorHandles.handles.length !== 2) return null;
-		// The transfer names the auditor key it was encrypted under; pick the matching held key.
-		if (!decoded.auditor_pk) return null;
-		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
-		return auditor.decryptTransferAmount(
-			encryptedAmount,
-			auditorHandles.handles.map((h) => pointFromBcs(h)),
-			pointFromBcs(decoded.auditor_pk.element),
-		);
+		return auditor.decryptTransferAmount(TransferEventBcs.parse(eventBcs));
 	} catch (e) {
 		console.error('[sdk] failed to audit-decrypt TransferEvent', e);
 		return null;

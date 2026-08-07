@@ -408,12 +408,8 @@ describe('core user flows (devnet)', () => {
 				decodedTransfer.encrypted_amount_receiver,
 			);
 
-			// Auditor recovers the amount from the event, selecting its key by the event's `auditor_pk`.
-			const auditorAmount = auditor.decryptTransferAmount(
-				encryptedAmountReceiver,
-				decodedTransfer.auditor_decryption_handles!.handles.map((h) => pointFromBcs(h)),
-				pointFromBcs(decodedTransfer.auditor_pk!.element),
-			);
+			// Auditor recovers the amount straight from the event, selecting its key by `auditor_pk`.
+			const auditorAmount = auditor.decryptTransferAmount(decodedTransfer);
 			expect(auditorAmount).toBe(transferAmount);
 
 			// Sender and receiver recover the same amount their own ways.
@@ -433,13 +429,9 @@ describe('core user flows (devnet)', () => {
 				privateKeys: [randomScalar()],
 				table,
 			});
-			let wrong: bigint | undefined;
+			let wrong: bigint | null | undefined;
 			try {
-				wrong = wrongAuditor.decryptTransferAmount(
-					encryptedAmountReceiver,
-					decodedTransfer.auditor_decryption_handles!.handles.map((h) => pointFromBcs(h)),
-					pointFromBcs(decodedTransfer.auditor_pk!.element),
-				);
+				wrong = wrongAuditor.decryptTransferAmount(decodedTransfer);
 			} catch {
 				wrong = undefined;
 			}
