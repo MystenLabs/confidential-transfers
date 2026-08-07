@@ -144,7 +144,7 @@ Note on Fiat-Shamir hash functions:
 Rust workspace for the off-chain half of the TEE second factor (design: `guardian/README.md`; on-chain counterpart: `move/sources/guardian.move`).
 - **core/**: all the crypto — wire types, plaintext checks, HPKE sealing, the enclave keypair, response signing. 
 - **enclave/**: the binary — `/attestation`, `/registered` (GET is the proxy's readiness gate, POST marks the key registered), and `/process_request` for HPKE-sealed requests. `--features non-enclave-dev` stubs the NSM attestation call so it runs outside an enclave.
-- **scripts/**: bootstrap / scale / remove for a local fleet against a localnet.
+- **scripts/**: issuer setup, bootstrap / scale / remove, and a local Envoy for a fleet against a localnet; `enclave/examples/process_request.rs` uses the CLI wallet local wallet to send request to the guardian, then submits the guardian approval onchain to verify.
 - **docker/**: reproducible EIF build (Containerfile + Makefile); `FEATURES=non-enclave-dev` builds the mock-attestation dev image.
 Deployment (EIF build, Pulumi stacks, CI) lives in `sui-operations`.
 

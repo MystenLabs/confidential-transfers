@@ -39,3 +39,7 @@ path = "src/main.rs"
 [dev-dependencies]
 contra-guardian-core = { path = "../core", features = ["testing"] }
 ureq = { version = "2", features = ["json"] }
+sui-crypto.workspace = true
+sui-rpc.workspace = true
+sui-sdk-types.workspace = true
+sui-transaction-builder.workspace = true

@@ -60,7 +60,7 @@ pub fn seal_to_all(enc_pks: &[[u8; 32]], req: &UnsealedRequest) -> Result<Sealed
 }
 
 #[cfg(any(test, feature = "testing"))]
-fn seal(enc_pk: &[u8; 32], plaintext: &[u8]) -> Result<SealedEnvelope> {
+pub fn seal(enc_pk: &[u8; 32], plaintext: &[u8]) -> Result<SealedEnvelope> {
     let pk = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(enc_pk)
         .map_err(|e| anyhow!("bad enc_pk: {e}"))?;
     let mut rng = rand::thread_rng();

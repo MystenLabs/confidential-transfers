@@ -245,9 +245,10 @@ against the signed payload.
 
 ## Local fleet
 
-`scripts/` drives a full localnet e2e, mirroring the production stacks: issuer
-setup, a registered fleet, the production Envoy routing, and a wallet-role CLI
-whose approval is verified onchain.
+`scripts/` runs a e2e test against localnet with: issuer setup, a registered fleet, 
+the production Envoy routing, and a wallet that submits the payload onchain.
+
+Registration uses `contra::register_guardian_enclave_for_dev` for any passed keys without the attestation file.
 
 Prerequisites: `sui` (devnet toolchain), `jq`, and `envoy` (`brew install envoy`).
 
@@ -268,8 +269,8 @@ sui client faucet
 ```
 
 Issuer setup: publishes contra + the BU test token (an ephemeral `test-publish`
-with a per-run pubfile, so the committed `Published.toml` is untouched) and
-registers BU as a confidential token; IDs land in `guardian/.fleet/issuer.env`:
+with a per-run pubfile) and registers BU as a confidential token; IDs are added 
+in `guardian/.fleet/issuer.env` after run:
 
 ```
 ./guardian/scripts/issuer_setup.sh
@@ -281,7 +282,7 @@ source guardian/.fleet/issuer.env
 
 Fleet: `bootstrap` sets the guardian policy (issuer) and starts + registers
 instance 1 (operator); `scale` adds more. The first start compiles the enclave
-crate, so allow a few minutes:
+crate:
 
 ```
 ./guardian/scripts/bootstrap.sh
@@ -298,21 +299,14 @@ robin, retry-on-422, `GET /registered`-gated):
 ./guardian/scripts/proxy.sh
 ```
 
-Terminal 2 — the wallet-role CLI: seals a request to every registered key from
-`.fleet/`, POSTs the BCS `SealedRequest` through Envoy, checks the responding
-key is registered and the signature verifies over the payload the chain
-rebuilds; `--submit` then proves it ONCHAIN via
-`contra::verify_transfer_approval_for_dev` (the signature half of
-`batched_transfer`; the ZK proof bundle remains ts-sdk-only):
+Terminal 2: the wallet reads the token's url and every registered `enc_pk`, it seals one
+envelope per key, POSTs the BCS `SealedRequest` through Envoy, then builds and submits
+a PTB, and the guardian approval response is verified onchain via `contra::verify_transfer_approval_for_dev`.
 
 ```
-cargo run -p contra-guardian-enclave --example process_request --no-default-features --features non-enclave-dev -- --submit
+cargo run -p contra-guardian-enclave --example process_request --no-default-features --features non-enclave-dev
 ```
 
 Teardown: `./guardian/scripts/remove.sh <port>` per instance (chain first, then
 the process), Ctrl-C Envoy and the localnet, and `rm -rf guardian/.fleet` for a
 clean slate.
-
-Registration uses `contra::register_guardian_enclave_for_dev` (a mock
-attestation cannot pass `sui::nitro_attestation`); everything after
-registration is the production path.

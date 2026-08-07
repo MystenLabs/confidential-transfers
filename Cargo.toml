@@ -9,6 +9,10 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+sui-sdk-types = "0.3.2"
+sui-transaction-builder = "0.3.2"
+sui-crypto = { version = "0.3.1", features = ["ed25519"] }
+sui-rpc = "0.3.2"
 fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "d2589a2f2617493ac900f55e41a24aa6eb9506cc" }
 anyhow = "1"
 bcs = "0.1"
