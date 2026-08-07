@@ -79,7 +79,7 @@ use contra::{
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    twisted_elgamal::{PublicKey, public_key}
+    twisted_elgamal::PublicKey
 };
 use sui::{
     coin::{Self, Coin, TreasuryCap},
@@ -537,7 +537,7 @@ public fun batched_transfer<T>(
     auth: &Auth<T>,
     ct: &ConfidentialToken<T>,
     deny_list: &DenyList,
-    mut receiver_pks: vector<Element<G>>,
+    mut receiver_pks: vector<PublicKey>,
     mut receiver_amounts: vector<EncryptedAmount>,
     well_formed_proofs: WellFormedProof,
     total_sender_handle: Element<G>,
@@ -564,7 +564,6 @@ public fun batched_transfer<T>(
     // under `[receiver_pks..., sender.pk]`; verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
     receiver_amounts.push_back(new_balance);
-    let mut receiver_pks = receiver_pks.map!(|pk| public_key(pk));
     receiver_pks.push_back(sender.pk);
     let mut wfeas = encrypted_amount::batch_into_well_formed(
         receiver_amounts,

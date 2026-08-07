@@ -129,7 +129,7 @@ fun closed_loop_roundtrip() {
             &auth,
             &ct,
             &deny_list,
-            vector[pk_bob],
+            vector[twisted_elgamal::public_key(pk_bob)],
             vector[taken_amount],
             well_formed_proofs,
             total_sender_handle,

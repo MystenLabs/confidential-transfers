@@ -1340,10 +1340,10 @@ export class ContraClient {
 						sender: this.getAccountId(senderAddress),
 						auth: authArg,
 						ct: this.#getConfidentialTokenId(tokenType),
-						receiverPks: buildGVector(
-							pid,
-							prepared.map((p) => p.receiverPk),
-						),
+						receiverPks: tx.makeMoveVec({
+							type: `${pid}::twisted_elgamal::PublicKey`,
+							elements: prepared.map((p) => buildPublicKey(pid, p.receiverPk)),
+						}),
 						receiverAmounts: tx.makeMoveVec({
 							type: `${pid}::encrypted_amount::EncryptedAmount`,
 							elements: prepared.map((p) =>
