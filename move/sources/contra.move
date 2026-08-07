@@ -24,8 +24,8 @@
 /// 7. [Advanced] Set the policy for the confidential token (using the TreasuryCap). Policies define
 ///    which operations are permissioned. Currently supported permissioned operations are:
 ///    - `register`: Register a token account for a token type `T`. E.g., caller ensures the user is
-///      KYCed before registering an account. When set, setting the public key for an account
-///      is also permissioned.
+///      KYCed before registering an account. When set, also setting the public key for an account
+///      is permissioned.
 ///    - `wrap`: Wrap a public coin into a private balance. E.g., caller ensures the funds passed
 ///      screening before wrapping.
 ///    - `unwrap`: Unwrap a private balance into a public coin. E.g., caller enforces rate limit on
@@ -51,8 +51,8 @@
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
-/// Some functions require authorization via an `Auth<T>` argument. Under the default
-/// permissionless policy any `Auth<T>` is accepted. Permissioning narrows which constructors
+/// Some functions require authorization via an `&Auth<T>` argument. Under the default
+/// permissionless policy any `Auth<T>` is accepted; permissioning narrows which constructors
 /// produce a valid `Auth<T>`. The caller constructs the `Auth<T>` via one of three constructors:
 /// - `authorize_as_sender`: authenticates `ctx.sender()`. The standard path for end-user wallets
 ///   and permissionless operations.
