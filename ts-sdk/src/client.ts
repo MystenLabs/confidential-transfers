@@ -14,7 +14,6 @@ import { getBulletproofs, type BatchRangeProver, type Bulletproofs } from './bp.
 import * as contraContracts from './contracts/contra/contra.js';
 import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
 import {
-	AccountDoesNotExistError,
 	InsufficientBalanceError,
 	InvalidArgumentError,
 	ReceiverDoesNotAcceptDepositsError,
@@ -344,66 +343,34 @@ export class ContraClient {
 	}
 
 	/**
-	 * Report, for each token, the key that token's balances are currently encrypted under. Pass
-	 * `tokenTypes` to query specific tokens, or omit it to enumerate every token registered on the
-	 * account (its `TokenAccount` dynamic fields). Use it to see each token's current key — e.g. after
-	 * `tryRekeyTokenAccounts`, compare each token's reported key against the key you intended and retry any
-	 * that didn't take (a soft-failed re-key still reports the old key). A token's balance can only be
-	 * re-keyed or decrypted with the key it currently reports (`publicKey`), so an old private key is
-	 * safe to delete only once **no** token still reports it (omit `tokenTypes` to check them all).
+	 * Report, for each of `tokenTypes`, the key that token's balances are currently encrypted under
+	 * (or `registered: false` if `address` has no `TokenAccount<T>` for it — which includes the case
+	 * where `address` has no `Account` at all). A wallet passes the tokens it supports. Use it to see
+	 * each token's current key — e.g. after `tryRekeyTokenAccounts`, compare each token's reported key
+	 * against the key you intended and retry any that didn't take (a soft-failed re-key still reports
+	 * the old key). A token's balance can only be re-keyed or decrypted with the key it currently
+	 * reports (`publicKey`), so an old private key is safe to delete only once **no** token still
+	 * reports it.
 	 *
 	 * @example
 	 * ```ts
-	 * const tokens = await client.getTokenKeys(address); // every token
+	 * const tokens = await client.getTokenKeys(address, [tokenTypeA, tokenTypeB]);
 	 * const oldKeyStillUsed = tokens.some((t) => t.publicKey?.equals(oldPublicKey));
 	 * ```
-	 *
-	 * Throws `AccountDoesNotExistError` if `address` has no `Account`.
 	 */
-	async getTokenKeys(address: string, tokenTypes?: readonly string[]): Promise<TokenKeyStatus[]> {
-		const types = tokenTypes ?? (await this.#listTokenTypes(address));
-		const objectIds = [
-			this.getAccountId(address),
-			...types.map((t) => this.getTokenAccountId(address, t)),
-		];
-		const {
-			objects: [accountObject, ...tokenObjects],
-		} = await this.#suiClient.core.getObjects({ objectIds, include: { content: true } });
-
-		if (accountObject instanceof Error) {
-			throw new AccountDoesNotExistError(address, accountObject.message);
-		}
-
-		return tokenObjects.map((object, i) => {
+	async getTokenKeys(address: string, tokenTypes: readonly string[]): Promise<TokenKeyStatus[]> {
+		const objectIds = tokenTypes.map((t) => this.getTokenAccountId(address, t));
+		const { objects } = await this.#suiClient.core.getObjects({
+			objectIds,
+			include: { content: true },
+		});
+		return objects.map((object, i) => {
 			if (object instanceof Error) {
-				return { tokenType: types[i], registered: false };
+				return { tokenType: tokenTypes[i], registered: false };
 			}
 			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk.element);
-			return { tokenType: types[i], registered: true, publicKey };
+			return { tokenType: tokenTypes[i], registered: true, publicKey };
 		});
-	}
-
-	/**
-	 * Enumerate the token types registered on `address`'s account by listing its dynamic fields (an
-	 * `Account` stores only `TokenAccount<T>`s as dynamic fields, so the field `valueType`s carry every
-	 * `T`). Returns `[]` when the account has no token accounts (or does not exist).
-	 */
-	async #listTokenTypes(address: string): Promise<string[]> {
-		const parentId = this.getAccountId(address);
-		const marker = '::contra::TokenAccount<';
-		const types: string[] = [];
-		let cursor: string | null = null;
-		do {
-			const page = await this.#suiClient.core.listDynamicFields({ parentId, cursor });
-			for (const field of page.dynamicFields) {
-				const start = field.valueType.indexOf(marker);
-				if (start >= 0 && field.valueType.endsWith('>')) {
-					types.push(field.valueType.slice(start + marker.length, -1));
-				}
-			}
-			cursor = page.hasNextPage ? page.cursor : null;
-		} while (cursor);
-		return types;
 	}
 
 	/**

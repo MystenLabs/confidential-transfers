@@ -76,15 +76,6 @@ export class TokenAccountDoesNotExistError extends ContraError {
 	}
 }
 
-/** An `Account` object does not exist on chain for the given owner. */
-export class AccountDoesNotExistError extends ContraError {
-	readonly address: string;
-	constructor(address: string, cause: string) {
-		super(`Account does not exist for ${address}: ${cause}`);
-		this.address = address;
-	}
-}
-
 /** An invariant inside the SDK was violated. */
 export class ContraInternalError extends ContraError {}
 
