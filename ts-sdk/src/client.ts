@@ -407,16 +407,13 @@ export class ContraClient {
 	}
 
 	/**
-	 * Fetch the current per-transfer auditor configuration for the given token type.
-	 *
-	 * Returns the current auditor public key (`undefined` when auditing is disabled), the previous
-	 * key retained across a rotation, and the epoch through which that previous key still audits
-	 * in-flight transfers.
+	 * Fetch the current per-transfer auditor configuration for the given token type: the current
+	 * auditor public key, or `undefined` when auditing is disabled. (The rotation grace window is
+	 * enforced entirely on chain, so callers only need the current key.)
 	 *
 	 * @example
 	 * ```ts
-	 * const { currentPk, previousPk, previousExpirationEpoch } =
-	 *   await contraClient.getAuditor('0x2::sui::SUI');
+	 * const { currentPk } = await contraClient.getAuditor('0x2::sui::SUI');
 	 * ```
 	 *
 	 * Throws the underlying fetch error if any.
@@ -425,8 +422,6 @@ export class ContraClient {
 		const { auditor } = await this.#getConfidentialToken(tokenType);
 		return {
 			currentPk: auditor.current_pk ? pointFromBcs(auditor.current_pk.element) : undefined,
-			previousPk: auditor.previous_pk ? pointFromBcs(auditor.previous_pk.element) : undefined,
-			previousExpirationEpoch: BigInt(auditor.previous_expiration_epoch),
 		};
 	}
 
@@ -536,40 +531,16 @@ export class ContraClient {
 
 	/**
 	 * Register a `TokenAccount<T>` for `receiver` on their behalf, without any `Auth` — the
-	 * permissionless counterpart to `register`. Only succeeds when the token leaves registration
-	 * permissionless, and `receiver` must already have an `Account`. `transferBatch` and `wrap` call
-	 * this automatically for an unregistered receiver, so use it directly only to pre-register.
+	 * permissionless counterpart to `register`, keyed under the receiver's `Account.default_pk`. A
+	 * no-op if `receiver` is already registered for `T` (rather than aborting), so concurrent
+	 * registrations for the same receiver don't fight. `wrap` and `transferBatch` call this
+	 * automatically for an unregistered receiver; use it directly only to pre-register.
 	 *
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * tx.add(contraClient.registerWithDefaultPk({ receiver, tokenType }));
+	 * tx.add(contraClient.tryRegisterWithDefaultPk({ receiver, tokenType }));
 	 * ```
-	 *
-	 * On-chain aborts:
-	 * - `ERegistrationNotPermissionless` — the token's registration is permissioned.
-	 * - `EAccountAlreadyRegistered` — `receiver` is already registered for `T`.
-	 * - `sui::dynamic_field::EFieldDoesNotExist` — `receiver` has no `Account`.
-	 */
-	registerWithDefaultPk({ receiver, tokenType }: RegisterWithDefaultPkOptions) {
-		return (tx: Transaction): TransactionResult =>
-			tx.add(
-				contraContracts.registerWithDefaultPk({
-					package: this.#packageConfig.packageId,
-					typeArguments: [tokenType],
-					arguments: {
-						account: this.getAccountId(receiver),
-						ct: this.#getConfidentialTokenId(tokenType),
-					},
-				}),
-			);
-	}
-
-	/**
-	 * Race-safe variant of `registerWithDefaultPk`: a no-op if `receiver` is already registered for
-	 * `T` instead of aborting with `EAccountAlreadyRegistered`. `wrap` and `transferBatch` use this
-	 * for the auto-inserted registration, so concurrent transfers to the same unregistered receiver
-	 * don't abort each other's PTB.
 	 *
 	 * On-chain aborts:
 	 * - `ERegistrationNotPermissionless` — the token's registration is permissioned.

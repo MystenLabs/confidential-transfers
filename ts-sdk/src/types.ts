@@ -279,7 +279,7 @@ export interface RegisterOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.registerWithDefaultPk`. */
+/** Arguments to `ContraClient.tryRegisterWithDefaultPk`. */
 export interface RegisterWithDefaultPkOptions {
 	/** The owner address of the account to register a token account for. Must already have an `Account`. */
 	receiver: string;
@@ -300,16 +300,10 @@ export interface AccountStatus {
 export interface TokenAuditor {
 	/**
 	 * The current auditor public key, or `undefined` when auditing is disabled. When set, transfers
-	 * must attach per-transfer auditor data readable under this key.
+	 * must attach per-transfer auditor data readable under this key. (The rotation grace window is
+	 * enforced on chain, so it is not surfaced here.)
 	 */
 	currentPk?: RistrettoPoint;
-	/**
-	 * The previous auditor public key retained across a rotation, or `undefined`. Transfers built
-	 * against it stay valid through `previousExpirationEpoch`.
-	 */
-	previousPk?: RistrettoPoint;
-	/** The last epoch (inclusive) at which `previousPk` still audits in-flight transfers. */
-	previousExpirationEpoch: bigint;
 }
 
 /** Arguments to `ContraClient.pauseAccount`. */
