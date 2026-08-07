@@ -48,7 +48,9 @@ public fun new_auditor_package(
 }
 
 public(package) fun new(pk: Option<PublicKey>): Auditor {
-    Auditor { current_pk: pk, previous_pk: option::none(), previous_expiration_epoch: 0 }
+    // Seed `previous_pk` with `current_pk` so there is no policy change (and thus no grace) before
+    // the first `update`; `update` overwrites it with the pre-update key anyway.
+    Auditor { current_pk: pk, previous_pk: pk, previous_expiration_epoch: 0 }
 }
 
 /// Rotate the auditor key. The old `current_pk` (if any) becomes `previous_pk` and remains valid for
@@ -79,7 +81,11 @@ public(package) fun verify_transfer(
     dst: vector<u8>,
 ): (vector<DecryptionHandles>, Option<PublicKey>) {
     if (auditor_package.is_none()) {
-        assert!(auditor.current_pk.is_none(), EMissingAuditorData);
+        assert!(
+            auditor.current_pk.is_none() ||
+                (epoch <= auditor.previous_expiration_epoch && auditor.previous_pk.is_none()),
+            EMissingAuditorData,
+        );
         return (vector[], option::none())
     };
     assert!(

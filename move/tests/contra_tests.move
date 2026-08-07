@@ -713,6 +713,60 @@ fun test_batched_transfer_auditor_disable_grace() {
     scenario.end();
 }
 
+// === Auditor presence policy across the grace window ===
+//
+// Enabling auditing is a policy change with a grace window: the old "no-audit" policy stays valid
+// for transfers through `previous_expiration_epoch`. These exercise `verify_transfer`'s no-data
+// branch directly (it never reads `receiver_amounts`, so an empty vector is fine).
+
+/// Enabling auditing (`none -> some`) with a grace window still accepts a no-op transfer (no auditor
+/// data) while `epoch <= previous_expiration_epoch`.
+#[test]
+fun auditor_enable_grace_accepts_no_op_during_window() {
+    let key = public_key(
+        ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()),
+    );
+    let mut auditor = auditors::new(option::none());
+    auditors::update(&mut auditor, option::some(key), 100);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    let (handles, verifying) = auditors::verify_transfer(
+        &auditor,
+        &amounts,
+        option::none(),
+        50,
+        b"dst",
+    );
+    assert!(handles.is_empty());
+    assert!(verifying.is_none());
+    unit_test::destroy(auditor);
+}
+
+/// Past the grace window, the new "audit required" policy is enforced: a no-op transfer aborts.
+#[test, expected_failure(abort_code = ::contra::auditors::EMissingAuditorData)]
+fun auditor_enable_after_grace_requires_data() {
+    let key = public_key(
+        ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()),
+    );
+    let mut auditor = auditors::new(option::none());
+    auditors::update(&mut auditor, option::some(key), 100);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    auditors::verify_transfer(&auditor, &amounts, option::none(), 101, b"dst");
+    unit_test::destroy(auditor);
+}
+
+/// A token created with auditing on seeds `previous_pk = current_pk`, so there is no grace before the
+/// first update — a no-op transfer aborts even at epoch 0.
+#[test, expected_failure(abort_code = ::contra::auditors::EMissingAuditorData)]
+fun auditor_created_on_requires_data_at_genesis() {
+    let key = public_key(
+        ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()),
+    );
+    let auditor = auditors::new(option::some(key));
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    auditors::verify_transfer(&auditor, &amounts, option::none(), 0, b"dst");
+    unit_test::destroy(auditor);
+}
+
 #[test, expected_failure]
 fun test_deny_list() {
     let setup_addr = @0x0;
@@ -1820,6 +1874,64 @@ fun test_register_with_default_pk_aborts_when_permissioned() {
     );
     // Aborts: registration is not permissionless, so no `Auth`-free registration is allowed.
     contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
+    scenario.end();
+}
+
+/// `try_register_with_default_pk` is idempotent: a second call on an already-registered token account
+/// is a no-op rather than aborting, so concurrent permissionless registrations don't fight.
+#[test]
+fun test_try_register_with_default_pk_is_idempotent() {
+    let setup_addr = @0x0;
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    // Registration is left permissionless (no `set_policy`).
+    scenario.next_tx(setup_addr);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        option::none(),
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    contra::set_default_pk_as_sender(
+        &mut account_2,
+        option::some(public_key(pk_2)),
+        scenario.ctx(),
+    );
+
+    // First call registers the token account under the default key.
+    contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+    // Second call is a no-op (`register_with_default_pk` here would abort `EAccountAlreadyRegistered`).
+    contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
 
     unit_test::destroy(account_2);
     unit_test::destroy(acc_reg);
