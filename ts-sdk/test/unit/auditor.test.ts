@@ -5,6 +5,7 @@ import { ristretto255 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
 
 import { ContraAuditor, type DecodedTransferEvent } from '../../src/auditor.js';
+import { AuditorKeyNotHeldError } from '../../src/error.js';
 import { mul, randomScalar, type RistrettoPoint } from '../../src/ristretto255.js';
 import {
 	Ciphertext,
@@ -94,7 +95,7 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 			privateKeys: [wrongSk],
 			table,
 		});
-		expect(() => wrongAuditor.decryptTransferAmount(event)).toThrow(/no private key matching/);
+		expect(() => wrongAuditor.decryptTransferAmount(event)).toThrow(AuditorKeyNotHeldError);
 	});
 
 	it('decrypts transfers under either key across a rotation', () => {
@@ -114,7 +115,7 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 		const [rotatedPk, rotatedSk] = generateKeyPair();
 		const auditor = auditorFor();
 		const event = buildTransferEvent(receiverPk, rotatedPk, 777n);
-		expect(() => auditor.decryptTransferAmount(event)).toThrow(/no private key/);
+		expect(() => auditor.decryptTransferAmount(event)).toThrow(AuditorKeyNotHeldError);
 		auditor.addKey(rotatedSk);
 		expect(auditor.decryptTransferAmount(event)).toBe(777n);
 	});

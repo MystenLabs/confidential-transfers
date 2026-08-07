@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AuditorKeyNotHeldError } from './error.js';
 import { G, mul, pointFromBcs, type RistrettoPoint } from './ristretto255.js';
 import {
 	Ciphertext,
@@ -82,8 +83,8 @@ export class ContraAuditor {
 	 * @param event a decoded `TransferEvent` (`TransferEventBcs.parse`).
 	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
 	 *   disabled for it).
-	 * @throws if this auditor holds no key matching the event's `auditor_pk`, or a u32 limb is outside
-	 *   the decryption table's range.
+	 * @throws {@link AuditorKeyNotHeldError} if this auditor holds no key matching the event's
+	 *   `auditor_pk`; {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
 	 */
 	decryptTransferAmount(event: DecodedTransferEvent): bigint | null {
 		const handles = event.auditor_decryption_handles;
@@ -91,9 +92,7 @@ export class ContraAuditor {
 		const auditorPk = pointFromBcs(event.auditor_pk.element);
 		const privateKey = this.#keys.find((k) => k.publicKey.equals(auditorPk))?.privateKey;
 		if (privateKey === undefined) {
-			throw new Error(
-				"This auditor holds no private key matching the transfer's auditor_pk; add it with `addKey`.",
-			);
+			throw new AuditorKeyNotHeldError(auditorPk);
 		}
 		const ea = EncryptedAmount.fromBcs(event.encrypted_amount_receiver);
 		const [d0, d1] = handles.handles.map((h) => pointFromBcs(h));
