@@ -34,7 +34,7 @@ public struct TokenRekeyedEvent<phantom T> has copy, drop {
     new_pk: PublicKey,
 }
 
-/// Emitted when `try_rekey_token_account` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
+/// Emitted when `try_rekey_token_account_and_unpause` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
 /// Token `T` is left stale (unchanged) for a retry.
 public struct TryTokenRekeyFailedEvent<phantom T> has copy, drop {
     owner: address,

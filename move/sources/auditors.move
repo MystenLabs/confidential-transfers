@@ -80,10 +80,10 @@ public(package) fun update(
 
 /// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
 /// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
-/// carries none). Every auditor's batched proof must verify under `current_pks`; if any fails the
+/// carries none). Every auditor's batched proof must verify under `current_pks`, and if any fails the
 /// whole set is retried under `previous_pks`. Returns, per receiver, one `DecryptionHandles` per
-/// auditor (in key order) to attach to events, and the verifying key vector (`current_pks` or
-/// `previous_pks`); both empty when the transfer carries no auditor data.
+/// auditor (in key order), and the verifying key vector (`current_pks` or `previous_pks`), both empty
+/// when the transfer carries no auditor data.
 public(package) fun verify_transfer(
     auditors: &Auditors,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,

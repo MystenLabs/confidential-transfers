@@ -441,7 +441,7 @@ public fun rekey_token_account<T>(
 /// resumes deposits (`accepts_deposits = true`), now under the new key. On failure it emits
 /// `TryTokenRekeyFailedEvent` and leaves the token unchanged (still paused) for a retry. Still aborts
 /// on unmerged pending deposits.
-public fun try_rekey_token_account<T>(
+public fun try_rekey_token_account_and_unpause<T>(
     account: &mut Account,
     auth: &Auth<T>,
     new_pk: PublicKey,

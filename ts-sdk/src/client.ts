@@ -952,7 +952,7 @@ export class ContraClient {
 	}
 
 	/**
-	 * Emit the `rekey_token_account` (or `try_rekey_token_account`) Move call re-keying the token's active balance
+	 * Emit the `rekey_token_account` (or `try_rekey_token_account_and_unpause`) Move call re-keying the token's active balance
 	 * from its current `TokenAccount.pk` to `newPk` (explicit and independent of the account's default
 	 * key). Shared by `rekeyTokenAccount`, `tryRekeyTokenAccount`, and `tryRekeyTokenAccounts`.
 	 */
@@ -979,7 +979,7 @@ export class ContraClient {
 		};
 		return tx.add(
 			soft
-				? contraContracts.tryRekeyTokenAccount(options)
+				? contraContracts.tryRekeyTokenAccountAndUnpause(options)
 				: contraContracts.rekeyTokenAccount(options),
 		);
 	}
@@ -1069,7 +1069,7 @@ export class ContraClient {
 	 * (same `address`).
 	 *
 	 * There is no SDK-side key check: if a pair's `tokenAccount` key doesn't match the token's real
-	 * on-chain `TokenAccount.pk`, its re-key proof won't verify, so `try_rekey_token_account` soft-fails and it
+	 * on-chain `TokenAccount.pk`, its re-key proof won't verify, so `try_rekey_token_account_and_unpause` soft-fails and it
 	 * stays stale. After the tx, re-query `getTokenKeys` and compare each token's key against the key you
 	 * intended — any that still reports its old key needs a retry.
 	 *

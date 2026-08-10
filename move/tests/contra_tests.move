@@ -1190,7 +1190,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     scenario.end();
 }
 
-/// `try_rekey_token_account` soft-fails on a bad proof (token left stale — the normal not-yet-re-keyed
+/// `try_rekey_token_account_and_unpause` soft-fails on a bad proof (token left stale — the normal not-yet-re-keyed
 /// state) and succeeds on a good one (token caught up), without aborting either way. This is what lets
 /// a rotation + re-keys ride in one PTB without pausing.
 #[test]
@@ -1277,7 +1277,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     contra::set_accepts_encrypted_deposits<TestCurrency>(&mut account_1, &auth, false);
 
     // Bad proof: soft-fails, leaves the token stale (still under pk_old) and paused, no abort.
-    contra::try_rekey_token_account<TestCurrency>(
+    contra::try_rekey_token_account_and_unpause<TestCurrency>(
         &mut account_1,
         &auth,
         public_key(pk_new),
@@ -1289,7 +1289,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     assert!(!account_1.accepts_deposits<TestCurrency>());
 
     // Good proof: succeeds, token caught up to the account key and deposits resume.
-    contra::try_rekey_token_account<TestCurrency>(
+    contra::try_rekey_token_account_and_unpause<TestCurrency>(
         &mut account_1,
         &auth,
         public_key(pk_new),

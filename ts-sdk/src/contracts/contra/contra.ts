@@ -634,17 +634,17 @@ export function rekeyTokenAccount(options: RekeyTokenAccountOptions) {
 			typeArguments: options.typeArguments,
 		});
 }
-export interface TryRekeyTokenAccountArguments {
+export interface TryRekeyTokenAccountAndUnpauseArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
 	newPk: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
 }
-export interface TryRekeyTokenAccountOptions {
+export interface TryRekeyTokenAccountAndUnpauseOptions {
 	package?: string;
 	arguments:
-		| TryRekeyTokenAccountArguments
+		| TryRekeyTokenAccountAndUnpauseArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
@@ -660,7 +660,7 @@ export interface TryRekeyTokenAccountOptions {
  * leaves the token unchanged for a retry (detectable off-chain via the event or the token's key).
  * Still aborts on an identity `new_pk` or unmerged pending deposits.
  */
-export function tryRekeyTokenAccount(options: TryRekeyTokenAccountOptions) {
+export function tryRekeyTokenAccountAndUnpause(options: TryRekeyTokenAccountAndUnpauseOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
 	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
@@ -668,7 +668,7 @@ export function tryRekeyTokenAccount(options: TryRekeyTokenAccountOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'try_rekey_token_account',
+			function: 'try_rekey_token_account_and_unpause',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
