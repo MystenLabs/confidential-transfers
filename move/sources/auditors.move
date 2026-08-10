@@ -87,22 +87,15 @@ public(package) fun verify_transfer(
     dst: vector<u8>,
 ): (vector<vector<DecryptionHandles>>, vector<PublicKey>) {
     if (auditor_package.is_none()) {
-        // No data is allowed only when auditing is off going forward (no current keys). A grace
-        // window (non-empty `previous_pks`) never *requires* data, so it doesn't matter here.
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
         return (vector[], vector[])
     };
-    // Data is allowed whenever either set is active — enabled (`current_pks`) or in a grace window
-    // (`previous_pks`); it is forbidden only when auditing is fully off (both sets empty).
     assert!(
         !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
         EUnexpectedAuditorData,
     );
     let AuditorPackage { handles, proof } = auditor_package.destroy_some();
     let n = receiver_amounts.length();
-    // The package carries one handle set per (auditor, receiver), so its auditor count is
-    // `handles.length() / n`. It must match the set it will be verified against — `current_pks` or
-    // `previous_pks` — otherwise the request is malformed (rather than a genuine proof failure).
     assert!(
         handles.length() == auditors.current_pks.length() * n
             || handles.length() == auditors.previous_pks.length() * n,
