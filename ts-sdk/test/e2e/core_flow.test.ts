@@ -401,8 +401,10 @@ describe('core user flows (devnet)', () => {
 			const decodedTransfer = TransferEventBcs.parse(transferEvent!.bcs);
 			expect(decodedTransfer.sender).toBe(user1Address);
 			expect(decodedTransfer.receiver).toBe(user2Address);
-			// Two u32-limb auditor handles are attached when auditing is enabled.
-			expect(decodedTransfer.auditor_decryption_handles!.handles).toHaveLength(2);
+			// One DecryptionHandles per auditor key (here a single auditor), each with two u32-limb handles.
+			expect(decodedTransfer.auditor_decryption_handles).toHaveLength(1);
+			expect(decodedTransfer.auditor_decryption_handles[0].handles).toHaveLength(2);
+			expect(decodedTransfer.auditor_pks).toHaveLength(1);
 
 			const encryptedAmountReceiver = EncryptedAmount.fromBcs(
 				decodedTransfer.encrypted_amount_receiver,
