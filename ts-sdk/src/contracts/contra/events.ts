@@ -62,8 +62,8 @@ export const TransferEvent = new MoveStruct({
 		receiver: bcs.Address,
 		receiver_pk: twisted_elgamal.PublicKey,
 		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
-		auditor_decryption_handles: bcs.option(encrypted_amount.DecryptionHandles),
-		auditor_pk: bcs.option(twisted_elgamal.PublicKey),
+		auditor_decryption_handles: bcs.vector(encrypted_amount.DecryptionHandles),
+		auditor_pks: bcs.vector(twisted_elgamal.PublicKey),
 		memo: bcs.vector(bcs.u8()),
 	},
 });
@@ -125,8 +125,7 @@ export const AccountUnfreezeEvent = new MoveStruct({
 export const UpdateAuditorsEvent = new MoveStruct({
 	name: `${$moduleName}::UpdateAuditorsEvent<phantom T>`,
 	fields: {
-		current_pk: bcs.option(twisted_elgamal.PublicKey),
-		previous_pk: bcs.option(twisted_elgamal.PublicKey),
-		previous_expiration_epoch: bcs.u64(),
+		current_pks: bcs.vector(twisted_elgamal.PublicKey),
+		previous_pks: bcs.vector(twisted_elgamal.PublicKey),
 	},
 });

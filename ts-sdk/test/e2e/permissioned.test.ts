@@ -27,6 +27,7 @@ import {
 	buildElGamalProof,
 	buildEncryptedAmount,
 	buildEncryptedAmountAndProof,
+	buildPublicKeyVector,
 	buildWellFormedProof,
 	point,
 	PROTOCOL_AUDITOR_ELGAMAL,
@@ -187,10 +188,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					sender: senderAccountId,
 					auth,
 					ct: tokenIssuer.confidentialTokenId,
-					receiverPks: tx.makeMoveVec({
-						type: `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`,
-						elements: [point(receiverPk.toBytes())],
-					}),
+					receiverPks: buildPublicKeyVector(pid, [receiverPk]),
 					receiverAmounts: tx.makeMoveVec({
 						type: `${pid}::encrypted_amount::EncryptedAmount`,
 						elements: [
@@ -219,8 +217,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					),
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
 					auditorPackage: buildAuditorPackageOption(pid, {
-						handles: auditorHandles,
-						proof: auditorProof,
+						entries: [{ handles: auditorHandles, proof: auditorProof }],
 					}),
 				},
 			}),

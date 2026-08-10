@@ -89,13 +89,13 @@ export function Auditor() {
 				return;
 			}
 			const onChain = await fetchAuditor(contraClient, `${config.buPackage}::bu::BU`);
-			if (!onChain.currentPk) {
-				setVerifyError('Auditing is disabled for this token (no current auditor key on chain).');
+			if (onChain.currentPks.length === 0) {
+				setVerifyError('Auditing is disabled for this token (no current auditor keys on chain).');
 				setVerifyState('error');
 				return;
 			}
-			if (!auditorPrivateKeyMatchesPublic(key, onChain.currentPk.toBytes())) {
-				setVerifyError('This private key does not match the current on-chain auditor public key.');
+			if (!onChain.currentPks.some((pk) => auditorPrivateKeyMatchesPublic(key, pk.toBytes()))) {
+				setVerifyError('This private key does not match any current on-chain auditor public key.');
 				setVerifyState('error');
 				return;
 			}

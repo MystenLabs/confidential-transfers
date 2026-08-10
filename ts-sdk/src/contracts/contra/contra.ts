@@ -112,7 +112,7 @@ export const ConfidentialToken = new MoveStruct({
 		is_active: bcs.bool(),
 		freeze_admins: vec_set.VecSet(bcs.Address),
 		policy: bcs.option(policy.Policy),
-		auditor: auditors.Auditor,
+		auditors: auditors.Auditors,
 	},
 });
 export const Pool = new MoveStruct({
@@ -296,7 +296,7 @@ export function authorizeAsObject(options: AuthorizeAsObjectOptions) {
 export interface NewConfidentialTokenArguments {
 	registry: RawTransactionArgument<string>;
 	T: RawTransactionArgument<string>;
-	auditorPk: TransactionArgument;
+	auditorPks: TransactionArgument;
 }
 export interface NewConfidentialTokenOptions {
 	package?: string;
@@ -305,7 +305,7 @@ export interface NewConfidentialTokenOptions {
 		| [
 				registry: RawTransactionArgument<string>,
 				T: RawTransactionArgument<string>,
-				auditorPk: TransactionArgument,
+				auditorPks: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -316,17 +316,17 @@ export interface NewConfidentialTokenOptions {
  * Requires a `&mut TreasuryCap` for authorization, this is to prevent frozen
  * TreasuryCaps from being used.
  *
- * Creates an `Auditor` object for the confidential token using the provided
- * auditor public key. The auditor key can be `none` initially and updated later by
- * the issuer.
+ * Creates an `Auditors` object for the confidential token using the provided
+ * auditor public keys. The key set can be empty initially and updated later by the
+ * issuer.
  *
  * Returns the created `ConfidentialToken` and a `ManagementCap` that can be used
  * to perform administrative operations for this token.
  */
 export function newConfidentialToken(options: NewConfidentialTokenOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['registry', 'T', 'auditorPk'];
+	const argumentsTypes = [null, null, 'vector<null>'] satisfies (string | null)[];
+	const parameterNames = ['registry', 'T', 'auditorPks'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -1375,38 +1375,38 @@ export function setPolicy(options: SetPolicyOptions) {
 			typeArguments: options.typeArguments,
 		});
 }
-export interface UpdateAuditorArguments {
+export interface UpdateAuditorsArguments {
 	ct: RawTransactionArgument<string>;
 	Cap: RawTransactionArgument<string>;
-	newPk: TransactionArgument;
-	expirationEpoch: RawTransactionArgument<number | bigint>;
+	currentPks: TransactionArgument;
+	previousPks: TransactionArgument;
 }
-export interface UpdateAuditorOptions {
+export interface UpdateAuditorsOptions {
 	package?: string;
 	arguments:
-		| UpdateAuditorArguments
+		| UpdateAuditorsArguments
 		| [
 				ct: RawTransactionArgument<string>,
 				Cap: RawTransactionArgument<string>,
-				newPk: TransactionArgument,
-				expirationEpoch: RawTransactionArgument<number | bigint>,
+				currentPks: TransactionArgument,
+				previousPks: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Update the auditor key for this confidential token. `new_pk` becomes the current
- * key (`none` disables auditing); the outgoing key is retained as the previous key,
- * valid for transfers through `expiration_epoch`.
+ * Replace the auditor keys for this confidential token. `current_pks` is tried first
+ * when verifying a transfer, then `previous_pks`; the two must be the same length.
+ * Empty vectors disable auditing.
  */
-export function updateAuditor(options: UpdateAuditorOptions) {
+export function updateAuditors(options: UpdateAuditorsOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, 'u64'] satisfies (string | null)[];
-	const parameterNames = ['ct', 'Cap', 'newPk', 'expirationEpoch'];
+	const argumentsTypes = [null, null, 'vector<null>', 'vector<null>'] satisfies (string | null)[];
+	const parameterNames = ['ct', 'Cap', 'currentPks', 'previousPks'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'update_auditor',
+			function: 'update_auditors',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});

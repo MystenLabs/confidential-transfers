@@ -96,11 +96,10 @@ export async function deployBundle(opts: {
 		arguments: [
 			regTx.object(buTreasuryId),
 			regTx.object(contra.tokenRegistryId),
-			regTx.moveCall({
-				target: '0x1::option::none',
-				typeArguments: [
-					`${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`,
-				],
+			// `register_confidential` takes `vector<Element>`; register with no auditors.
+			regTx.makeMoveVec({
+				type: `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`,
+				elements: [],
 			}),
 		],
 	});

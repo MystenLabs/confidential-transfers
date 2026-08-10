@@ -212,7 +212,7 @@ export function totalConfidentialBalanceBu(balance: TokenBalance): number {
 	return Number(total) / 1e9;
 }
 
-/** Fetch the on-chain auditor config (current/previous key + grace) for the given token. */
+/** Fetch the on-chain auditor config (the current auditor keys) for the given token. */
 export function fetchAuditor(contraClient: ContraClient, tokenType: string): Promise<TokenAuditor> {
 	return contraClient.getAuditor(tokenType);
 }
@@ -632,7 +632,7 @@ export async function executeIssuerTx(opts: {
 
 /** Decrypt the amount of a single transfer from its `TransferEvent`, from the auditor's
  *  perspective. Regroups the receiver's four u16 limbs into the two u32-limb commitments and pairs
- *  them with the event's two `auditor_decryption_handles`, then BSGS-decrypts with the auditor key.
+ *  them with this auditor's handle set (the event carries one per auditor key), then BSGS-decrypts.
  *  Returns `null` if the event isn't a valid `TransferEvent`, carried no auditor data, or is out of
  *  range. */
 export function auditTransferAmount(auditor: ContraAuditor, eventBcs: Uint8Array): bigint | null {
@@ -744,11 +744,11 @@ export async function createTokenFromBytecodes(
 	log('Registering BU as confidential token...');
 	const regTx = new Transaction();
 	const elementType = `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`;
-	// `register_confidential` takes `Option<Element>`; wrap the auditor pk in `option::some`.
-	const auditorPkArg = regTx.moveCall({
-		target: '0x1::option::some',
-		typeArguments: [elementType],
-		arguments: [
+	// `register_confidential` takes `vector<Element>`; register the single auditor pk as a one-element
+	// vector (an empty vector would register with no auditors).
+	const auditorPkArg = regTx.makeMoveVec({
+		type: elementType,
+		elements: [
 			point(Uint8Array.from(auditorKey.publicKey.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
 		],
 	});

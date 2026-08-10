@@ -28,6 +28,7 @@ import {
 	buildGVector,
 	buildOptionalPublicKey,
 	buildPublicKey,
+	buildPublicKeyVector,
 	buildWellFormedProof,
 	getAccountId,
 	getConfidentialTokenId,
@@ -375,20 +376,21 @@ export class ContraClient {
 
 	/**
 	 * Fetch the current per-transfer auditor configuration for the given token type: the current
-	 * auditor public key, or `undefined` when auditing is disabled. (The rotation grace window is
-	 * enforced entirely on chain, so callers only need the current key.)
+	 * auditor public keys (one per auditor; empty when auditing is disabled). Every transfer must carry
+	 * one auditor-readable ciphertext set per key. (The rotation grace window — the `previous_pks` set —
+	 * is enforced entirely on chain, so senders only need the current keys.)
 	 *
 	 * @example
 	 * ```ts
-	 * const { currentPk } = await contraClient.getAuditor('0x2::sui::SUI');
+	 * const { currentPks } = await contraClient.getAuditor('0x2::sui::SUI');
 	 * ```
 	 *
 	 * Throws the underlying fetch error if any.
 	 */
 	async getAuditor(tokenType: string): Promise<TokenAuditor> {
-		const { auditor } = await this.#getConfidentialToken(tokenType);
+		const { auditors } = await this.#getConfidentialToken(tokenType);
 		return {
-			currentPk: auditor.current_pk ? pointFromBcs(auditor.current_pk.element) : undefined,
+			currentPks: auditors.current_pks.map((pk) => pointFromBcs(pk.element)),
 		};
 	}
 
@@ -1296,12 +1298,12 @@ export class ContraClient {
 
 		const { batchRangeProver } = await this.#getBulletproofs();
 
-		// Per-transfer auditing: when the token has an auditor key, attach two u32-limb decryption
-		// handles per receiver plus one batched `ElGamalProof` over the derived `(commitment, handle)`
-		// pairs. Both are `none` when auditing is disabled.
-		const auditor = await this.getAuditor(tokenType);
-		const auditorData = auditor.currentPk
-			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), auditor.currentPk, prepared)
+		// Per-transfer auditing: for each auditor key, attach two u32-limb decryption handles per
+		// receiver plus one batched `ElGamalProof` over that key's derived `(commitment, handle)` pairs.
+		// `undefined` (option::none) when auditing is disabled (no current keys).
+		const { currentPks } = await this.getAuditor(tokenType);
+		const auditorData = currentPks.length
+			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), currentPks, prepared)
 			: undefined;
 
 		return (tx: Transaction): TransactionResult => {
@@ -1340,10 +1342,10 @@ export class ContraClient {
 						sender: this.getAccountId(senderAddress),
 						auth: authArg,
 						ct: this.#getConfidentialTokenId(tokenType),
-						receiverPks: tx.makeMoveVec({
-							type: `${pid}::twisted_elgamal::PublicKey`,
-							elements: prepared.map((p) => buildPublicKey(pid, p.receiverPk)),
-						}),
+						receiverPks: buildPublicKeyVector(
+							pid,
+							prepared.map((p) => p.receiverPk),
+						),
 						receiverAmounts: tx.makeMoveVec({
 							type: `${pid}::encrypted_amount::EncryptedAmount`,
 							elements: prepared.map((p) =>
@@ -1534,21 +1536,20 @@ const MAX_BATCH_RECIPIENTS = 255;
 type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb[] };
 
 /**
- * Build the per-transfer auditor data (Appendix C): for each receiver, regroup its four u16 limbs
- * into two u32-limb `(commitment, handle)` pairs under `auditorPk` — commitment
- * `Č_k = C_{2k} + 2^16 C_{2k+1}` (reusing the receiver's range-proven commitments), handle
- * `D̃_k = ρ̃_k · auditorPk` with `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`. Returns the flattened handles (two
- * per receiver, in `prepared` order — matching `add_to_batch`'s consumption order) and one batched
- * `ElGamalNizk` over every derived pair, all under the single `auditorPk`.
+ * Build the per-transfer auditor data (Appendix C) for every auditor key. For each receiver, its four
+ * u16 limbs regroup into two u32-limb commitments `Č_k = C_{2k} + 2^16 C_{2k+1}` with blinding
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` — these reuse the receiver's range-proven commitments and are
+ * independent of the auditor key, so they are computed once. Each auditor key `pk` then gets its own
+ * `AuditorEntry`: handle `D̃_k = ρ̃_k · pk` per pair (two per receiver, in `prepared` order — matching
+ * `add_to_batch`'s consumption order) and one batched `ElGamalNizk` over that key's derived pairs.
  */
 function buildAuditorData(
 	dst: Uint8Array,
-	auditorPk: PublicKey,
+	auditorPks: readonly PublicKey[],
 	prepared: readonly PreparedAmount[],
-): { handles: PublicKey[]; proof: ElGamalNizk } {
+): { entries: { handles: PublicKey[]; proof: ElGamalNizk }[] } {
 	const shift = 1n << 16n;
-	const handles: PublicKey[] = [];
-	const entries: { ciphertext: Ciphertext; value: bigint; blinding: bigint }[] = [];
+	const derived: { commitment: PublicKey; value: bigint; blinding: bigint }[] = [];
 	for (const p of prepared) {
 		const limbs = p.encAmountReceiver;
 		for (const [lo, hi] of [
@@ -1562,12 +1563,19 @@ function buildAuditorData(
 			const commitment = limbs[lo].ciphertext.ciphertext.add(
 				mul(limbs[hi].ciphertext.ciphertext, shift),
 			);
-			const handle = mul(auditorPk, blinding);
-			handles.push(handle);
-			entries.push({ ciphertext: new Ciphertext(commitment, handle), value, blinding });
+			derived.push({ commitment, value, blinding });
 		}
 	}
-	return { handles, proof: ElGamalNizk.prove(dst, auditorPk, entries) };
+	const entries = auditorPks.map((auditorPk) => {
+		const handles: PublicKey[] = [];
+		const proofEntries = derived.map(({ commitment, value, blinding }) => {
+			const handle = mul(auditorPk, blinding);
+			handles.push(handle);
+			return { ciphertext: new Ciphertext(commitment, handle), value, blinding };
+		});
+		return { handles, proof: ElGamalNizk.prove(dst, auditorPk, proofEntries) };
+	});
+	return { entries };
 }
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */

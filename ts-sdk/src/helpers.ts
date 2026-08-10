@@ -178,6 +178,20 @@ export function buildGVector(packageId: string, points: RistrettoPoint[]) {
 	});
 }
 
+/**
+ * Build an on-chain `vector<twisted_elgamal::PublicKey>` from ristretto points in a single
+ * `decode::public_keys` call (each point is validated non-identity by `public_key`). Used for
+ * `batched_transfer`'s receiver keys and the `update_auditors` / `new_confidential_token` auditor
+ * keys — the elements need a nested `public_key(g_from_bytes(..))`, so a `makeMoveVec` of per-element
+ * calls does not round-trip; the single decode call does.
+ */
+export function buildPublicKeyVector(packageId: string, points: RistrettoPoint[]) {
+	return decodeContracts.publicKeys({
+		package: packageId,
+		arguments: { parts: elemParts(points.map((p) => p.toBytes())) },
+	});
+}
+
 /** Serialize a `Ciphertext` into an on-chain `Encryption`. */
 export function buildEncryption(packageId: string, ct: Ciphertext) {
 	return decodeContracts.encryption({
@@ -393,7 +407,7 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
  */
 export function buildAuditorPackageOption(
 	packageId: string,
-	data?: { handles: RistrettoPoint[]; proof: ElGamalNizk },
+	data?: { entries: { handles: RistrettoPoint[]; proof: ElGamalNizk }[] },
 ) {
 	const optionType = [`${packageId}::auditors::AuditorPackage`];
 	if (data) {
@@ -405,11 +419,24 @@ export function buildAuditorPackageOption(
 					auditorsContracts.newAuditorPackage({
 						package: packageId,
 						arguments: {
-							handles: decodeContracts.decryptionHandles({
-								package: packageId,
-								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
+							// One `AuditorEntry` per auditor key: its per-receiver handles + batched proof.
+							entries: tx.makeMoveVec({
+								type: `${packageId}::auditors::AuditorEntry`,
+								elements: data.entries.map((entry) =>
+									auditorsContracts.newAuditorEntry({
+										package: packageId,
+										arguments: {
+											handles: decodeContracts.decryptionHandles({
+												package: packageId,
+												arguments: {
+													parts: elemParts(entry.handles.map((h) => h.toBytes())),
+												},
+											}),
+											proof: buildElGamalProof(packageId, entry.proof),
+										},
+									}),
+								),
 							}),
-							proof: buildElGamalProof(packageId, data.proof),
 						},
 					}),
 				],

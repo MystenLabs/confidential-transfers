@@ -299,11 +299,11 @@ export interface AccountStatus {
 /** Return value of `ContraClient.getAuditor`: the token's per-transfer auditor configuration. */
 export interface TokenAuditor {
 	/**
-	 * The current auditor public key, or `undefined` when auditing is disabled. When set, transfers
-	 * must attach per-transfer auditor data readable under this key. (The rotation grace window is
-	 * enforced on chain, so it is not surfaced here.)
+	 * The current auditor public keys (one per auditor); empty when auditing is disabled. When
+	 * non-empty, transfers must attach one per-transfer auditor-readable ciphertext set per key. (The
+	 * rotation grace window — the `previous_pks` set — is enforced on chain, so it is not surfaced here.)
 	 */
-	currentPk?: RistrettoPoint;
+	currentPks: RistrettoPoint[];
 }
 
 /** Arguments to `ContraClient.pauseAccount`. */

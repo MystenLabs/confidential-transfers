@@ -357,10 +357,10 @@ describe('core user flows (devnet)', () => {
 		},
 	);
 
-	it('getAuditor returns the current on-chain auditor key', { timeout: 60_000 }, async () => {
+	it('getAuditor returns the current on-chain auditor keys', { timeout: 60_000 }, async () => {
 		const auditor = await client.contra.getAuditor(tokenIssuer.tokenType);
-		expect(auditor.currentPk).toBeDefined();
-		expect(auditor.currentPk!.toBytes()).toEqual(tokenIssuer.auditorPublicKey!.toBytes());
+		expect(auditor.currentPks).toHaveLength(1);
+		expect(auditor.currentPks[0].toBytes()).toEqual(tokenIssuer.auditorPublicKey!.toBytes());
 	});
 
 	it(
@@ -408,7 +408,7 @@ describe('core user flows (devnet)', () => {
 				decodedTransfer.encrypted_amount_receiver,
 			);
 
-			// Auditor recovers the amount straight from the event, selecting its key by `auditor_pk`.
+			// Auditor recovers the amount straight from the event, selecting its key from `auditor_pks`.
 			const auditorAmount = auditor.decryptTransferAmount(decodedTransfer);
 			expect(auditorAmount).toBe(transferAmount);
 
@@ -423,7 +423,7 @@ describe('core user flows (devnet)', () => {
 			expect(decryptedSender).toBe(transferAmount);
 			expect(decryptedReceiver).toBe(transferAmount);
 
-			// An auditor without the transfer's key can't decrypt it (no key matches `auditor_pk`).
+			// An auditor without the transfer's key can't decrypt it (no key matches any `auditor_pks`).
 			const wrongAuditor = new ContraAuditor({
 				tokenType: tokenIssuer.tokenType,
 				privateKeys: [randomScalar()],

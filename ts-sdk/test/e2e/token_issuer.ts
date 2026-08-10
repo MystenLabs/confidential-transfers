@@ -16,7 +16,7 @@ import {
 } from 'contra-utils/node';
 
 import * as contraContracts from '../../src/contracts/contra/contra.js';
-import { buildOptionalPublicKey } from '../../src/helpers.js';
+import { buildPublicKeyVector } from '../../src/helpers.js';
 import { G } from '../../src/ristretto255.js';
 import type { RistrettoPoint } from '../../src/ristretto255.js';
 
@@ -107,7 +107,7 @@ export class TokenIssuer {
 				arguments: {
 					registry: tokenRegistryId,
 					T: treasuryCapId,
-					auditorPk: buildOptionalPublicKey(contraPackageId, undefined),
+					auditorPks: buildPublicKeyVector(contraPackageId, []),
 				},
 			}),
 		);
@@ -189,23 +189,24 @@ export class TokenIssuer {
 	}
 
 	/**
-	 * Set the token's per-transfer auditor key on chain via `update_auditor`. Pass a private key to
-	 * enable auditing under it; omit it to disable auditing. The outgoing key (if any) is retained on
-	 * chain as the previous key, valid through `expirationEpoch` (default 0).
+	 * Set the token's per-transfer auditor key on chain via `update_auditors`. Pass a private key to
+	 * enable auditing under it (as a single-auditor set, `current == previous`); omit it to disable
+	 * auditing (both vectors empty).
 	 */
-	async setAuditorKey(privateKey?: bigint, expirationEpoch: bigint = 0n): Promise<void> {
+	async setAuditorKey(privateKey?: bigint): Promise<void> {
 		const publicKey = privateKey === undefined ? undefined : G.multiply(privateKey);
+		const pks = publicKey ? [publicKey] : [];
 
 		const tx = new Transaction();
 		tx.add(
-			contraContracts.updateAuditor({
+			contraContracts.updateAuditors({
 				package: this.contraPackageId,
 				typeArguments: [this.tokenType],
 				arguments: {
 					ct: this.confidentialTokenId,
 					Cap: this.managementCapId,
-					newPk: buildOptionalPublicKey(this.contraPackageId, publicKey),
-					expirationEpoch,
+					currentPks: buildPublicKeyVector(this.contraPackageId, pks),
+					previousPks: buildPublicKeyVector(this.contraPackageId, pks),
 				},
 			}),
 		);

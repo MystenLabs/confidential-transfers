@@ -30,6 +30,25 @@ export function gVector(options: GVectorOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface PublicKeysArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface PublicKeysOptions {
+	package?: string;
+	arguments: PublicKeysArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+export function publicKeys(options: PublicKeysOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'public_keys',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface DecryptionHandlesArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
