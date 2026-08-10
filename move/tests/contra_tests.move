@@ -510,27 +510,18 @@ fun test_batched_transfer_with_auditor() {
         &sk_1,
     );
 
-    // One `AuditorEntry` per auditor key: handles + batched proof for the two receiver amounts
-    // (both limb-0-only), built under that auditor's key. `verify_transfer` checks every entry.
+    // The handles for both auditor keys + one batched proof over all of them, for the two receiver
+    // amounts (both limb-0-only). `verify_transfer` checks the whole set at once.
     let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_auditor_elgamal(),
     );
-    let (handles_1, proof_1) = build_auditor_data(
+    let (handles, proof) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
-        &auditor_pk,
+        &vector[auditor_pk, auditor_pk_2],
         auditor_dst,
     );
-    let (handles_2, proof_2) = build_auditor_data(
-        vector[30, 20],
-        vector[r_a, r_b],
-        &auditor_pk_2,
-        auditor_dst,
-    );
-    let auditor_package = auditors::new_auditor_package(vector[
-        auditors::new_auditor_entry(handles_1, proof_1),
-        auditors::new_auditor_entry(handles_2, proof_2),
-    ]);
+    let auditor_package = auditors::new_auditor_package(handles, proof);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1
@@ -687,17 +678,15 @@ fun test_batched_transfer_auditor_rotation_grace() {
         &sk_1,
     );
 
-    // Auditor data built under `auditor_pk` — now the previous key. One entry: it fails to verify
-    // under `current_pks` (the new key) and is accepted under `previous_pks` within the grace.
+    // Auditor data built under `auditor_pk` — now the previous key. It fails to verify under
+    // `current_pks` (the new key) and is accepted under `previous_pks` within the grace.
     let (auditor_handles, auditor_proof) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
-        &auditor_pk,
+        &vector[auditor_pk],
         account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
     );
-    let auditor_package = auditors::new_auditor_package(vector[
-        auditors::new_auditor_entry(auditor_handles, auditor_proof),
-    ]);
+    let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proof);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1
@@ -781,8 +770,8 @@ fun auditor_enabled_requires_data() {
 fun auditor_disabled_forbids_data() {
     let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    // An empty package suffices: the presence check aborts before any entry is inspected.
-    let package = auditors::new_auditor_package(vector[]);
+    // A trivial package suffices: the presence check aborts before the proof is inspected.
+    let package = auditors::new_auditor_package(vector[], nizk::default_multi_key_elgamal_proof());
     auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst");
     unit_test::destroy(auditor);
 }
@@ -916,40 +905,48 @@ fun total_consistency_proof_for_testing(
     )
 }
 
-/// Build the flattened per-transfer auditor handles and the batched auditor `ElGamalProof` for a
-/// batch of limb-0-only receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`).
-/// Each amount contributes two u32-limb auditor encryptions matching
-/// `encrypted_amount::with_decryption_handles`: the low half `(r*g + v*h, r*aud_pk)` and the high
-/// half `(identity, identity)` (its committed value and blinding are both zero).
+/// Build the flattened auditor-major decryption handles and the single batched
+/// `MultiKeyElGamalProof` for a batch of limb-0-only receiver amounts (values `values[i]`, limb-0
+/// blindings `blindings[i]`) under every key in `auditor_pks`. Each amount contributes two u32-limb
+/// encryptions matching `encrypted_amount::with_decryption_handles`: the low half `(r*g + v*h,
+/// r*aud_pk)` and the high half `(identity, identity)` (committed value and blinding both zero). The
+/// commitments are shared across keys, so all keys' handles are proven together. The handles are
+/// flat and auditor-major (`[aud_0 × amounts, aud_1 × amounts, …]`), matching `verify_transfer`.
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
-    auditor_pk: &Element<G>,
+    auditor_pks: &vector<Element<G>>,
     dst: vector<u8>,
-): (vector<encrypted_amount::DecryptionHandles>, nizk::ElGamalProof) {
-    let mut handles = vector[];
-    let mut encryptions = vector[];
+): (vector<encrypted_amount::DecryptionHandles>, nizk::MultiKeyElGamalProof) {
     let mut messages = vector[];
     let mut blinds = vector[];
     values.length().do!(|i| {
-        let low = encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]);
-        handles.push_back(
-            encrypted_amount::new_decryption_handles(vector[
-                *low.decryption_handle(),
-                ristretto255::g_identity(),
-            ]),
-        );
-        encryptions.push_back(low);
-        encryptions.push_back(encrypt_zero());
         messages.push_back(values[i]);
         messages.push_back(0);
         blinds.push_back(blindings[i]);
         blinds.push_back(0);
     });
-    let proof = nizk::prove_elgamal(
+    let mut handles = vector[];
+    let mut encryptions_per_key = vector[];
+    auditor_pks.do_ref!(|pk| {
+        let mut encryptions = vector[];
+        values.length().do!(|i| {
+            let low = encrypt_trivial_for_testing(values[i], pk, blindings[i]);
+            handles.push_back(
+                encrypted_amount::new_decryption_handles(vector[
+                    *low.decryption_handle(),
+                    ristretto255::g_identity(),
+                ]),
+            );
+            encryptions.push_back(low);
+            encryptions.push_back(encrypt_zero());
+        });
+        encryptions_per_key.push_back(encryptions);
+    });
+    let proof = nizk::prove_multi_key_elgamal(
         dst,
-        auditor_pk,
-        &encryptions,
+        auditor_pks,
+        &encryptions_per_key,
         &messages,
         &blinds,
         &ristretto255::scalar_from_u64(97531),

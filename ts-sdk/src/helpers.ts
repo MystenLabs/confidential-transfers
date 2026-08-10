@@ -21,7 +21,7 @@ import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.j
 import * as twistedElgamalContracts from './contracts/contra/twisted_elgamal.js';
 import { InvalidArgumentError } from './error.js';
 import type { DdhNizk } from './nizk.js';
-import { ElGamalNizk } from './nizk.js';
+import { ElGamalNizk, MultiKeyElGamalNizk } from './nizk.js';
 import { type RistrettoPoint } from './ristretto255.js';
 import type { Ciphertext } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
@@ -216,6 +216,25 @@ export function buildDdhProof(packageId: string, proof: DdhNizk) {
 	});
 }
 
+/**
+ * Serialize a `MultiKeyElGamalNizk` into an on-chain `MultiKeyElGamalProof`. Byte layout is the
+ * per-key handle masks `a` (one point each), then `b`, then the scalars `z1, z2` — matching
+ * `decode::multi_key_elgamal_proof`.
+ */
+export function buildMultiKeyElGamalProof(packageId: string, proof: MultiKeyElGamalNizk) {
+	return decodeContracts.multiKeyElgamalProof({
+		package: packageId,
+		arguments: {
+			parts: elemParts([
+				...proof.a.map((p) => p.toBytes()),
+				proof.b.toBytes(),
+				numberToBytesLE(proof.z1, 32),
+				numberToBytesLE(proof.z2, 32),
+			]),
+		},
+	});
+}
+
 /** Serialize an `ElGamalNizk` consistency proof into an on-chain `ElGamalProof`. */
 export function buildElGamalProof(packageId: string, proof: ElGamalNizk) {
 	return decodeContracts.elgamalProof({
@@ -399,15 +418,17 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
 }
 
 /**
- * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: one `DecryptionHandles`
- * (two u32-limb handles) per receiver plus one batched `ElGamalProof`. `option::some` wrapping
+ * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: the decryption handles
+ * for every (auditor, receiver) pair plus one batched `MultiKeyElGamalProof`. `option::some` wrapping
  * `auditors::new_auditor_package(handles, proof)` when `data` is provided, `option::none` when
- * auditing is disabled. The flattened `data.handles` (two per receiver, in receiver order) are grouped
- * into per-receiver pairs on-chain by `decode::decryption_handles`.
+ * auditing is disabled. `data.handles` are flattened auditor-major (two u32-limb handles per receiver,
+ * receiver order within each auditor), grouped into `DecryptionHandles` on-chain by
+ * `decode::decryption_handles`. Built entirely through `decode` calls (no `makeMoveVec`), so the
+ * nested proof/handle structure round-trips on chain.
  */
 export function buildAuditorPackageOption(
 	packageId: string,
-	data?: { entries: { handles: RistrettoPoint[]; proof: ElGamalNizk }[] },
+	data?: { handles: RistrettoPoint[]; proof: MultiKeyElGamalNizk },
 ) {
 	const optionType = [`${packageId}::auditors::AuditorPackage`];
 	if (data) {
@@ -419,24 +440,11 @@ export function buildAuditorPackageOption(
 					auditorsContracts.newAuditorPackage({
 						package: packageId,
 						arguments: {
-							// One `AuditorEntry` per auditor key: its per-receiver handles + batched proof.
-							entries: tx.makeMoveVec({
-								type: `${packageId}::auditors::AuditorEntry`,
-								elements: data.entries.map((entry) =>
-									auditorsContracts.newAuditorEntry({
-										package: packageId,
-										arguments: {
-											handles: decodeContracts.decryptionHandles({
-												package: packageId,
-												arguments: {
-													parts: elemParts(entry.handles.map((h) => h.toBytes())),
-												},
-											}),
-											proof: buildElGamalProof(packageId, entry.proof),
-										},
-									}),
-								),
+							handles: decodeContracts.decryptionHandles({
+								package: packageId,
+								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
 							}),
+							proof: buildMultiKeyElGamalProof(packageId, data.proof),
 						},
 					}),
 				],

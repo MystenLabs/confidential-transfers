@@ -14,7 +14,7 @@ use contra::{
         EncryptedAmount,
         DecryptionHandles,
     },
-    nizk::{Self, DdhProof, ElGamalProof},
+    nizk::{Self, DdhProof, ElGamalProof, MultiKeyElGamalProof},
     twisted_elgamal::{Self, Encryption, PublicKey, public_key}
 };
 use sui::{group_ops::Element, ristretto255::{G, g_from_bytes, scalar_from_bytes}};
@@ -61,6 +61,19 @@ public fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
 
 public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
     elgamal_proof_at(&parts, 0)
+}
+
+/// Build a `MultiKeyElGamalProof` from `[a_0, …, a_{m-1}, b, z1, z2]`: the leading `parts.length - 3`
+/// point-encoded entries are the per-key handle masks `a`, followed by the point `b` and the two
+/// scalars `z1, z2`.
+public fun multi_key_elgamal_proof(parts: vector<vector<u8>>): MultiKeyElGamalProof {
+    let m = parts.length() - 3;
+    nizk::new_multi_key_elgamal_proof(
+        g_range(&parts, 0, m),
+        g_from_bytes(parts.borrow(m)),
+        scalar_from_bytes(parts.borrow(m + 1)),
+        scalar_from_bytes(parts.borrow(m + 2)),
+    )
 }
 
 public fun consistency_proof(parts: vector<vector<u8>>): ConsistencyProof {

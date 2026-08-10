@@ -37,6 +37,21 @@ public struct ElGamalProof has drop {
     z2: Element<Scalar>,
 }
 
+/// A witness-folded batch of ElGamal proofs where a shared set of commitments `C_k = r_k*g + m_k*h`
+/// is decrypted under **several** public keys: for every key `pk_i` and every `k`, the handle is
+/// `D_{i,k} = r_k*pk_i`, all reusing the same `(r_k, m_k)`. This is the multi-auditor case — one
+/// commitment per amount-limb, one decryption handle per (auditor, limb). Because the witnesses and
+/// commitments are shared, the folded responses `(z1, z2)` are shared across keys and only the
+/// handle-side mask `a` is per key, so the proof is `m + 1` points + `2` scalars for `m` keys (vs `m`
+/// independent `ElGamalProof`s). The commitment-side check is done once; the handle-side check once
+/// per key.
+public struct MultiKeyElGamalProof has drop {
+    a: vector<Element<G>>,
+    b: Element<G>,
+    z1: Element<Scalar>,
+    z2: Element<Scalar>,
+}
+
 public fun new_ddh_proof(commitments: vector<Element<G>>, z: Element<Scalar>): DdhProof {
     DdhProof { commitments, z }
 }
@@ -48,6 +63,15 @@ public fun new_elgamal_proof(
     z2: Element<Scalar>,
 ): ElGamalProof {
     ElGamalProof { a, b, z1, z2 }
+}
+
+public fun new_multi_key_elgamal_proof(
+    a: vector<Element<G>>,
+    b: Element<G>,
+    z1: Element<Scalar>,
+    z2: Element<Scalar>,
+): MultiKeyElGamalProof {
+    MultiKeyElGamalProof { a, b, z1, z2 }
 }
 
 /// Verify a `DdhProof`: a single witness `w` maps every base to its image,
@@ -96,6 +120,57 @@ public(package) fun verify_elgamal(
     is_valid_relation2(&proof.b, &agg_c, &g, &h, &proof.z1, &proof.z2, &c)
 }
 
+/// Verify a `MultiKeyElGamalProof`. The shared commitments are the ciphertext parts of
+/// `encryptions_per_key[0]`, and `encryptions_per_key[i]` carries key `i`'s decryption handles for
+/// those same commitments — so every key's ciphertext parts must be equal (the caller derives them
+/// from one commitment set; only `[0]` is read for the commitment side). Runs the commitment-side
+/// check once and the handle-side check once per key, all under one shared challenge.
+public(package) fun verify_multi_key_elgamal(
+    proof: &MultiKeyElGamalProof,
+    dst: vector<u8>,
+    pks: &vector<PublicKey>,
+    encryptions_per_key: &vector<vector<Encryption>>,
+): bool {
+    let m = pks.length();
+    if (m == 0 || proof.a.length() != m || encryptions_per_key.length() != m) return false;
+    if (encryptions_per_key[0].is_empty()) return false;
+    let g = twisted_elgamal::g();
+    let h = twisted_elgamal::h();
+    let pk_elems = pks.map_ref!(|pk| *pk.as_element());
+    let commitments = encryptions_per_key[0].map_ref!(|e| *e.ciphertext());
+    let handles = encryptions_per_key.map_ref!(|ek| ek.map_ref!(|e| *e.decryption_handle()));
+    let c = challenge_multi_key_elgamal(
+        dst,
+        &g,
+        &h,
+        &pk_elems,
+        &commitments,
+        &handles,
+        &proof.a,
+        &proof.b,
+    );
+
+    // Commitment side (shared): b + c * sum_k c^k C_k == z1 * g + z2 * h.
+    is_valid_relation2(&proof.b, &fold(&commitments, &c), &g, &h, &proof.z1, &proof.z2, &c) &&
+    // Handle side (per key i): a[i] + c * sum_k c^k D_{i,k} == z1 * pk_i.
+    vector::tabulate!(
+        m,
+        |i| is_valid_relation(&proof.a[i], &fold(&handles[i], &c), &pk_elems[i], &proof.z1, &c),
+    ).all!(|ok| *ok)
+}
+
+/// Random linear combination `sum_k c^k * points[k]` with `c^0 = 1`, matching the aggregation the
+/// batch challenge folds over.
+fun fold(points: &vector<Element<G>>, c: &Element<Scalar>): Element<G> {
+    let mut acc = g_identity();
+    let mut power = scalar_from_u64(1);
+    points.do_ref!(|p| {
+        acc = g_add(&acc, &g_mul(&power, p));
+        power = scalar_mul(&power, c);
+    });
+    acc
+}
+
 /// Fiat-Shamir challenge for a `DdhProof`. Binds, in order, the DST, every base, every image, and
 /// every per-pair Schnorr commitment.
 fun challenge_ddh(
@@ -130,6 +205,28 @@ fun challenge_elgamal(
         inputs.push_back(*e.decryption_handle().bytes());
     });
     inputs.push_back(*a.bytes());
+    inputs.push_back(*b.bytes());
+    fiat_shamir_challenge(inputs)
+}
+
+/// Fiat-Shamir challenge for a `MultiKeyElGamalProof`. Binds, in order: the DST, the bases `g, h`,
+/// every public key `pk_i`, every shared commitment `C_k`, then every key's handles `D_{i,k}`
+/// (key-major), then the per-key handle-side masks `a[i]`, then the commitment-side mask `b`.
+fun challenge_multi_key_elgamal(
+    dst: vector<u8>,
+    g: &Element<G>,
+    h: &Element<G>,
+    pks: &vector<Element<G>>,
+    commitments: &vector<Element<G>>,
+    handles: &vector<vector<Element<G>>>,
+    a: &vector<Element<G>>,
+    b: &Element<G>,
+): Element<Scalar> {
+    let mut inputs = vector[dst, *g.bytes(), *h.bytes()];
+    pks.do_ref!(|pk| inputs.push_back(*pk.bytes()));
+    commitments.do_ref!(|cm| inputs.push_back(*cm.bytes()));
+    handles.do_ref!(|hk| hk.do_ref!(|d| inputs.push_back(*d.bytes())));
+    a.do_ref!(|ai| inputs.push_back(*ai.bytes()));
     inputs.push_back(*b.bytes());
     fiat_shamir_challenge(inputs)
 }
@@ -231,6 +328,86 @@ public fun default_elgamal_proof(): ElGamalProof {
         z1: scalar_from_u64(0),
         z2: scalar_from_u64(0),
     }
+}
+
+#[test_only]
+public fun default_multi_key_elgamal_proof(): MultiKeyElGamalProof {
+    MultiKeyElGamalProof {
+        a: vector[],
+        b: g_identity(),
+        z1: scalar_from_u64(0),
+        z2: scalar_from_u64(0),
+    }
+}
+
+/// Prove a `MultiKeyElGamalProof` for `pks`, where `encryptions_per_key[i]` are the ciphertexts
+/// `(C_k, r_k*pk_i)` under key `i` sharing the commitments `C_k = r_k*g + m_k*h`. `messages` are the
+/// `m_k` and `blindings` the `r_k` (length `K`, shared across keys); `(ma, mb)` are the masks.
+#[test_only]
+public fun prove_multi_key_elgamal(
+    dst: vector<u8>,
+    pks: &vector<Element<G>>,
+    encryptions_per_key: &vector<vector<Encryption>>,
+    messages: &vector<u64>,
+    blindings: &vector<u64>,
+    ma: &Element<Scalar>,
+    mb: &Element<Scalar>,
+): MultiKeyElGamalProof {
+    let g = twisted_elgamal::g();
+    let h = twisted_elgamal::h();
+    let a = pks.map_ref!(|pk| g_mul(ma, pk));
+    let b = g_add(&g_mul(ma, &g), &g_mul(mb, &h));
+    let commitments = encryptions_per_key[0].map_ref!(|e| *e.ciphertext());
+    let handles = encryptions_per_key.map_ref!(|ek| ek.map_ref!(|e| *e.decryption_handle()));
+    let c = challenge_multi_key_elgamal(dst, &g, &h, pks, &commitments, &handles, &a, &b);
+    // z1 = ma + sum_k c^{k+1} r_k ; z2 = mb + sum_k c^{k+1} m_k, with c^j starting at c^1.
+    let mut z1 = *ma;
+    let mut z2 = *mb;
+    let mut power = c;
+    messages.length().do!(|k| {
+        z1 = scalar_add(&z1, &scalar_mul(&power, &scalar_from_u64(blindings[k])));
+        z2 = scalar_add(&z2, &scalar_mul(&power, &scalar_from_u64(messages[k])));
+        power = scalar_mul(&power, &c);
+    });
+    MultiKeyElGamalProof { a, b, z1, z2 }
+}
+
+#[test]
+fun multi_key_elgamal_round_trip() {
+    let g = twisted_elgamal::g();
+    // Three keys share four commitments `C_k = r_k*g + m_k*h`; key i's handles are `r_k*pk_i`.
+    let sks = vector[scalar_from_u64(111), scalar_from_u64(222), scalar_from_u64(333)];
+    let pks = sks.map_ref!(|sk| g_mul(sk, &g));
+    let messages = vector[7u64, 0, 65535, 42];
+    let blindings = vector[11u64, 22, 33, 44];
+    let encryptions_per_key = pks.map_ref!(
+        |pk| messages.zip_map_ref!(
+            &blindings,
+            |m, r| twisted_elgamal::encrypt_trivial_for_testing(*m, pk, *r),
+        ),
+    );
+    let proof = prove_multi_key_elgamal(
+        vector[],
+        &pks,
+        &encryptions_per_key,
+        &messages,
+        &blindings,
+        &scalar_from_u64(24680),
+        &scalar_from_u64(13579),
+    );
+    let pk_keys = pks.map_ref!(|pk| twisted_elgamal::public_key(*pk));
+    assert!(verify_multi_key_elgamal(&proof, vector[], &pk_keys, &encryptions_per_key));
+
+    // Tampering with any key's handle breaks verification (the challenge binds every handle).
+    let mut bad = encryptions_per_key;
+    *bad.borrow_mut(1).borrow_mut(0) =
+        twisted_elgamal::encrypt_trivial_for_testing(1, &pks[1], 999);
+    assert!(!verify_multi_key_elgamal(&proof, vector[], &pk_keys, &bad));
+
+    // A statement with the wrong number of keys fails the length check.
+    let mut short = pk_keys;
+    short.pop_back();
+    assert!(!verify_multi_key_elgamal(&proof, vector[], &short, &encryptions_per_key));
 }
 
 /// Build a DDH proof of knowledge of `sk` such that `ea.ciphertext - amount*h = sk*g` and

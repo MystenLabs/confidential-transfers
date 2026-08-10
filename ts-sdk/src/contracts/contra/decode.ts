@@ -30,6 +30,25 @@ export function gVector(options: GVectorOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface MultiKeyElgamalProofArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface MultiKeyElgamalProofOptions {
+	package?: string;
+	arguments: MultiKeyElgamalProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+export function multiKeyElgamalProof(options: MultiKeyElgamalProofOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'multi_key_elgamal_proof',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface PublicKeysArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }

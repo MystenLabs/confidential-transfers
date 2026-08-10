@@ -17,6 +17,15 @@ export const ElGamalProof = new MoveStruct({
 		z2: group_ops.Element,
 	},
 });
+export const MultiKeyElGamalProof = new MoveStruct({
+	name: `${$moduleName}::MultiKeyElGamalProof`,
+	fields: {
+		a: bcs.vector(group_ops.Element),
+		b: group_ops.Element,
+		z1: group_ops.Element,
+		z2: group_ops.Element,
+	},
+});
 export const DdhProof = new MoveStruct({
 	name: `${$moduleName}::DdhProof`,
 	fields: {

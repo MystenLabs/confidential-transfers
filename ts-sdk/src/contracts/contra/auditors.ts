@@ -17,50 +17,27 @@ export const Auditors = new MoveStruct({
 		previous_pks: bcs.vector(twisted_elgamal.PublicKey),
 	},
 });
-export const AuditorEntry = new MoveStruct({
-	name: `${$moduleName}::AuditorEntry`,
-	fields: {
-		handles: bcs.vector(encrypted_amount.DecryptionHandles),
-		proof: nizk.ElGamalProof,
-	},
-});
 export const AuditorPackage = new MoveStruct({
 	name: `${$moduleName}::AuditorPackage`,
 	fields: {
-		entries: bcs.vector(AuditorEntry),
+		handles: bcs.vector(encrypted_amount.DecryptionHandles),
+		proof: nizk.MultiKeyElGamalProof,
 	},
 });
-export interface NewAuditorEntryArguments {
+export interface NewAuditorPackageArguments {
 	handles: TransactionArgument;
 	proof: TransactionArgument;
 }
-export interface NewAuditorEntryOptions {
-	package?: string;
-	arguments: NewAuditorEntryArguments | [handles: TransactionArgument, proof: TransactionArgument];
-}
-export function newAuditorEntry(options: NewAuditorEntryOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<null>', null] satisfies (string | null)[];
-	const parameterNames = ['handles', 'proof'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'auditors',
-			function: 'new_auditor_entry',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewAuditorPackageArguments {
-	entries: TransactionArgument;
-}
 export interface NewAuditorPackageOptions {
 	package?: string;
-	arguments: NewAuditorPackageArguments | [entries: TransactionArgument];
+	arguments:
+		| NewAuditorPackageArguments
+		| [handles: TransactionArgument, proof: TransactionArgument];
 }
 export function newAuditorPackage(options: NewAuditorPackageOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['entries'];
+	const argumentsTypes = ['vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['handles', 'proof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

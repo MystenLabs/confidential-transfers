@@ -41,7 +41,7 @@ import {
 	PROTOCOL_RANGE_PROOF_16,
 	type WellFormedLimb,
 } from './helpers.js';
-import { DdhNizk, ElGamalNizk } from './nizk.js';
+import { DdhNizk, ElGamalNizk, MultiKeyElGamalNizk } from './nizk.js';
 import { addScalars, mul, pointFromBcs, randomScalar } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import { sampleTransferRandomness } from './transfer_randomness.js';
@@ -1538,16 +1538,17 @@ type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb
 /**
  * Build the per-transfer auditor data (Appendix C) for every auditor key. For each receiver, its four
  * u16 limbs regroup into two u32-limb commitments `Č_k = C_{2k} + 2^16 C_{2k+1}` with blinding
- * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` — these reuse the receiver's range-proven commitments and are
- * independent of the auditor key, so they are computed once. Each auditor key `pk` then gets its own
- * `AuditorEntry`: handle `D̃_k = ρ̃_k · pk` per pair (two per receiver, in `prepared` order — matching
- * `add_to_batch`'s consumption order) and one batched `ElGamalNizk` over that key's derived pairs.
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` — these reuse the receiver's range-proven commitments and are shared
+ * across all auditor keys, so they are computed once. Each key `pk` then gets the handle `D̃_k = ρ̃_k ·
+ * pk` for every limb; a single batched `MultiKeyElGamalNizk` over the shared commitments proves all
+ * keys' handles at once. Returns the flattened handles auditor-major (per key, two per receiver in
+ * `prepared` order — matching `verify_transfer`'s `handles[i*n + r]` indexing) and that one proof.
  */
 function buildAuditorData(
 	dst: Uint8Array,
 	auditorPks: readonly PublicKey[],
 	prepared: readonly PreparedAmount[],
-): { entries: { handles: PublicKey[]; proof: ElGamalNizk }[] } {
+): { handles: PublicKey[]; proof: MultiKeyElGamalNizk } {
 	const shift = 1n << 16n;
 	const derived: { commitment: PublicKey; value: bigint; blinding: bigint }[] = [];
 	for (const p of prepared) {
@@ -1566,16 +1567,10 @@ function buildAuditorData(
 			derived.push({ commitment, value, blinding });
 		}
 	}
-	const entries = auditorPks.map((auditorPk) => {
-		const handles: PublicKey[] = [];
-		const proofEntries = derived.map(({ commitment, value, blinding }) => {
-			const handle = mul(auditorPk, blinding);
-			handles.push(handle);
-			return { ciphertext: new Ciphertext(commitment, handle), value, blinding };
-		});
-		return { handles, proof: ElGamalNizk.prove(dst, auditorPk, proofEntries) };
-	});
-	return { entries };
+	// Flat, auditor-major handles: for each key, `ρ̃_k · pk` over every derived limb.
+	const handles = auditorPks.flatMap((pk) => derived.map((d) => mul(pk, d.blinding)));
+	const proof = MultiKeyElGamalNizk.prove(dst, [...auditorPks], derived);
+	return { handles, proof };
 }
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */

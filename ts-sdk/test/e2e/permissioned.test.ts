@@ -35,8 +35,8 @@ import {
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_RANGE_PROOF_16,
 } from '../../src/helpers.js';
-import { DdhNizk, ElGamalNizk } from '../../src/nizk.js';
-import { G, mul, randomScalar } from '../../src/ristretto255.js';
+import { DdhNizk, ElGamalNizk, MultiKeyElGamalNizk } from '../../src/nizk.js';
+import { G, mul, randomScalar, type RistrettoPoint } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from '../../src/twisted_elgamal.js';
 import { Admin } from './admin.js';
@@ -144,11 +144,10 @@ describe('permissioned & uncovered flows (devnet)', () => {
 
 		// Per-transfer auditor data for the single receiver: `auditors::verify_transfer` runs before the
 		// balance proof, so valid handles + proof must be present for the transfer to reach the
-		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData`.
+		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor).
 		const auditorPk = tokenIssuer.auditorPublicKey!;
 		const shift = 1n << 16n;
-		const auditorHandles = [];
-		const auditorEntries: { ciphertext: Ciphertext; value: bigint; blinding: bigint }[] = [];
+		const derived: { commitment: RistrettoPoint; value: bigint; blinding: bigint }[] = [];
 		for (const [lo, hi] of [
 			[0, 1],
 			[2, 3],
@@ -160,14 +159,13 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			const commitment = encAmountReceiver[lo].ciphertext.ciphertext.add(
 				mul(encAmountReceiver[hi].ciphertext.ciphertext, shift),
 			);
-			const handle = mul(auditorPk, blinding);
-			auditorHandles.push(handle);
-			auditorEntries.push({ ciphertext: new Ciphertext(commitment, handle), value, blinding });
+			derived.push({ commitment, value, blinding });
 		}
-		const auditorProof = ElGamalNizk.prove(
+		const auditorHandles = derived.map((d) => mul(auditorPk, d.blinding));
+		const auditorProof = MultiKeyElGamalNizk.prove(
 			sender.tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL),
-			auditorPk,
-			auditorEntries,
+			[auditorPk],
+			derived,
 		);
 
 		const { batchRangeProver } = await getBulletproofs();
@@ -217,7 +215,8 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					),
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
 					auditorPackage: buildAuditorPackageOption(pid, {
-						entries: [{ handles: auditorHandles, proof: auditorProof }],
+						handles: auditorHandles,
+						proof: auditorProof,
 					}),
 				},
 			}),
