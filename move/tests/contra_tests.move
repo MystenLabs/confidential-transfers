@@ -515,7 +515,12 @@ fun test_batched_transfer_with_auditor() {
     let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_auditor_elgamal(),
     );
-    let (handles_1, proof_1) = build_auditor_data(vector[30, 20], vector[r_a, r_b], &auditor_pk, auditor_dst);
+    let (handles_1, proof_1) = build_auditor_data(
+        vector[30, 20],
+        vector[r_a, r_b],
+        &auditor_pk,
+        auditor_dst,
+    );
     let (handles_2, proof_2) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
@@ -751,7 +756,12 @@ fun test_key(): PublicKey {
 fun auditor_disabled_accepts_no_data() {
     let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    let (handles, verifying) = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
+    let (handles, verifying) = auditors::verify_transfer(
+        &auditor,
+        &amounts,
+        option::none(),
+        b"dst",
+    );
     assert!(handles.is_empty());
     assert!(verifying.is_empty());
     unit_test::destroy(auditor);

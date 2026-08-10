@@ -107,7 +107,7 @@ public(package) fun verify_transfer(
     // Transpose the [auditor][receiver] handles into [receiver][auditor] for the per-receiver events.
     let handles = vector::tabulate!(
         receiver_amounts.length(),
-        |i| entries.map_ref!(|entry| *entry.handles[i]),
+        |i| entries.map_ref!(|entry| entry.handles[i]),
     );
     (handles, verifying_pks)
 }
