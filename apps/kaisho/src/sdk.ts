@@ -30,10 +30,10 @@ import { SUI_DENY_LIST_OBJECT_ID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/util
 import { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from 'contra-utils';
 import {
 	ContraAuditor,
+	Ciphertext,
 	ContraClient,
 	contraContracts,
 	DiscreteLogTable,
-	EncryptedAmount,
 	G,
 	point,
 	pointFromBcs,
@@ -657,12 +657,12 @@ export function decryptTransferEventAmount(opts: {
 }): bigint | null {
 	try {
 		const decoded = TransferEventBcs.parse(opts.eventBcs);
-		const encryptedAmount = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
+		const limbs = decoded.encrypted_amount_receiver.map((e) => Ciphertext.fromBcs(e));
 		if (opts.side === 'receiver') {
-			return opts.tokenAccount.decryptAmount(encryptedAmount, opts.table);
+			return opts.tokenAccount.decryptAmount(limbs, opts.table);
 		}
 		return opts.tokenAccount.recoverSentAmount(
-			encryptedAmount,
+			limbs,
 			pointFromBcs(decoded.seed_point),
 			decoded.batch_index,
 			opts.table,

@@ -7,12 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { ContraAuditor, type DecodedTransferEvent } from '../../src/auditor.js';
 import { AuditorKeyNotHeldError } from '../../src/error.js';
 import { mul, randomScalar, type RistrettoPoint } from '../../src/ristretto255.js';
-import {
-	Ciphertext,
-	DiscreteLogTable,
-	EncryptedAmount,
-	generateKeyPair,
-} from '../../src/twisted_elgamal.js';
+import { Ciphertext, DiscreteLogTable, generateKeyPair } from '../../src/twisted_elgamal.js';
 
 const bcsPoint = (p: RistrettoPoint) => ({ bytes: Array.from(p.toBytes()) });
 const bcsLimb = (c: Ciphertext) => ({
@@ -22,9 +17,10 @@ const bcsLimb = (c: Ciphertext) => ({
 
 /**
  * Build a decoded `TransferEvent` for a single receiver amount under one or more auditor keys,
- * mirroring the SDK's `buildAuditorData`: the receiver-keyed `EncryptedAmount` plus, per auditor key,
- * the two u32-limb handles `D̃_k = ρ̃_k · pk`, `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (at matching indices in
- * `auditor_pks` / `auditor_decryption_handles`).
+ * mirroring the on-chain event: `encrypted_amount_receiver` is the two u32-limb ciphertexts
+ * `(Ǎ_k, Ď_k)` folded from the receiver's four u16 limbs (`Ǎ_k = C_{2k} + 2^16 C_{2k+1}`, and likewise
+ * the handle), plus, per auditor key, the two u32-limb handles `D̃_k = ρ̃_k · pk`,
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (at matching indices in `auditor_pks` / `auditor_decryption_handles`).
  */
 function buildTransferEvent(
 	receiverPk: RistrettoPoint,
@@ -42,16 +38,19 @@ function buildTransferEvent(
 	const limbs = limbValues.map(
 		(v, j) => Ciphertext.encryptWithBlinding(receiverPk, v, blindings[j]).ciphertext,
 	);
-	const ea = new EncryptedAmount(limbs[0], limbs[1], limbs[2], limbs[3]);
+	// Fold each pair of u16 limbs into one u32-limb `Encryption` (ciphertext and handle alike).
+	const foldU32 = (lo: Ciphertext, hi: Ciphertext) =>
+		new Ciphertext(
+			lo.ciphertext.add(mul(hi.ciphertext, shift)),
+			lo.decryptionHandle.add(mul(hi.decryptionHandle, shift)),
+		);
 	const rho0 = ristretto255.Point.Fn.create(blindings[0] + shift * blindings[1]);
 	const rho1 = ristretto255.Point.Fn.create(blindings[2] + shift * blindings[3]);
 	return {
-		encrypted_amount_receiver: {
-			l0: bcsLimb(ea.l0),
-			l1: bcsLimb(ea.l1),
-			l2: bcsLimb(ea.l2),
-			l3: bcsLimb(ea.l3),
-		},
+		encrypted_amount_receiver: [
+			bcsLimb(foldU32(limbs[0], limbs[1])),
+			bcsLimb(foldU32(limbs[2], limbs[3])),
+		],
 		auditor_decryption_handles: auditorPks.map((pk) => ({
 			handles: [bcsPoint(mul(pk, rho0)), bcsPoint(mul(pk, rho1))],
 		})),

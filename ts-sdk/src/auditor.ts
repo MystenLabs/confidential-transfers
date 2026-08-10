@@ -3,15 +3,9 @@
 
 import { AuditorKeyNotHeldError } from './error.js';
 import { G, mul, pointFromBcs, type RistrettoPoint } from './ristretto255.js';
-import {
-	Ciphertext,
-	EncryptedAmount,
-	type DiscreteLogTable,
-	type PrivateKey,
-} from './twisted_elgamal.js';
+import { Ciphertext, type DiscreteLogTable, type PrivateKey } from './twisted_elgamal.js';
 import type { ContraAuditorOptions } from './types.js';
 
-const SHIFT_16 = 1n << 16n;
 const SHIFT_32 = 1n << 32n;
 
 /**
@@ -19,7 +13,10 @@ const SHIFT_32 = 1n << 32n;
  * `TransferEventBcs.parse`). A full decoded event is structurally assignable.
  */
 export type DecodedTransferEvent = {
-	encrypted_amount_receiver: Parameters<typeof EncryptedAmount.fromBcs>[0];
+	encrypted_amount_receiver: {
+		ciphertext: { bytes: number[] };
+		decryption_handle: { bytes: number[] };
+	}[];
 	auditor_decryption_handles: { handles: { bytes: number[] }[] }[];
 	auditor_pks: { element: { bytes: number[] } }[];
 };
@@ -28,12 +25,9 @@ export type DecodedTransferEvent = {
  * Per-transfer auditor SDK. Under per-transfer auditing the auditor never learns a user's viewing
  * key; instead every transfer carries one auditor-readable ciphertext set per auditor key. A token
  * can have several auditors, so a `TransferEvent` lists `auditor_pks` and, at matching indices,
- * `auditor_decryption_handles` (two u32-limb handles per key). Given the receiver's four u16 limbs
- * (`encrypted_amount_receiver`), this recovers the transferred amount with a held private key.
- *
- * The two u32-limb commitments are regrouped from the receiver limbs on the fly
- * (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`), mirroring on-chain `encrypted_amount::ciphertexts_as_u32_limbs`,
- * and paired with the matching handle to form a twisted ElGamal ciphertext the auditor decrypts.
+ * `auditor_decryption_handles` (two u32-limb handles per key). The event's `encrypted_amount_receiver`
+ * already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`), so this pairs each with the matching
+ * handle to form a twisted ElGamal ciphertext and recovers the transferred amount with a held key.
  *
  * An auditor holds one or more private keys. A token's auditor keys can be rotated, and a transfer
  * made before a rotation stays encrypted under whichever keys were current then (accepted on chain
@@ -77,10 +71,8 @@ export class ContraAuditor {
 	/**
 	 * Recover the transferred amount from a `TransferEvent`, using the held key whose public key matches
 	 * one of the event's `auditor_pks`, and that key's handles (at the same index in
-	 * `auditor_decryption_handles`). Regroups the receiver's four u16 limbs into the two u32-limb
-	 * commitments (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`, mirroring on-chain
-	 * `encrypted_amount::ciphertexts_as_u32_limbs`), pairs each with the matching handle, and
-	 * BSGS-decrypts.
+	 * `auditor_decryption_handles`). Pairs each of the event's two u32-limb commitments
+	 * (`encrypted_amount_receiver`) with the matching handle and BSGS-decrypts.
 	 *
 	 * @param event a decoded `TransferEvent` (`TransferEventBcs.parse`).
 	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
@@ -109,10 +101,11 @@ export class ContraAuditor {
 		}
 		const handles = event.auditor_decryption_handles[index];
 		if (handles === undefined || handles.handles.length !== 2) return null;
-		const ea = EncryptedAmount.fromBcs(event.encrypted_amount_receiver);
+		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with this
+		// auditor's matching handle and BSGS-decrypt.
 		const [d0, d1] = handles.handles.map((h) => pointFromBcs(h));
-		const a0 = ea.l0.ciphertext.add(mul(ea.l1.ciphertext, SHIFT_16));
-		const a1 = ea.l2.ciphertext.add(mul(ea.l3.ciphertext, SHIFT_16));
+		const a0 = pointFromBcs(event.encrypted_amount_receiver[0].ciphertext);
+		const a1 = pointFromBcs(event.encrypted_amount_receiver[1].ciphertext);
 		const n0 = new Ciphertext(a0, d0).decrypt(privateKey, this.#table);
 		const n1 = new Ciphertext(a1, d1).decrypt(privateKey, this.#table);
 		return n0 + n1 * SHIFT_32;

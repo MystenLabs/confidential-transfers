@@ -3,7 +3,10 @@
 
 module contra::events;
 
-use contra::{encrypted_amount::{EncryptedAmount, DecryptionHandles}, twisted_elgamal::PublicKey};
+use contra::{
+    encrypted_amount::{EncryptedAmount, DecryptionHandles},
+    twisted_elgamal::{PublicKey, Encryption}
+};
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -48,20 +51,20 @@ public struct WrapEvent<phantom T> has copy, drop {
     memo: vector<u8>,
 }
 
-/// A confidential transfer is made from a sender to a receiver. The transferred amount is the
-/// well-formed four-limb encryption `encrypted_amount_receiver` under `receiver_pk`. The sender
-/// does not send a separate sender-keyed amount: it recovers its own outgoing value from the
-/// commitments in `encrypted_amount_receiver` (the sender and receiver commitments are identical)
-/// by re-deriving the per-transfer blinding from `seed = HKDF(sk * seed_point)` and
-/// the receiver's `batch_index` within this transfer.
+/// A confidential transfer is made from a sender to a receiver. The transferred amount is
+/// `encrypted_amount_receiver`, the receiver's four range-proven u16 limbs folded into the two
+/// u32-limb `Encryption`s `[(C_0 + 2^16 C_1, D_0 + 2^16 D_1), (C_2 + 2^16 C_3, D_2 + 2^16 D_3)]` under
+/// `receiver_pk` (the full amount is `n_0 + 2^32 n_1`). The sender does not send a separate
+/// sender-keyed amount: it recovers its own outgoing value from these commitments (the sender and
+/// receiver commitments are identical) by re-deriving the per-transfer blinding from
+/// `seed = HKDF(sk * seed_point)` and the receiver's `batch_index` within this transfer.
 ///
 /// `auditor_decryption_handles` holds one `DecryptionHandles` (two u32-limb handles) per auditor key,
 /// in the same order as `auditor_pks` (empty when auditing is disabled), each paired off-chain with
-/// the two commitments derived from `encrypted_amount_receiver`
-/// (`encrypted_amount::ciphertexts_as_u32_limbs`). `auditor_pks` are the auditor keys they are
-/// encrypted under — the set (current or, during a rotation grace window, previous) that verified this
-/// transfer's auditor proofs — so an auditor knows which index carries its handles. `memo` is an
-/// opaque caller-supplied blob, empty if none was provided.
+/// the two commitments (the ciphertext halves of `encrypted_amount_receiver`). `auditor_pks` are the
+/// auditor keys they are encrypted under — the set (current or, during a rotation grace window,
+/// previous) that verified this transfer's auditor proofs — so an auditor knows which index carries
+/// its handles. `memo` is an opaque caller-supplied blob, empty if none was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
     sender_pk: PublicKey,
@@ -69,7 +72,7 @@ public struct TransferEvent<phantom T> has copy, drop {
     batch_index: u8,
     receiver: address,
     receiver_pk: PublicKey,
-    encrypted_amount_receiver: EncryptedAmount,
+    encrypted_amount_receiver: vector<Encryption>,
     auditor_decryption_handles: vector<DecryptionHandles>,
     auditor_pks: vector<PublicKey>,
     memo: vector<u8>,
@@ -168,7 +171,7 @@ public(package) fun emit_transfer<T>(
     batch_index: u8,
     receiver: address,
     receiver_pk: PublicKey,
-    encrypted_amount_receiver: EncryptedAmount,
+    encrypted_amount_receiver: vector<Encryption>,
     auditor_decryption_handles: vector<DecryptionHandles>,
     auditor_pks: vector<PublicKey>,
     memo: vector<u8>,

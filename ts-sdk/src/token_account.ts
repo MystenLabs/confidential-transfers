@@ -1,17 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ristretto255 } from '@noble/curves/ed25519.js';
+
 import { dst, newSessionId, PROTOCOL_VERIFIED_DEC } from './helpers.js';
 import type { DdhNizk } from './nizk.js';
 import { assertNonZeroScalar, G, mul, randomScalar, type RistrettoPoint } from './ristretto255.js';
 import { recoverTransferRandomness } from './transfer_randomness.js';
-import type {
-	Ciphertext,
-	DiscreteLogTable,
-	EncryptedAmount,
-	PrivateKey,
-	PublicKey,
-} from './twisted_elgamal.js';
+import type { Ciphertext, DiscreteLogTable, PrivateKey, PublicKey } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
 
 /**
@@ -60,13 +56,15 @@ export class TokenAccount {
 	}
 
 	/**
-	 * Decrypt an `EncryptedAmount` using this account's private key,
-	 * returning the underlying u64 plaintext as a `bigint`.
-	 *
-	 * Convenience wrapper over `EncryptedAmount.decrypt(privateKey, table)`.
+	 * Decrypt a transferred amount from a `TransferEvent`'s `encrypted_amount_receiver` — its two
+	 * u32-limb ciphertexts under this account's key — returning the u64 plaintext. Each limb `k` is
+	 * BSGS-decrypted and shifted into place: `n_0 + 2^32 * n_1`.
 	 */
-	decryptAmount(encryptedAmount: EncryptedAmount, table: DiscreteLogTable): bigint {
-		return encryptedAmount.decrypt(this.privateKey, table);
+	decryptAmount(limbs: Ciphertext[], table: DiscreteLogTable): bigint {
+		return limbs.reduce(
+			(acc, limb, k) => acc + (limb.decrypt(this.privateKey, table) << BigInt(32 * k)),
+			0n,
+		);
 	}
 
 	/**
@@ -95,19 +93,24 @@ export class TokenAccount {
 	}
 
 	/**
-	 * Recover an outgoing batched-transfer amount this account sent, from the
-	 * on-chain `TransferEvent`, without any sender-keyed decryption handle.
+	 * Recover an outgoing batched-transfer amount this account sent, from the `TransferEvent`'s
+	 * `encrypted_amount_receiver` (two u32-limb ciphertexts), without any sender-keyed decryption
+	 * handle. The per-transfer blindings are re-derived from `seedPoint` (`P`) and each u32 limb's
+	 * blinding is the fold `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`; the value reads off the commitment alone.
 	 */
 	recoverSentAmount(
-		encryptedAmount: EncryptedAmount,
+		limbs: Ciphertext[],
 		seedPoint: RistrettoPoint,
 		batchIndex: number,
 		table: DiscreteLogTable,
 	): bigint {
 		const randomness = recoverTransferRandomness(this.privateKey, seedPoint);
-		return encryptedAmount.decryptWithBlindings(
-			(limbIndex) => randomness.blinding(batchIndex, limbIndex),
-			table,
-		);
+		return limbs.reduce((acc, limb, k) => {
+			const blinding = ristretto255.Point.Fn.create(
+				randomness.blinding(batchIndex, 2 * k) +
+					(1n << 16n) * randomness.blinding(batchIndex, 2 * k + 1),
+			);
+			return acc + (limb.decryptWithBlinding(blinding, table) << BigInt(32 * k));
+		}, 0n);
 	}
 }

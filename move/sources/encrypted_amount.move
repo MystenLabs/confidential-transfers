@@ -306,6 +306,24 @@ fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
     ]
 }
 
+/// The amount as its two u32-limb `Encryption`s `[(C_0 + 2^16 C_1, D_0 + 2^16 D_1), (C_2 + 2^16 C_3,
+/// D_2 + 2^16 D_3)]` — folding both ciphertext and decryption handle of each pair of u16 limbs, under
+/// the same key. The receiver-decryptable form emitted on `TransferEvent`; auditors reuse the
+/// ciphertext halves (`ciphertexts_as_u32_limbs`) with their own handles.
+public(package) fun as_u32_encryptions(ea: &EncryptedAmount): vector<Encryption> {
+    vector[fold_u32(&ea.l0, &ea.l1), fold_u32(&ea.l2, &ea.l3)]
+}
+
+/// Fold two consecutive u16 limbs `low`, `high` into one u32 limb `(low + 2^16 high)`, ciphertext and
+/// handle alike.
+fun fold_u32(low: &Encryption, high: &Encryption): Encryption {
+    let shift = scalar_from_u64(1 << 16);
+    twisted_elgamal::new(
+        g_add(low.ciphertext(), &g_mul(&shift, high.ciphertext())),
+        g_add(low.decryption_handle(), &g_mul(&shift, high.decryption_handle())),
+    )
+}
+
 /// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.
 fun collapse_limbs(l0: &Element<G>, l1: &Element<G>, l2: &Element<G>, l3: &Element<G>): Element<G> {
     g_add(
