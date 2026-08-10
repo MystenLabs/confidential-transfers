@@ -1,0 +1,19 @@
+# Copyright (c) Mysten Labs, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reproducible image the EIF is built from (see Makefile): always the real
+# NSM-attesting enclave — the `non-enclave-dev` mock is for bare `cargo run`
+# on machines without an NSM and never ships in an EIF.
+FROM rust:1.85-alpine3.21 AS build
+RUN apk add --no-cache musl-dev
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY .cargo .cargo
+COPY guardian guardian
+RUN cargo build --release -p contra-guardian-enclave
+
+FROM alpine:3.21
+RUN apk add --no-cache socat
+COPY --from=build /src/target/release/contra-guardian-enclave /usr/local/bin/contra-guardian-enclave
+COPY guardian/docker/run.sh /usr/local/bin/run.sh
+ENTRYPOINT ["/usr/local/bin/run.sh"]

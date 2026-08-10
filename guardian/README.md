@@ -224,12 +224,16 @@ in `pending`, so they don't invalidate an in-flight signed request.)
 - `core/` — wire types, plaintext checks, HPKE sealing, keys, and response signing.
 - `enclave/` — the binary: `/attestation`, `/registered` (GET gates the proxy, POST marks it), and `/process_request` for
   sealed requests.
-- `docker/` — the reproducible EIF build (`make GIT_REVISION=<commit>
-  [FEATURES=non-enclave-dev]`), consumed by the deploy stacks' user-data.
+- `docker/` — the reproducible EIF build (`make GIT_REVISION=<commit>`), always
+  the real NSM-attesting enclave, consumed by the deploy stacks' user-data.
 
 Deployment lives in `sui-operations` (`contra-guardian-enclave`, and
 `contra-guardian-proxy` for the ALB + Envoy config). Routing is round robin plus a
 retry when an instance answers 422 ("not a recipient"), configured in Envoy.
+Devnet runs the real NSM build under `--debug-mode`: attestation documents are
+genuinely signed but every PCR reads all-zero, so the policy pins zero PCRs once
+and iteration only ever re-registers fresh keys; testnet+ pins real CI-built
+measurements. The `non-enclave-dev` mock below is for machines with no NSM at all.
 
 ## Test
 
@@ -248,7 +252,10 @@ against the signed payload.
 `scripts/` runs a e2e test against localnet with: issuer setup, a registered fleet, 
 the production Envoy routing, and a wallet that submits the payload onchain.
 
-Registration uses `contra::register_guardian_enclave_for_dev` for any passed keys without the attestation file.
+Registration goes through `scripts/register.sh` — shared with the AWS deploy, where
+operators run it as `HOST=<instance>:3000 ./register.sh`. It detects the document
+shape: dev builds serve raw keys (`register_guardian_enclave_for_dev`), real
+enclaves a signed document (`register_guardian_enclave` via `0x2::nitro_attestation`).
 
 Prerequisites: `sui` (devnet toolchain), `jq`, and `envoy` (`brew install envoy`).
 
