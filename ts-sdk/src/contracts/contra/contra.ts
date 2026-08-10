@@ -296,7 +296,7 @@ export function authorizeAsObject(options: AuthorizeAsObjectOptions) {
 export interface NewConfidentialTokenArguments {
 	registry: RawTransactionArgument<string>;
 	T: RawTransactionArgument<string>;
-	auditorPks: TransactionArgument;
+	auditorPublicKeys: TransactionArgument;
 }
 export interface NewConfidentialTokenOptions {
 	package?: string;
@@ -305,7 +305,7 @@ export interface NewConfidentialTokenOptions {
 		| [
 				registry: RawTransactionArgument<string>,
 				T: RawTransactionArgument<string>,
-				auditorPks: TransactionArgument,
+				auditorPublicKeys: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -326,7 +326,7 @@ export interface NewConfidentialTokenOptions {
 export function newConfidentialToken(options: NewConfidentialTokenOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, 'vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['registry', 'T', 'auditorPks'];
+	const parameterNames = ['registry', 'T', 'auditorPublicKeys'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

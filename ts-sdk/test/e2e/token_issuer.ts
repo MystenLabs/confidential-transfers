@@ -107,7 +107,7 @@ export class TokenIssuer {
 				arguments: {
 					registry: tokenRegistryId,
 					T: treasuryCapId,
-					auditorPks: buildPublicKeyVector(contraPackageId, []),
+					auditorPublicKeys: buildPublicKeyVector(contraPackageId, []),
 				},
 			}),
 		);

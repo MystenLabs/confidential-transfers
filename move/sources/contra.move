@@ -270,16 +270,16 @@ public use fun share_confidential_token as ConfidentialToken.share;
 /// Requires a `&mut TreasuryCap` for authorization, this is to prevent frozen
 /// TreasuryCaps from being used.
 ///
-/// Sets the token's auditor keys to `auditor_pks` (per-transfer auditing); every transfer will carry
-/// one auditor-readable ciphertext set per key. Pass an empty vector to start with auditing disabled.
-/// The issuer can enable, rotate, or disable the keys later via `update_auditors`.
+/// Sets the token's auditor keys to `auditor_public_keys` (per-transfer auditing); every transfer will
+/// carry one auditor-readable ciphertext set per key. Pass an empty vector to start with auditing
+/// disabled. The issuer can enable, rotate, or disable the keys later via `update_auditors`.
 ///
 /// Returns the created `ConfidentialToken` and a `ManagementCap` that can be used to perform
 /// administrative operations for this token.
 public fun new_confidential_token<T>(
     registry: &mut TokenRegistry,
     _t: &mut TreasuryCap<T>,
-    auditor_pks: vector<PublicKey>,
+    auditor_public_keys: vector<PublicKey>,
     ctx: &mut TxContext,
 ): (ConfidentialToken<T>, ManagementCap<T>) {
     assert!(!derived_object::exists(&registry.id, TokenKey<T>()), ETokenAlreadyRegistered);
@@ -293,7 +293,7 @@ public fun new_confidential_token<T>(
             is_active: true,
             freeze_admins: vec_set::empty(),
             policy: policy::permissionless(),
-            auditors: new_auditors(auditor_pks),
+            auditors: new_auditors(auditor_public_keys),
         },
         ManagementCap { id: object::new(ctx) },
     )
