@@ -7,7 +7,7 @@
 /// manage a per-address denylist and a global pause via
 /// `sui::coin::deny_list_v2_*` — useful for the demos that exercise contra's
 /// freeze hooks. `register_confidential` registers BU as a confidential token
-/// with the supplied auditor public key (pass `option::none()` for none) and
+/// with the supplied auditor public keys (pass an empty vector for none) and
 /// shares the resulting `ConfidentialToken<BU>`.
 module bu_token::bu;
 
