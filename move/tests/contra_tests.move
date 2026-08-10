@@ -765,7 +765,7 @@ fun auditor_enabled_requires_data() {
     unit_test::destroy(auditor);
 }
 
-/// Disabled auditing forbids auditor data: attaching a package aborts.
+/// Disabled auditing forbids auditor data: attaching a package aborts (both key sets empty).
 #[test, expected_failure(abort_code = ::contra::auditors::EUnexpectedAuditorData)]
 fun auditor_disabled_forbids_data() {
     let auditor = auditors::new(vector[]);
@@ -773,6 +773,25 @@ fun auditor_disabled_forbids_data() {
     // A trivial package suffices: the presence check aborts before the proof is inspected.
     let package = auditors::new_auditor_package(vector[], nizk::default_multi_key_elgamal_proof());
     auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst");
+    unit_test::destroy(auditor);
+}
+
+/// Disable-with-grace (`current_pks` empty but `previous_pks` non-empty, no longer forbidden now that
+/// the two sets need not be the same length): a no-op transfer is still accepted — no current keys
+/// means no audit is required going forward.
+#[test]
+fun auditor_disable_grace_accepts_no_data() {
+    let mut auditor = auditors::new(vector[test_key()]);
+    auditors::update(&mut auditor, vector[], vector[test_key()]);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    let (handles, verifying) = auditors::verify_transfer(
+        &auditor,
+        &amounts,
+        option::none(),
+        b"dst",
+    );
+    assert!(handles.is_empty());
+    assert!(verifying.is_empty());
     unit_test::destroy(auditor);
 }
 

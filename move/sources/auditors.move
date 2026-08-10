@@ -18,15 +18,18 @@ const EMismatchedAuditorCount: u64 = 4;
 
 // === Main Type ===
 
-/// The auditor configuration for a confidential token: parallel `current_pks` / `previous_pks` key
-/// vectors of the same length. Auditing is per-transfer — every transfer carries auditor-readable
-/// ciphertexts of the amount, one set of decryption handles per auditor key.
+/// The auditor configuration for a confidential token: the `current_pks` key set (tried first on a
+/// transfer) and the `previous_pks` set (also accepted, for a grace window). Auditing is per-transfer
+/// — every transfer carries auditor-readable ciphertexts of the amount, one set of decryption handles
+/// per auditor key.
 ///
-/// Empty vectors mean auditing is disabled. In steady state `current_pks == previous_pks`. A rotation
-/// grace is expressed by pointing `current_pks` at the new keys while `previous_pks` still holds the
-/// outgoing keys, so a transfer built against either set verifies; ending the grace sets
-/// `previous_pks` back equal to `current_pks`. The two vectors are kept the same length so one
-/// sender-built package (one handle set per key) can be checked against either set.
+/// Empty `current_pks` means auditing is disabled going forward. In steady state `current_pks ==
+/// previous_pks`. A change is expressed by pointing `current_pks` at the new set while `previous_pks`
+/// still holds the outgoing set, so a transfer built against either set verifies (a sender-built
+/// package matches one set or the other by its key count); ending the grace sets `previous_pks` equal
+/// to `current_pks`. The two sets need not be the same length — the set can shrink (`current_pks`
+/// shorter, dropping an auditor) or empty out (disabling) while `previous_pks` keeps auditing in-flight
+/// transfers during the grace.
 public struct Auditors has store {
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
@@ -56,16 +59,17 @@ public(package) fun new(pks: vector<PublicKey>): Auditors {
     Auditors { current_pks: pks, previous_pks: pks }
 }
 
-/// Replace both auditor key vectors wholesale, asserting they are the same length (so one
-/// sender-built package covers either set). `current_pks` is tried first on a transfer, then
-/// `previous_pks`. The caller drives the grace policy: rotate with `update(new, old_current)`, end
-/// the grace with `update(new, new)`, enable with `update(pks, pks)`, disable with `update([], [])`.
+/// Replace both auditor key vectors wholesale. `current_pks` is tried first on a transfer, then
+/// `previous_pks`; a sender-built package matches one set or the other by its key count (so the two
+/// need not be the same length). The caller drives the grace policy: rotate with
+/// `update(new, old_current)`, shrink the set with `update(fewer, old_current)`, end the grace with
+/// `update(new, new)`, enable with `update(pks, pks)`, disable with grace via `update([], old)`, or
+/// disable outright with `update([], [])`.
 public(package) fun update(
     auditors: &mut Auditors,
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
 ) {
-    assert!(current_pks.length() == previous_pks.length(), EMismatchedAuditorCount);
     auditors.current_pks = current_pks;
     auditors.previous_pks = previous_pks;
 }
@@ -83,13 +87,27 @@ public(package) fun verify_transfer(
     dst: vector<u8>,
 ): (vector<vector<DecryptionHandles>>, vector<PublicKey>) {
     if (auditor_package.is_none()) {
-        // The same-length invariant makes empty `current_pks` equivalent to auditing disabled.
+        // No data is allowed only when auditing is off going forward (no current keys). A grace
+        // window (non-empty `previous_pks`) never *requires* data, so it doesn't matter here.
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
         return (vector[], vector[])
     };
-    assert!(!auditors.current_pks.is_empty(), EUnexpectedAuditorData);
+    // Data is allowed whenever either set is active — enabled (`current_pks`) or in a grace window
+    // (`previous_pks`); it is forbidden only when auditing is fully off (both sets empty).
+    assert!(
+        !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
+        EUnexpectedAuditorData,
+    );
     let AuditorPackage { handles, proof } = auditor_package.destroy_some();
     let n = receiver_amounts.length();
+    // The package carries one handle set per (auditor, receiver), so its auditor count is
+    // `handles.length() / n`. It must match the set it will be verified against — `current_pks` or
+    // `previous_pks` — otherwise the request is malformed (rather than a genuine proof failure).
+    assert!(
+        handles.length() == auditors.current_pks.length() * n
+            || handles.length() == auditors.previous_pks.length() * n,
+        EMismatchedAuditorCount,
+    );
     let verifying_pks = if (
         verify_under(&handles, &proof, &auditors.current_pks, receiver_amounts, dst)
     ) {
