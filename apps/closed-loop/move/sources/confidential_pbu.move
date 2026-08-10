@@ -64,7 +64,7 @@ public fun setup(
     let (mut ct, management_cap) = contra::new_confidential_token<PBU>(
         registry,
         pbu::treasury_mut(pool),
-        option::none(),
+        vector[],
         ctx,
     );
     ct.set_policy<PBU, PbuWitness>(pbu::treasury_mut(pool), vector[REGISTER_OP]);

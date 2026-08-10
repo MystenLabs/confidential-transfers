@@ -92,7 +92,7 @@ public fun setup(
     let (mut ct, management_cap) = contra::new_confidential_token<BU>(
         registry,
         treasury_cap,
-        option::none(),
+        vector[],
         ctx,
     );
     ct.set_policy<BU, BuWitness>(treasury_cap, vector[UNWRAP_OP]);

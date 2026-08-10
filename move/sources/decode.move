@@ -15,12 +15,17 @@ use contra::{
         DecryptionHandles,
     },
     nizk::{Self, DdhProof, ElGamalProof},
-    twisted_elgamal::{Self, Encryption}
+    twisted_elgamal::{Self, Encryption, PublicKey, public_key}
 };
 use sui::{group_ops::Element, ristretto255::{G, g_from_bytes, scalar_from_bytes}};
 
 public fun g_vector(parts: vector<vector<u8>>): vector<Element<G>> {
     parts.map!(|b| g_from_bytes(&b))
+}
+
+/// Build one `PublicKey` per point-encoded part; each is validated non-identity by `public_key`.
+public fun public_keys(parts: vector<vector<u8>>): vector<PublicKey> {
+    parts.map!(|b| public_key(g_from_bytes(&b)))
 }
 
 /// Build one `DecryptionHandles` per consecutive pair of point-encoded `parts` (two u32-limb handles

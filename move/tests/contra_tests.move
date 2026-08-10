@@ -10,7 +10,7 @@ use contra::{
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
     policy,
-    twisted_elgamal::{encrypt_trivial_for_testing, encrypt_zero, public_key}
+    twisted_elgamal::{encrypt_trivial_for_testing, encrypt_zero, public_key, PublicKey}
 };
 use std::unit_test::{Self, assert_eq};
 use sui::{
@@ -53,7 +53,7 @@ fun create_confidential_token() {
     // Confidential token object (auditing disabled).
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -103,7 +103,7 @@ fun test_simple_flow() {
     scenario.next_tx(addr1);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
@@ -279,7 +279,7 @@ fun test_batched_transfer() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -372,7 +372,6 @@ fun test_batched_transfer() {
             new_balance_ea,
             balance_proof,
             option::none(),
-            scenario.ctx(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -429,6 +428,10 @@ fun test_batched_transfer_with_auditor() {
         &ristretto255::scalar_from_u64(0xA1),
         &ristretto255::g_generator(),
     );
+    let auditor_pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xA2),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -447,11 +450,11 @@ fun test_batched_transfer_with_auditor() {
         scenario.ctx(),
     );
 
-    // Token created with an auditor key enabled.
+    // Token created with two auditor keys enabled: every transfer carries one handle set per key.
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::some(public_key(auditor_pk)),
+        vector[public_key(auditor_pk), public_key(auditor_pk_2)],
         scenario.ctx(),
     );
 
@@ -507,13 +510,22 @@ fun test_batched_transfer_with_auditor() {
         &sk_1,
     );
 
-    // Auditor handles + batched proof for the two receiver amounts (both limb-0-only).
-    let (auditor_handles, auditor_proof) = build_auditor_data(
+    // One `AuditorEntry` per auditor key: handles + batched proof for the two receiver amounts
+    // (both limb-0-only), built under that auditor's key. `verify_transfer` checks every entry.
+    let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_auditor_elgamal(),
+    );
+    let (handles_1, proof_1) = build_auditor_data(vector[30, 20], vector[r_a, r_b], &auditor_pk, auditor_dst);
+    let (handles_2, proof_2) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
-        &auditor_pk,
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
+        &auditor_pk_2,
+        auditor_dst,
     );
+    let auditor_package = auditors::new_auditor_package(vector[
+        auditors::new_auditor_entry(handles_1, proof_1),
+        auditors::new_auditor_entry(handles_2, proof_2),
+    ]);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1
@@ -529,8 +541,7 @@ fun test_batched_transfer_with_auditor() {
             ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
-            option::some(auditors::new_auditor_package(auditor_handles, auditor_proof)),
-            scenario.ctx(),
+            option::some(auditor_package),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -557,12 +568,12 @@ fun test_batched_transfer_with_auditor() {
     scenario.end();
 }
 
-/// Disable-grace: after the issuer disables auditing (`update_auditor(none, expiration)`), a transfer
-/// carrying auditor data built under the now-`previous` key still succeeds while `epoch <= expiration`
-/// (so in-flight transfers stay auditable). Auditor data is optional in this window; here it is
-/// present and must verify under the previous key.
+/// Rotation-grace: after the issuer rotates the auditor key with a grace window
+/// (`update_auditors([new], [old])`), a transfer whose auditor data was built under the outgoing
+/// (`previous`) key still succeeds — it fails to verify under `current_pks` and is then accepted under
+/// `previous_pks`, so in-flight transfers stay auditable across the rotation.
 #[test]
-fun test_batched_transfer_auditor_disable_grace() {
+fun test_batched_transfer_auditor_rotation_grace() {
     let setup_addr = @0x0;
 
     let addr1 = @0x100;
@@ -583,6 +594,10 @@ fun test_batched_transfer_auditor_disable_grace() {
         &ristretto255::scalar_from_u64(0xA1),
         &ristretto255::g_generator(),
     );
+    let new_auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xB2),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -601,15 +616,19 @@ fun test_batched_transfer_auditor_disable_grace() {
         scenario.ctx(),
     );
 
-    // Token created with an auditor key enabled, then disabled with a grace window.
+    // Token created with `auditor_pk`, then rotated to `new_auditor_pk` with a grace window: the old
+    // key moves to `previous_pks` and still verifies in-flight transfers built against it.
     scenario.next_tx(addr1);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::some(public_key(auditor_pk)),
+        vector[public_key(auditor_pk)],
         scenario.ctx(),
     );
-    // Disable auditing but keep the outgoing key valid through epoch 100 (current epoch is 0).
-    ct.update_auditor(&management_cap, option::none(), 100);
+    ct.update_auditors(
+        &management_cap,
+        vector[public_key(new_auditor_pk)],
+        vector[public_key(auditor_pk)],
+    );
 
     scenario.next_tx(addr1);
     let mut account_1 = acc_reg.new(scenario.ctx().sender());
@@ -663,13 +682,17 @@ fun test_batched_transfer_auditor_disable_grace() {
         &sk_1,
     );
 
-    // Auditor data built under `auditor_pk` — now the previous key. It must verify within the grace.
+    // Auditor data built under `auditor_pk` — now the previous key. One entry: it fails to verify
+    // under `current_pks` (the new key) and is accepted under `previous_pks` within the grace.
     let (auditor_handles, auditor_proof) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
         &auditor_pk,
         account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
     );
+    let auditor_package = auditors::new_auditor_package(vector[
+        auditors::new_auditor_entry(auditor_handles, auditor_proof),
+    ]);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1
@@ -685,8 +708,7 @@ fun test_batched_transfer_auditor_disable_grace() {
             ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
-            option::some(auditors::new_auditor_package(auditor_handles, auditor_proof)),
-            scenario.ctx(),
+            option::some(auditor_package),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -713,57 +735,45 @@ fun test_batched_transfer_auditor_disable_grace() {
     scenario.end();
 }
 
-// === Auditor presence policy across the grace window ===
+// === Auditor presence policy ===
 //
-// Enabling auditing is a policy change with a grace window: the old "no-audit" policy stays valid
-// for transfers through `previous_expiration_epoch`. These exercise `verify_transfer`'s no-data
-// branch directly (it never reads `receiver_amounts`, so an empty vector is fine).
+// With the same-length `current_pks` / `previous_pks` model, auditing is disabled exactly when the
+// key vectors are empty. A transfer must carry auditor data iff auditing is enabled. These exercise
+// `verify_transfer`'s presence branches directly (they never read `receiver_amounts`, so an empty
+// vector is fine).
 
-/// Enabling auditing (`none -> some`) with a grace window still accepts a no-op transfer (no auditor
-/// data) while `epoch <= previous_expiration_epoch`.
+fun test_key(): PublicKey {
+    public_key(ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()))
+}
+
+/// Disabled auditing (empty key vectors) accepts a no-op transfer (no auditor data).
 #[test]
-fun auditor_enable_grace_accepts_no_op_during_window() {
-    let key = public_key(
-        ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()),
-    );
-    let mut auditor = auditors::new(option::none());
-    auditors::update(&mut auditor, option::some(key), 100);
+fun auditor_disabled_accepts_no_data() {
+    let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    let (handles, verifying) = auditors::verify_transfer(
-        &auditor,
-        &amounts,
-        option::none(),
-        50,
-        b"dst",
-    );
+    let (handles, verifying) = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
     assert!(handles.is_empty());
-    assert!(verifying.is_none());
+    assert!(verifying.is_empty());
     unit_test::destroy(auditor);
 }
 
-/// Past the grace window, the new "audit required" policy is enforced: a no-op transfer aborts.
+/// Enabled auditing requires auditor data: a no-op transfer (no data) aborts.
 #[test, expected_failure(abort_code = ::contra::auditors::EMissingAuditorData)]
-fun auditor_enable_after_grace_requires_data() {
-    let key = public_key(
-        ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()),
-    );
-    let mut auditor = auditors::new(option::none());
-    auditors::update(&mut auditor, option::some(key), 100);
+fun auditor_enabled_requires_data() {
+    let auditor = auditors::new(vector[test_key()]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    auditors::verify_transfer(&auditor, &amounts, option::none(), 101, b"dst");
+    auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
     unit_test::destroy(auditor);
 }
 
-/// A token created with auditing on seeds `previous_pk = current_pk`, so there is no grace before the
-/// first update — a no-op transfer aborts even at epoch 0.
-#[test, expected_failure(abort_code = ::contra::auditors::EMissingAuditorData)]
-fun auditor_created_on_requires_data_at_genesis() {
-    let key = public_key(
-        ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()),
-    );
-    let auditor = auditors::new(option::some(key));
+/// Disabled auditing forbids auditor data: attaching a package aborts.
+#[test, expected_failure(abort_code = ::contra::auditors::EUnexpectedAuditorData)]
+fun auditor_disabled_forbids_data() {
+    let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    auditors::verify_transfer(&auditor, &amounts, option::none(), 0, b"dst");
+    // An empty package suffices: the presence check aborts before any entry is inspected.
+    let package = auditors::new_auditor_package(vector[]);
+    auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst");
     unit_test::destroy(auditor);
 }
 
@@ -798,7 +808,7 @@ fun test_deny_list() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     let mut account_1 = acc_reg.new(scenario.ctx().sender());
@@ -870,7 +880,6 @@ fun transfer<T>(
             new_balance,
             balance_proof,
             option::none(),
-            ctx,
         )
         .add<T>(receiver, memo, deny_list)
         .finalize();
@@ -984,7 +993,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -1101,7 +1110,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -1205,7 +1214,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -1327,7 +1336,7 @@ fun test_account_freeze_rejects_non_admin() {
     scenario.next_tx(setup_addr);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -1380,7 +1389,7 @@ fun test_account_freeze_blocks_wrap() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
@@ -1448,7 +1457,7 @@ fun test_account_unfreeze_restores_wrap() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
@@ -1523,7 +1532,7 @@ fun test_account_freeze_blocks_batched_transfer() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
@@ -1636,7 +1645,7 @@ fun test_account_freeze_blocks_add_to_batch() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
@@ -1749,7 +1758,7 @@ fun test_transfer_after_register_with_default_pk() {
     scenario.next_tx(setup_addr);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -1859,7 +1868,7 @@ fun test_register_with_default_pk_aborts_when_permissioned() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     // Make registration (operation 0) permissioned.
@@ -1914,7 +1923,7 @@ fun test_try_register_with_default_pk_is_idempotent() {
     scenario.next_tx(setup_addr);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
 
@@ -1971,7 +1980,7 @@ fun test_account_freeze_blocks_unwrap() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        option::none(),
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
@@ -2073,7 +2082,7 @@ fun verify_well_formed_proof_dst_match_succeeds() {
 // statement `sk · g = pk` (the unique witness is `sk = 0`, which anyone has). That cascades
 // through the ElGamal / DDH proofs into a soundness break. Every public key entering the protocol —
 // the account default key (`set_default_pk_*`), a token's per-token key (`register`/`rekey_*`), and
-// the auditor key (`new_confidential_token`/`update_auditor`) — is wrapped through
+// the auditor keys (`new_confidential_token`/`update_auditors`) — is wrapped through
 // `twisted_elgamal::public_key`, the single boundary that rejects `pk = identity`.
 
 #[test, expected_failure(abort_code = ::contra::twisted_elgamal::EIdentityPublicKey)]

@@ -8,7 +8,7 @@
 ///
 /// ## Key Flows for the Token Issuer of public token type `T`:
 /// 1. Create a new confidential token for a token type `T` (using the TreasuryCap), optionally
-///    with an initial auditor public key. Creation returns a `ManagementCap<T>`.
+///    with an initial set of auditor public keys. Creation returns a `ManagementCap<T>`.
 /// 2. Set the freeze admins who can freeze the token globally or specific accounts (via the
 ///    ManagementCap). Those admins may monitor the confidential token and freeze it or
 ///    individual accounts if necessary.
@@ -17,10 +17,12 @@
 /// 5. Freeze specific accounts via the token's deny list, using
 ///    `sui::coin::deny_list_v2_add` / `sui::coin::deny_list_v2_remove`. The deny list affects
 ///    both the public and the private coin; to freeze only the private coin, see items 2 and 3.
-/// 6. Rotate or disable the auditor key via `update_auditor` (using the ManagementCap). The
-///    outgoing key stays valid for transfers through a caller-set `expiration_epoch` (a grace
-///    window for in-flight transfers). Passing `none` disables auditing going forward. Auditing is
-///    per-transfer and each transfer carries auditor-readable ciphertexts of the amount.
+/// 6. Rotate, enable, or disable the auditor keys via `update_auditors` (using the ManagementCap),
+///    which sets the parallel `current_pks` / `previous_pks` key vectors. A transfer is accepted
+///    under either set, so pointing `current_pks` at new keys while `previous_pks` still holds the
+///    outgoing keys gives a grace window for in-flight transfers; passing empty vectors disables
+///    auditing. Auditing is per-transfer and each transfer carries auditor-readable ciphertexts of
+///    the amount, one set per auditor key.
 /// 7. [Advanced] Set the policy for the confidential token (using the TreasuryCap). Policies define
 ///    which operations are permissioned. Currently supported permissioned operations are:
 ///    - `register`: Register a token account for a token type `T`. E.g., caller ensures the user is
@@ -66,7 +68,7 @@
 module contra::contra;
 
 use contra::{
-    auditors::{Auditor, AuditorPackage, new as new_auditor},
+    auditors::{Auditors, AuditorPackage, new as new_auditors},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{
@@ -146,7 +148,7 @@ public struct ConfidentialToken<phantom T> has key {
     is_active: bool, // Global freeze capability.
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
-    auditor: Auditor,
+    auditors: Auditors,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -195,8 +197,8 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_decryption_handles: vector<DecryptionHandles>,
-        auditor_pk: Option<PublicKey>,
+        auditor_decryption_handles: vector<vector<DecryptionHandles>>,
+        auditor_pks: vector<PublicKey>,
     },
 }
 
@@ -268,15 +270,16 @@ public use fun share_confidential_token as ConfidentialToken.share;
 /// Requires a `&mut TreasuryCap` for authorization, this is to prevent frozen
 /// TreasuryCaps from being used.
 ///
-/// Sets the token's auditor key to `auditor_pk` (per-transfer auditing). Pass `none` to start with
-/// auditing disabled. The issuer can enable or rotate it later via `update_auditor`.
+/// Sets the token's auditor keys to `auditor_pks` (per-transfer auditing); every transfer will carry
+/// one auditor-readable ciphertext set per key. Pass an empty vector to start with auditing disabled.
+/// The issuer can enable, rotate, or disable the keys later via `update_auditors`.
 ///
 /// Returns the created `ConfidentialToken` and a `ManagementCap` that can be used to perform
 /// administrative operations for this token.
 public fun new_confidential_token<T>(
     registry: &mut TokenRegistry,
     _t: &mut TreasuryCap<T>,
-    auditor_pk: Option<PublicKey>,
+    auditor_pks: vector<PublicKey>,
     ctx: &mut TxContext,
 ): (ConfidentialToken<T>, ManagementCap<T>) {
     assert!(!derived_object::exists(&registry.id, TokenKey<T>()), ETokenAlreadyRegistered);
@@ -290,7 +293,7 @@ public fun new_confidential_token<T>(
             is_active: true,
             freeze_admins: vec_set::empty(),
             policy: policy::permissionless(),
-            auditor: new_auditor(auditor_pk),
+            auditors: new_auditors(auditor_pks),
         },
         ManagementCap { id: object::new(ctx) },
     )
@@ -525,8 +528,8 @@ public fun wrap<T>(
 /// `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
 /// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
 ///
-/// Per-transfer auditing: when `ct`'s auditor key is enabled, `auditor_package` must be `some`.
-/// See `auditors::verify_transfer` for details.
+/// Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package` must be `some` and
+/// carry one entry per auditor key. See `auditors::verify_transfer` for details.
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts
 /// if `well_formed_proofs`, the auditor requirement, or `consistency_proof` fails. Call `add` once
@@ -537,8 +540,8 @@ public fun batched_transfer<T>(
     auth: &Auth<T>,
     ct: &ConfidentialToken<T>,
     deny_list: &DenyList,
-    mut receiver_pks: vector<PublicKey>,
-    mut receiver_amounts: vector<EncryptedAmount>,
+    receiver_pks: vector<PublicKey>,
+    receiver_amounts: vector<EncryptedAmount>,
     well_formed_proofs: WellFormedProof,
     total_sender_handle: Element<G>,
     consistency_proof: ElGamalProof,
@@ -546,7 +549,6 @@ public fun batched_transfer<T>(
     new_balance: EncryptedAmount,
     balance_proof: DdhProof,
     auditor_package: Option<AuditorPackage>,
-    ctx: &TxContext,
 ): TransferBatch<T> {
     assert!(ct.is_active, ETransferDenied);
     assert!(auth.is_authenticated(sender.owner), EAuthorizationError);
@@ -563,24 +565,25 @@ public fun batched_transfer<T>(
     // `well_formed_proofs` is one aggregate proof over `[receiver_amounts..., new_balance]`
     // under `[receiver_pks..., sender.pk]`; verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
-    receiver_amounts.push_back(new_balance);
-    receiver_pks.push_back(sender.pk);
+    let mut amounts = receiver_amounts;
+    let mut pks = receiver_pks;
+    amounts.push_back(new_balance);
+    pks.push_back(sender.pk);
     let mut wfeas = encrypted_amount::batch_into_well_formed(
-        receiver_amounts,
+        amounts,
         sender.session_id.dst(DST_ELGAMAL),
         sender.session_id.dst(DST_RANGE_PROOF_16),
-        receiver_pks,
+        pks,
         well_formed_proofs,
     );
     let new_balance = wfeas.pop_back();
     let receiver_amounts = wfeas;
 
-    let (mut auditor_decryption_handles, auditor_pk) = ct
-        .auditor
+    let (mut auditor_decryption_handles, auditor_pks) = ct
+        .auditors
         .verify_transfer(
             &receiver_amounts,
             auditor_package,
-            ctx.epoch(),
             sender.session_id.dst(DST_AUDITOR_ELGAMAL),
         );
 
@@ -610,7 +613,7 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_decryption_handles,
-            auditor_pk,
+            auditor_pks,
         }
     } else {
         withdrawn.destroy_none();
@@ -642,7 +645,7 @@ public fun add_to_batch<T>(
             seed_point,
             next_index,
             mut auditor_decryption_handles,
-            auditor_pk,
+            auditor_pks,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -652,10 +655,11 @@ public fun add_to_batch<T>(
 
             let coin = coins.pop_back();
 
+            // One `DecryptionHandles` per auditor for this receiver (empty when auditing is disabled).
             let receiver_auditor_decryption_handles = if (auditor_decryption_handles.is_empty()) {
-                option::none()
+                vector[]
             } else {
-                option::some(auditor_decryption_handles.pop_back())
+                auditor_decryption_handles.pop_back()
             };
 
             let receiver = &mut receiver[TokenAccountKey<T>()];
@@ -673,7 +677,7 @@ public fun add_to_batch<T>(
                 receiver_pk,
                 *coin.amount().amount(),
                 receiver_auditor_decryption_handles,
-                auditor_pk,
+                auditor_pks,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver_pk, coin);
@@ -684,7 +688,7 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index: next_index + 1,
                 auditor_decryption_handles,
-                auditor_pk,
+                auditor_pks,
             }
         },
     }
@@ -987,17 +991,19 @@ public fun set_policy<T, W>(
 
 // === Auditor flows ===
 
-/// Rotate this confidential token's auditor key to `new_pk` (pass `none` to disable auditing). The
-/// outgoing key stays valid for transfers through `expiration_epoch`, so transfers built against it
-/// just before the rotation still verify (see `auditors::verify_transfer`).
-public fun update_auditor<T>(
+/// Replace this confidential token's auditor keys. `current_pks` is tried first when verifying a
+/// transfer, then `previous_pks`; the two must be the same length. The caller drives the grace
+/// policy: rotate with `update_auditors(new, old_current)`, end the grace with
+/// `update_auditors(new, new)`, enable with `update_auditors(pks, pks)`, disable with
+/// `update_auditors([], [])` (see `auditors::update` / `auditors::verify_transfer`).
+public fun update_auditors<T>(
     ct: &mut ConfidentialToken<T>,
     _cap: &ManagementCap<T>,
-    new_pk: Option<PublicKey>,
-    expiration_epoch: u64,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 ) {
-    let previous_pk = ct.auditor.update(new_pk, expiration_epoch);
-    events::emit_update_auditors<T>(new_pk, previous_pk, expiration_epoch);
+    ct.auditors.update(current_pks, previous_pks);
+    events::emit_update_auditors<T>(current_pks, previous_pks);
 }
 
 // === Helpers ===

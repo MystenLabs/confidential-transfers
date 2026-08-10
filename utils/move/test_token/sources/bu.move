@@ -70,18 +70,18 @@ public fun mint(treasury: &mut BuTreasury, amount: u64, ctx: &mut TxContext): Co
 }
 
 /// Register BU as a confidential token. Shares the `ConfidentialToken<BU>`
-/// and transfers `ManagementCap<BU>` to the caller. Pass `option::none()` for
-/// `auditor_pk` to register without auditors.
+/// and transfers `ManagementCap<BU>` to the caller. Pass an empty vector for
+/// `auditor_pks` to register without auditors.
 public fun register_confidential(
     treasury: &mut BuTreasury,
     registry: &mut contra::TokenRegistry,
-    auditor_pk: Option<Element<G>>,
+    auditor_pks: vector<Element<G>>,
     ctx: &mut TxContext,
 ) {
     let (ct, management_cap) = contra::new_confidential_token<BU>(
         registry,
         &mut treasury.cap,
-        auditor_pk.map!(|pk| public_key(pk)),
+        auditor_pks.map!(|pk| public_key(pk)),
         ctx,
     );
     contra::share_confidential_token(ct);

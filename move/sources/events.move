@@ -55,13 +55,13 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// by re-deriving the per-transfer blinding from `seed = HKDF(sk * seed_point)` and
 /// the receiver's `batch_index` within this transfer.
 ///
-/// `auditor_decryption_handles` are the two u32-limb auditor decryption handles for this transfer (`none` when
-/// auditing is disabled), paired off-chain with the two commitments derived from
-/// `encrypted_amount_receiver` (`encrypted_amount::ciphertexts_as_u32_limbs`). `auditor_pk` is the
-/// auditor public key they are encrypted under — the key that verified this transfer's auditor proof
-/// (`none` when auditing is disabled) — so a consumer knows which auditor key (current or, during a
-/// rotation grace window, previous) was used. `memo` is an opaque caller-supplied blob, empty if none
-/// was provided.
+/// `auditor_decryption_handles` holds one `DecryptionHandles` (two u32-limb handles) per auditor key,
+/// in the same order as `auditor_pks` (empty when auditing is disabled), each paired off-chain with
+/// the two commitments derived from `encrypted_amount_receiver`
+/// (`encrypted_amount::ciphertexts_as_u32_limbs`). `auditor_pks` are the auditor keys they are
+/// encrypted under — the set (current or, during a rotation grace window, previous) that verified this
+/// transfer's auditor proofs — so an auditor knows which index carries its handles. `memo` is an
+/// opaque caller-supplied blob, empty if none was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
     sender_pk: PublicKey,
@@ -70,8 +70,8 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_decryption_handles: Option<DecryptionHandles>,
-    auditor_pk: Option<PublicKey>,
+    auditor_decryption_handles: vector<DecryptionHandles>,
+    auditor_pks: vector<PublicKey>,
     memo: vector<u8>,
 }
 
@@ -123,13 +123,12 @@ public struct AccountUnfreezeEvent<phantom T> has copy, drop {
     account: address,
 }
 
-/// Emitted when the auditor key for a confidential token of type `T` is updated. `current_pk` is the
-/// new key (`none` if auditing was disabled); `previous_pk` is the outgoing key, valid for transfers
-/// through `previous_expiration_epoch`.
+/// Emitted when the auditor keys for a confidential token of type `T` are updated. `current_pks` is
+/// the new key set tried first on a transfer (empty if auditing is disabled); `previous_pks` is the
+/// set also accepted during a rotation grace window (same length as `current_pks`).
 public struct UpdateAuditorsEvent<phantom T> has copy, drop {
-    current_pk: Option<PublicKey>,
-    previous_pk: Option<PublicKey>,
-    previous_expiration_epoch: u64,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 }
 
 // === Emit functions ===
@@ -170,8 +169,8 @@ public(package) fun emit_transfer<T>(
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
-    auditor_decryption_handles: Option<DecryptionHandles>,
-    auditor_pk: Option<PublicKey>,
+    auditor_decryption_handles: vector<DecryptionHandles>,
+    auditor_pks: vector<PublicKey>,
     memo: vector<u8>,
 ) {
     event::emit(TransferEvent<T> {
@@ -183,7 +182,7 @@ public(package) fun emit_transfer<T>(
         receiver_pk,
         encrypted_amount_receiver,
         auditor_decryption_handles,
-        auditor_pk,
+        auditor_pks,
         memo,
     });
 }
@@ -229,9 +228,8 @@ public(package) fun emit_account_unfreeze<T>(account: address) {
 }
 
 public(package) fun emit_update_auditors<T>(
-    current_pk: Option<PublicKey>,
-    previous_pk: Option<PublicKey>,
-    previous_expiration_epoch: u64,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 ) {
-    event::emit(UpdateAuditorsEvent<T> { current_pk, previous_pk, previous_expiration_epoch });
+    event::emit(UpdateAuditorsEvent<T> { current_pks, previous_pks });
 }
