@@ -29,8 +29,8 @@ import type { TransactionResult } from '@mysten/sui/transactions';
 import { SUI_DENY_LIST_OBJECT_ID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
 import { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from 'contra-utils';
 import {
-	ContraAuditor,
 	Ciphertext,
+	ContraAuditor,
 	ContraClient,
 	contraContracts,
 	DiscreteLogTable,
