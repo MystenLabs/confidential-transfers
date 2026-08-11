@@ -401,9 +401,10 @@ describe('core user flows (devnet)', () => {
 			const decodedTransfer = TransferEventBcs.parse(transferEvent!.bcs);
 			expect(decodedTransfer.sender).toBe(user1Address);
 			expect(decodedTransfer.receiver).toBe(user2Address);
-			// One DecryptionHandles per auditor key (here a single auditor), each with two u32-limb handles.
+			// One entry per auditor key (here a single auditor): its two u32-limb handles, tagged by the
+			// matching `auditor_pks` entry.
 			expect(decodedTransfer.auditor_decryption_handles).toHaveLength(1);
-			expect(decodedTransfer.auditor_decryption_handles[0].handles).toHaveLength(2);
+			expect(decodedTransfer.auditor_decryption_handles[0]).toHaveLength(2);
 			expect(decodedTransfer.auditor_pks).toHaveLength(1);
 
 			// The event carries the amount as two u32-limb ciphertexts.
@@ -575,7 +576,7 @@ describe('core user flows (devnet)', () => {
 	);
 
 	it(
-		'tryRekeyTokenAccounts: re-keys the token, preserving balance and folding pending deposits',
+		'tryRekeyTokenAccount: re-keys the token, preserving balance and folding pending deposits',
 		{ timeout: 300_000 },
 		async () => {
 			// Fresh user. Bootstrap funding + account + register, then wrap + merge so the active
@@ -608,7 +609,7 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 1: no pending deposits. `tryRekeyTokenAccounts` re-keys the token in one PTB
+			// --- Rotation 1: no pending deposits. `tryRekeyTokenAccount` re-keys the token in one PTB
 			// (try_rekey_token_account catches the token up to the new key). ---
 			const oldPrivateKey = userTokenAccount.privateKey;
 			const oldPublicKeyBytes = userTokenAccount.publicKey.toBytes();
@@ -619,11 +620,12 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn = await client.contra.tryRekeyTokenAccounts({
-				rotations: [{ tokenAccount: userTokenAccount, newTokenAccount }],
+			const rotateFn = await client.contra.tryRekeyTokenAccount({
+				tokenAccount: userTokenAccount,
+				newTokenAccount,
 			});
 			const rotateTx = new Transaction();
-			rotateFn(rotateTx);
+			rotateTx.add(rotateFn);
 			rotateTx.setSender(userAddress);
 			await exec(rotateTx, userKp);
 
@@ -641,7 +643,7 @@ describe('core user flows (devnet)', () => {
 				balanceUpperBound: 1,
 			});
 
-			// --- Rotation 2: with a pending public deposit outstanding so `tryRekeyTokenAccounts`' inline merge
+			// --- Rotation 2: with a pending public deposit outstanding so `tryRekeyTokenAccount`'s inline merge
 			// runs (rekey_token_account requires an empty pending). ---
 			const extra = 3n * ONE;
 			await tokenIssuer.mint(userAddress, extra);
@@ -660,11 +662,12 @@ describe('core user flows (devnet)', () => {
 				packageConfig,
 				randomScalar(),
 			);
-			const rotateFn2 = await client.contra.tryRekeyTokenAccounts({
-				rotations: [{ tokenAccount: newTokenAccount, newTokenAccount: rotated2 }],
+			const rotateFn2 = await client.contra.tryRekeyTokenAccount({
+				tokenAccount: newTokenAccount,
+				newTokenAccount: rotated2,
 			});
 			const rotateTx2 = new Transaction();
-			rotateFn2(rotateTx2);
+			rotateTx2.add(rotateFn2);
 			rotateTx2.setSender(userAddress);
 			await exec(rotateTx2, userKp);
 

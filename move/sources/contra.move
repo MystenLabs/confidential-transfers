@@ -655,8 +655,6 @@ public fun add_to_batch<T>(
             let receiver_pk = receiver.pk;
 
             let coin = coins.pop_back();
-            // This receiver's slice, read by index; the per-auditor batch data stays in the state
-            // for the remaining receivers (empty when auditing is disabled).
             let (receiver_auditor_decryption_handles, auditor_pks) = per_receiver(
                 &auditor_decryption_handles,
                 next_index as u64,
