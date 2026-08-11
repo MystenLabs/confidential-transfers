@@ -223,7 +223,7 @@ public(package) fun try_rekey(
     dst: vector<u8>,
 ): Option<EncryptedAmount> {
     assert!(new_handles.length() == U16_LIMBS, EMismatchedBatchLength);
-    // Pair 0 re-keys the public key; pairs 1..4 re-key each limb's decryption handle.
+    // Pair 0 re-keys the public key and pairs 1..4 re-key each limb's decryption handle.
     let mut bases = vector[*old_pk.as_element()];
     let mut images = vector[*new_pk.as_element()];
     U16_LIMBS.do!(|i| {
@@ -244,22 +244,14 @@ public(package) fun try_rekey(
 
 /// Sum of the collapsed Pedersen commitments of `amounts` (ciphertext components only).
 public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>): Element<G> {
-    // Folding is linear, so sum the four limb positions across all amounts first (cheap point adds)
-    // and collapse once, rather than collapsing each amount (three scalar mults each).
-    let mut c0 = g_identity();
-    let mut c1 = g_identity();
-    let mut c2 = g_identity();
-    let mut c3 = g_identity();
-    amounts.do_ref!(|wfea| {
-        let a = &wfea.amount;
-        c0 = g_add(&c0, a[0].ciphertext());
-        c1 = g_add(&c1, a[1].ciphertext());
-        c2 = g_add(&c2, a[2].ciphertext());
-        c3 = g_add(&c3, a[3].ciphertext());
-    });
+    let mut cs = vector::tabulate!(U16_LIMBS, |_| g_identity());
+    amounts.do_ref!(|wfea| U16_LIMBS.do!(|j| {
+        let sum = g_add(&cs[j], wfea.amount[j].ciphertext());
+        *cs.borrow_mut(j) = sum;
+    }));
     let two_16 = scalar_from_u64(1 << 16);
-    let lo = fold(&c0, &c1, &two_16);
-    let hi = fold(&c2, &c3, &two_16);
+    let lo = fold(&cs[0], &cs[1], &two_16);
+    let hi = fold(&cs[2], &cs[3], &two_16);
     fold(&lo, &hi, &scalar_from_u64(1 << 32))
 }
 

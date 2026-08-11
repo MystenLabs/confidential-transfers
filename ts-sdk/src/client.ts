@@ -502,8 +502,8 @@ export class ContraClient {
 	 * Register a `TokenAccount<T>` for `receiver` on their behalf, without any `Auth` — the
 	 * permissionless counterpart to `register`, keyed under the receiver's `Account.default_pk`. A
 	 * no-op if `receiver` is already registered for `T` (rather than aborting), so concurrent
-	 * registrations for the same receiver don't fight. `wrap` and `transferBatch` call this
-	 * automatically for an unregistered receiver; use it directly only to pre-register.
+	 * registrations for the same receiver don't fight. `wrap` and `transferBatch` call this for an
+	 * unregistered receiver only when passed `registerReceiver: true`; use it directly to pre-register.
 	 *
 	 * @example
 	 * ```ts
@@ -535,10 +535,9 @@ export class ContraClient {
 	 *
 	 * The supplied coin is consumed, its value is added to the pool for
 	 * that token, and the same amount is credited to the receiver's
-	 * pending public balance. The receiver must already have an `Account`
-	 * shared on chain; if they have no `TokenAccount<T>` yet it is registered
-	 * on their behalf in the same PTB (permissionless tokens only), since
-	 * wrapping no longer auto-registers on chain.
+	 * pending public balance. The receiver must already be registered for the token, unless
+	 * `registerReceiver` is set: then a receiver that has an `Account` with a `default_pk` but no
+	 * `TokenAccount<T>` yet is registered on their behalf in the same PTB (permissionless tokens only).
 	 *
 	 * @example
 	 * ```ts
@@ -554,25 +553,29 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `TokenAccountDoesNotExistError` — `receiver` has no `Account` at all.
+	 * - `TokenAccountDoesNotExistError` — `receiver` has no `TokenAccount<T>` (and either
+	 *   `registerReceiver` is not set, or it is set but the receiver has no `Account`/`default_pk`).
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `ETransferDenied` — the token is paused, the deny list is globally frozen, the receiver
 	 *   is on the deny list, or the receiver's per-account freeze is active.
-	 * - `ERegistrationNotPermissionless` — `receiver` had no `TokenAccount<T>` and the token's
-	 *   registration is permissioned, so the auto-inserted `register_with_default_pk` aborts.
+	 * - `ERegistrationNotPermissionless` — `registerReceiver` was set for a receiver with no
+	 *   `TokenAccount<T>`, but the token's registration is permissioned, so `register_with_default_pk`
+	 *   aborts.
 	 */
 	async wrap({
 		coin,
 		receiver,
 		tokenType,
 		memo,
+		registerReceiver = false,
 	}: WrapOptions): Promise<(tx: Transaction) => TransactionResult> {
-		// Wrapping no longer auto-registers on chain. If the receiver has an `Account` but no
-		// `TokenAccount<T>` yet, register it on their behalf first (permissionless tokens only).
+		// With `registerReceiver`, a receiver that has an `Account` but no `TokenAccount<T>` yet is
+		// registered on their behalf first (permissionless tokens only); otherwise they must already
+		// be registered.
 		const [{ needsRegistration }] = await this.#getAccountStates([receiver], tokenType, {
-			autoRegisterFallback: true,
+			autoRegisterFallback: registerReceiver,
 		});
 		return (tx: Transaction): TransactionResult => {
 			if (needsRegistration) {
@@ -1146,12 +1149,14 @@ export class ContraClient {
 		memo,
 		merge = true,
 		auth,
+		registerReceiver = false,
 	}: TransferOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return this.transferBatch({
 			tokenAccount,
 			recipients: [{ receiverAddress, amount, memo }],
 			merge,
 			auth,
+			registerReceiver,
 		});
 	}
 
@@ -1204,8 +1209,10 @@ export class ContraClient {
 	 * - `InsufficientBalanceError` — total amount exceeds the spendable balance (active,
 	 *   or active + pending when `merge` is `true`).
 	 * - `TokenAccountDoesNotExistError` — the sender is not registered for the token, or a receiver
-	 *   has no `Account` at all. A receiver that has an `Account` but no `TokenAccount<T>` yet is
-	 *   registered on their behalf in the same PTB (permissionless tokens only).
+	 *   has no `TokenAccount<T>` (and either `registerReceiver` is not set, or it is set but the
+	 *   receiver has no `Account`/`default_pk`). With `registerReceiver`, a receiver that has an
+	 *   `Account` with a `default_pk` is registered on their behalf in the same PTB (permissionless
+	 *   tokens only).
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
@@ -1213,8 +1220,9 @@ export class ContraClient {
 	 *   or a receiver is on the deny list, the sender has a per-account freeze active (the
 	 *   receiver-frozen case is caught by the SDK), or a receiver's state changed between the
 	 *   SDK check and execution.
-	 * - `ERegistrationNotPermissionless` — a receiver had no `TokenAccount<T>` and the token's
-	 *   registration is permissioned, so the auto-inserted `register_with_default_pk` aborts.
+	 * - `ERegistrationNotPermissionless` — `registerReceiver` was set for a receiver with no
+	 *   `TokenAccount<T>`, but the token's registration is permissioned, so `register_with_default_pk`
+	 *   aborts.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — sender or receiver lost its registration between the
 	 *   SDK's check and execution.
 	 */
@@ -1223,6 +1231,7 @@ export class ContraClient {
 		recipients,
 		merge = true,
 		auth,
+		registerReceiver = false,
 	}: BatchedTransferOptions): Promise<(tx: Transaction) => TransactionResult> {
 		if (recipients.length === 0 || recipients.length > MAX_BATCH_RECIPIENTS) {
 			throw new InvalidArgumentError(
@@ -1244,7 +1253,7 @@ export class ContraClient {
 		const receiverStates = await this.#getAccountStates(
 			recipients.map((r) => r.receiverAddress),
 			tokenType,
-			{ autoRegisterFallback: true },
+			{ autoRegisterFallback: registerReceiver },
 		);
 		const refusing = recipients
 			.map((recipient, i) => ({ recipient, state: receiverStates[i] }))
@@ -1312,10 +1321,10 @@ export class ContraClient {
 				tx.add(this.#merge({ tokenAccount, auth: authArg }));
 			}
 
-			// Deposits no longer auto-register on chain: any receiver that has an `Account` but no
-			// `TokenAccount<T>` yet is registered on their behalf first via `try_register_with_default_pk`
-			// (permissionless tokens only; try_ so a concurrent transfer registering the same receiver
-			// doesn't abort this PTB).
+			// With `registerReceiver`, any receiver flagged `needsRegistration` (has an `Account` with a
+			// `default_pk` but no `TokenAccount<T>` yet) is registered on their behalf first via
+			// `try_register_with_default_pk` (permissionless tokens only; try_ so a concurrent transfer
+			// registering the same receiver doesn't abort this PTB).
 			recipients.forEach((recipient, i) => {
 				if (receiverStates[i].needsRegistration) {
 					tx.add(this.tryRegisterWithDefaultPk({ receiver: recipient.receiverAddress, tokenType }));
