@@ -337,9 +337,9 @@ export function buildWellFormedProof(
 			arguments: {
 				rangeProofs,
 				consistencyProofs: tx.makeMoveVec({
-					type: `${packageId}::encrypted_amount::ConsistencyProof`,
+					type: `${packageId}::nizk::ElGamalProof`,
 					elements: consistencyProofs.map((proof) =>
-						decodeContracts.consistencyProof({
+						decodeContracts.elgamalProof({
 							package: packageId,
 							arguments: {
 								parts: elemParts([

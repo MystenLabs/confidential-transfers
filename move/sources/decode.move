@@ -7,10 +7,8 @@ module contra::decode;
 
 use contra::{
     encrypted_amount::{
-        new_consistency_proof,
         new_encrypted_amount,
         new_decryption_handles,
-        ConsistencyProof,
         EncryptedAmount,
         DecryptionHandles,
     },
@@ -35,7 +33,7 @@ public fun decryption_handles(parts: vector<vector<u8>>): vector<DecryptionHandl
     let mut out = vector[];
     let mut i = 0;
     while (i < elements.length()) {
-        out.push_back(new_decryption_handles(vector[elements[i], elements[i + 1]]));
+        out.push_back(new_decryption_handles(elements[i], elements[i + 1]));
         i = i + 2;
     };
     out
@@ -74,10 +72,6 @@ public fun multi_key_elgamal_proof(parts: vector<vector<u8>>): MultiKeyElGamalPr
         scalar_from_bytes(parts.borrow(m + 1)),
         scalar_from_bytes(parts.borrow(m + 2)),
     )
-}
-
-public fun consistency_proof(parts: vector<vector<u8>>): ConsistencyProof {
-    new_consistency_proof(elgamal_proof_at(&parts, 0))
 }
 
 fun encryption_at(parts: &vector<vector<u8>>, off: u64): Encryption {

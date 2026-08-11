@@ -100,10 +100,11 @@ export class ContraAuditor {
 			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPks[0].element));
 		}
 		const handles = event.auditor_decryption_handles[index];
-		if (handles === undefined || handles.handles.length !== 2) return null;
+		if (handles === undefined) return null;
 		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with this
 		// auditor's matching handle and BSGS-decrypt.
-		const [d0, d1] = handles.handles.map((h) => pointFromBcs(h));
+		const d0 = pointFromBcs(handles.lo);
+		const d1 = pointFromBcs(handles.hi);
 		const a0 = pointFromBcs(event.encrypted_amount_receiver[0].ciphertext);
 		const a1 = pointFromBcs(event.encrypted_amount_receiver[1].ciphertext);
 		const n0 = new Ciphertext(a0, d0).decrypt(privateKey, this.#table);

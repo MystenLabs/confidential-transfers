@@ -952,10 +952,10 @@ fun build_auditor_data(
         values.length().do!(|i| {
             let low = encrypt_trivial_for_testing(values[i], pk, blindings[i]);
             handles.push_back(
-                encrypted_amount::new_decryption_handles(vector[
+                encrypted_amount::new_decryption_handles(
                     *low.decryption_handle(),
                     ristretto255::g_identity(),
-                ]),
+                ),
             );
             encryptions.push_back(low);
             encryptions.push_back(encrypt_zero());

@@ -37,14 +37,9 @@ public struct ElGamalProof has drop {
     z2: Element<Scalar>,
 }
 
-/// A witness-folded batch of ElGamal proofs where a shared set of commitments `C_k = r_k*g + m_k*h`
-/// is decrypted under **several** public keys: for every key `pk_i` and every `k`, the handle is
-/// `D_{i,k} = r_k*pk_i`, all reusing the same `(r_k, m_k)`. This is the multi-auditor case — one
-/// commitment per amount-limb, one decryption handle per (auditor, limb). Because the witnesses and
-/// commitments are shared, the folded responses `(z1, z2)` are shared across keys and only the
-/// handle-side mask `a` is per key, so the proof is `m + 1` points + `2` scalars for `m` keys (vs `m`
-/// independent `ElGamalProof`s). The commitment-side check is done once; the handle-side check once
-/// per key.
+/// Proves that a shared set of ElGamal commitments `C_k = r_k*g + m_k*h` is consistently encrypted
+/// under several public keys `pk_i` — every handle `D_{i,k} = r_k*pk_i` reuses `C_k`'s `(r_k, m_k)`.
+/// Folded to `m + 1` points + `2` scalars for `m` keys, versus `m` separate `ElGamalProof`s.
 public struct MultiKeyElGamalProof has drop {
     a: vector<Element<G>>,
     b: Element<G>,
