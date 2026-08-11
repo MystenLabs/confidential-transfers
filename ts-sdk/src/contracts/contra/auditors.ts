@@ -24,6 +24,13 @@ export const AuditorPackage = new MoveStruct({
 		proof: nizk.MultiKeyElGamalProof,
 	},
 });
+export const VerifiedDecryptionHandles = new MoveStruct({
+	name: `${$moduleName}::VerifiedDecryptionHandles`,
+	fields: {
+		handles: bcs.vector(bcs.vector(group_ops.Element)),
+		pk: twisted_elgamal.PublicKey,
+	},
+});
 export interface NewAuditorPackageArguments {
 	handles: TransactionArgument;
 	proof: TransactionArgument;

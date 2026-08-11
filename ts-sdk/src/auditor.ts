@@ -73,33 +73,32 @@ export class ContraAuditor {
 	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
 	 *   disabled for it).
 	 * @throws {@link AuditorKeyNotHeldError} if this auditor holds no key matching any of the event's
-	 *   `auditor_pks`; {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
+	 *   auditor entries; {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
 	 */
 	decryptTransferAmount(event: DecodedTransferEvent): bigint | null {
-		const auditorPks = event.auditor_pks;
+		const auditorHandles = event.auditor_decryption_handles;
 		// No auditor data attached (auditing was disabled for this transfer).
-		if (auditorPks.length === 0) return null;
-		// Find the transfer's auditor key this instance holds a matching private key for. Each key's
-		// handles sit at the same index in `auditor_decryption_handles`.
-		let index = -1;
+		if (auditorHandles.length === 0) return null;
+		// Each entry is one auditor's tagged handles for this receiver; find the one this instance holds
+		// the matching private key for. `handles` is a single `[lo, hi]` pair (the receiver's slice).
 		let privateKey: PrivateKey | undefined;
-		for (const [i, pkBcs] of auditorPks.entries()) {
-			const held = this.#keys.find((k) => k.publicKey.equals(pointFromBcs(pkBcs.element)));
+		let pair: (typeof auditorHandles)[number]['handles'][number] | undefined;
+		for (const entry of auditorHandles) {
+			const held = this.#keys.find((k) => k.publicKey.equals(pointFromBcs(entry.pk.element)));
 			if (held) {
-				index = i;
 				privateKey = held.privateKey;
+				pair = entry.handles[0];
 				break;
 			}
 		}
 		if (privateKey === undefined) {
-			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPks[0].element));
+			throw new AuditorKeyNotHeldError(pointFromBcs(auditorHandles[0].pk.element));
 		}
-		const handles = event.auditor_decryption_handles[index];
-		if (handles === undefined || handles.length !== 2) return null;
+		if (pair === undefined || pair.length !== 2) return null;
 		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with this
 		// auditor's matching handle and BSGS-decrypt.
-		const d0 = pointFromBcs(handles[0]);
-		const d1 = pointFromBcs(handles[1]);
+		const d0 = pointFromBcs(pair[0]);
+		const d1 = pointFromBcs(pair[1]);
 		const a0 = pointFromBcs(event.encrypted_amount_receiver[0].ciphertext);
 		const a1 = pointFromBcs(event.encrypted_amount_receiver[1].ciphertext);
 		const n0 = new Ciphertext(a0, d0).decrypt(privateKey, this.#table);

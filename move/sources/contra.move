@@ -68,7 +68,14 @@
 module contra::contra;
 
 use contra::{
-    auditors::{Auditors, AuditorPackage, new as new_auditors},
+    auditors::{
+        Auditors,
+        AuditorPackage,
+        VerifiedDecryptionHandles,
+        pop_receiver,
+        all_consumed,
+        new as new_auditors,
+    },
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
@@ -191,8 +198,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_decryption_handles: vector<vector<vector<Element<G>>>>,
-        auditor_pks: vector<PublicKey>,
+        auditor_decryption_handles: vector<VerifiedDecryptionHandles>,
     },
 }
 
@@ -573,7 +579,7 @@ public fun batched_transfer<T>(
     let new_balance = wfeas.pop_back();
     let receiver_amounts = wfeas;
 
-    let (mut auditor_decryption_handles, auditor_pks) = ct
+    let auditor_decryption_handles = ct
         .auditors
         .verify_transfer(
             &receiver_amounts,
@@ -596,10 +602,10 @@ public fun batched_transfer<T>(
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
-        // Reverse coins and auditor handles so `add_to_batch`'s `pop_back` consumes them in
-        // submission order.
+        // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order. The auditor
+        // handles are per-auditor (shared across receivers) and already reverse-ordered within each
+        // auditor by `verify_transfer`, so the outer vector is not reversed.
         coins.reverse();
-        auditor_decryption_handles.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
             sender_pk: sender.pk,
@@ -607,7 +613,6 @@ public fun batched_transfer<T>(
             seed_point,
             next_index: 0,
             auditor_decryption_handles,
-            auditor_pks,
         }
     } else {
         withdrawn.destroy_none();
@@ -639,7 +644,6 @@ public fun add_to_batch<T>(
             seed_point,
             next_index,
             mut auditor_decryption_handles,
-            auditor_pks,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -649,11 +653,12 @@ public fun add_to_batch<T>(
 
             let coin = coins.pop_back();
 
-            // One `[lo, hi]` handle pair per auditor for this receiver (empty when auditing is disabled).
+            // This receiver's slice: pop each auditor's next `[lo, hi]` pair (empty when auditing is
+            // disabled). The per-auditor stacks stay in the batch state for the remaining receivers.
             let receiver_auditor_decryption_handles = if (auditor_decryption_handles.is_empty()) {
                 vector[]
             } else {
-                auditor_decryption_handles.pop_back()
+                pop_receiver(&mut auditor_decryption_handles)
             };
 
             let receiver = &mut receiver[TokenAccountKey<T>()];
@@ -672,7 +677,6 @@ public fun add_to_batch<T>(
                 receiver_pk,
                 vector[amount_lo, amount_hi],
                 receiver_auditor_decryption_handles,
-                auditor_pks,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver_pk, coin);
@@ -683,7 +687,6 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index: next_index + 1,
                 auditor_decryption_handles,
-                auditor_pks,
             }
         },
     }
@@ -703,7 +706,7 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
         },
         TransferBatch::Ok { coins, auditor_decryption_handles, .. } => {
             assert!(
-                coins.is_empty() && auditor_decryption_handles.is_empty(),
+                coins.is_empty() && all_consumed(&auditor_decryption_handles),
                 EAllAmountsMustBeUsed,
             );
             coins.destroy_empty();

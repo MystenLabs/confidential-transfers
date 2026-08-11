@@ -745,14 +745,8 @@ fun test_key(): PublicKey {
 fun auditor_disabled_accepts_no_data() {
     let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    let (handles, verifying) = auditors::verify_transfer(
-        &auditor,
-        &amounts,
-        option::none(),
-        b"dst",
-    );
+    let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
     assert!(handles.is_empty());
-    assert!(verifying.is_empty());
     unit_test::destroy(auditor);
 }
 
@@ -784,14 +778,8 @@ fun auditor_disable_grace_accepts_no_data() {
     let mut auditor = auditors::new(vector[test_key()]);
     auditors::update(&mut auditor, vector[], vector[test_key()]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    let (handles, verifying) = auditors::verify_transfer(
-        &auditor,
-        &amounts,
-        option::none(),
-        b"dst",
-    );
+    let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
     assert!(handles.is_empty());
-    assert!(verifying.is_empty());
     unit_test::destroy(auditor);
 }
 

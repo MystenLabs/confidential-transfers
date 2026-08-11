@@ -46,6 +46,15 @@ public struct AuditorPackage has drop {
     proof: MultiKeyElGamalProof,
 }
 
+/// One auditor's decryption handles, tagged with that auditor's public key so a reader can pick the
+/// entry matching a key it holds. `handles` is one `[lo, hi]` pair per transferred amount: the whole
+/// batch (as held in `TransferBatch` state) or, after `pop_receiver` slices it, a single receiver's
+/// pair (as carried on that receiver's `TransferEvent`).
+public struct VerifiedDecryptionHandles has copy, drop, store {
+    handles: vector<vector<Element<G>>>,
+    pk: PublicKey,
+}
+
 // === Functions ===
 
 public fun new_auditor_package(
@@ -77,19 +86,20 @@ public(package) fun update(
 
 /// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
 /// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
-/// carries none). The single batched proof must verify against `current_pks`, and if it fails against
-/// `previous_pks`. Returns, per receiver, one `[lo, hi]` handle pair per auditor (in key order), and
-/// the verifying key vector (`current_pks` or `previous_pks`), both empty when the transfer carries no
+/// carries none). The single batched proof must verify against `current_pks`, and if not against
+/// `previous_pks`. Returns one `VerifiedDecryptionHandles` per auditor (in key order, each tagged with
+/// the verifying key), whose `handles` are that auditor's per-receiver `[lo, hi]` pairs reverse-ordered
+/// so `pop_receiver`'s `pop_back` yields them in submission order; empty when the transfer carries no
 /// auditor data.
 public(package) fun verify_transfer(
     auditors: &Auditors,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
     auditor_package: Option<AuditorPackage>,
     dst: vector<u8>,
-): (vector<vector<vector<Element<G>>>>, vector<PublicKey>) {
+): vector<VerifiedDecryptionHandles> {
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
-        return (vector[], vector[])
+        return vector[]
     };
     assert!(
         !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
@@ -111,10 +121,31 @@ public(package) fun verify_transfer(
     } else {
         abort EAuditorProofFailed
     };
-    // Regroup the flat auditor-major handles into per-receiver [auditor] handles for the events.
-    let m = verifying_pks.length();
-    let event_handles = vector::tabulate!(n, |r| vector::tabulate!(m, |i| handles[i * n + r]));
-    (event_handles, verifying_pks)
+    // One entry per auditor holding its per-receiver pairs, reverse-ordered so `pop_receiver` pops
+    // receiver 0 first. The flat input is auditor-major: `handles[i * n + r]` is auditor i's pair for
+    // receiver r.
+    vector::tabulate!(verifying_pks.length(), |i| {
+        let mut pairs = vector::tabulate!(n, |r| handles[i * n + r]);
+        pairs.reverse();
+        VerifiedDecryptionHandles { handles: pairs, pk: verifying_pks[i] }
+    })
+}
+
+/// Pop the next receiver's `[lo, hi]` pair off every auditor's stack, returning one
+/// `VerifiedDecryptionHandles` per auditor whose `handles` is that single pair — the slice carried on
+/// one receiver's `TransferEvent`. Call once per receiver in submission order.
+public(package) fun pop_receiver(
+    auditor_data: &mut vector<VerifiedDecryptionHandles>,
+): vector<VerifiedDecryptionHandles> {
+    vector::tabulate!(auditor_data.length(), |i| {
+        let entry = &mut auditor_data[i];
+        VerifiedDecryptionHandles { handles: vector[entry.handles.pop_back()], pk: entry.pk }
+    })
+}
+
+/// True iff every auditor's stack has been fully popped (one `pop_receiver` per receiver has run).
+public(package) fun all_consumed(auditor_data: &vector<VerifiedDecryptionHandles>): bool {
+    auditor_data.all!(|entry| entry.handles.is_empty())
 }
 
 /// Whether the batched proof verifies for `pks`: the flat auditor-major `decryption_handles` must be

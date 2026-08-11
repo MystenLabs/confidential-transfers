@@ -4,6 +4,7 @@
 import { bcs } from '@mysten/sui/bcs';
 
 import { MoveStruct, MoveTuple } from '../utils/index.js';
+import * as auditors from './auditors.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as encrypted_amount from './encrypted_amount.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
@@ -62,8 +63,7 @@ export const TransferEvent = new MoveStruct({
 		receiver: bcs.Address,
 		receiver_pk: twisted_elgamal.PublicKey,
 		encrypted_amount_receiver: bcs.vector(twisted_elgamal.Encryption),
-		auditor_decryption_handles: bcs.vector(bcs.vector(group_ops.Element)),
-		auditor_pks: bcs.vector(twisted_elgamal.PublicKey),
+		auditor_decryption_handles: bcs.vector(auditors.VerifiedDecryptionHandles),
 		memo: bcs.vector(bcs.u8()),
 	},
 });
