@@ -22,7 +22,6 @@ const BULLETPROOFS_VERSION: u8 = 0;
 /// must show every committed value lies in `[0, 2^16)`.
 const LIMB_BITS: u8 = 16;
 
-/// Number of u16 limbs a u64 amount is stored as (`l0..l3`).
 const U16_LIMBS: u64 = 4;
 
 /// Maximum number of amounts covered by a single Bulletproof chunk.
@@ -182,16 +181,16 @@ public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
     }
 }
 
-/// The two u32-limb `Encryption`s `[l0 + 2^16 l1, l2 + 2^16 l3]` (ciphertext and handle alike).
-public(package) fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
+/// The two u32-limb `Encryption`s `(l0 + 2^16 l1, l2 + 2^16 l3)` (ciphertext and handle alike).
+public(package) fun collapse_to_u32(ea: &EncryptedAmount): (Encryption, Encryption) {
     let two_16 = scalar_from_u64(1 << 16);
-    vector[fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16)]
+    (fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16))
 }
 
 /// The single `Encryption` of the full u64 value: the two u32 limbs folded by `2^32`.
 public(package) fun collapse(ea: &EncryptedAmount): Encryption {
-    let u32s = ea.collapse_to_u32();
-    fold_encryption(&u32s[0], &u32s[1], &scalar_from_u64(1 << 32))
+    let (lo, hi) = ea.collapse_to_u32();
+    fold_encryption(&lo, &hi, &scalar_from_u64(1 << 32))
 }
 
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
@@ -270,10 +269,10 @@ public(package) fun with_decryption_handles(
     self: &WellFormedEncryptedAmount,
     handles: &DecryptionHandles,
 ): vector<Encryption> {
-    let u32s = self.amount.collapse_to_u32();
+    let (lo, hi) = self.amount.collapse_to_u32();
     vector[
-        twisted_elgamal::new(*u32s[0].ciphertext(), handles.lo),
-        twisted_elgamal::new(*u32s[1].ciphertext(), handles.hi),
+        twisted_elgamal::new(*lo.ciphertext(), handles.lo),
+        twisted_elgamal::new(*hi.ciphertext(), handles.hi),
     ]
 }
 

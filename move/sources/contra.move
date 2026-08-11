@@ -668,6 +668,7 @@ public fun add_to_batch<T>(
             assert!(receiver.has_deposit_slot(), EBalancesFull);
             let receiver_pk = receiver.pk;
 
+            let (amount_lo, amount_hi) = coin.amount().amount().collapse_to_u32();
             events::emit_transfer<T>(
                 sender,
                 sender_pk,
@@ -675,7 +676,7 @@ public fun add_to_batch<T>(
                 next_index,
                 receiver_addr,
                 receiver_pk,
-                coin.amount().amount().collapse_to_u32(),
+                vector[amount_lo, amount_hi],
                 receiver_auditor_decryption_handles,
                 auditor_pks,
                 memo,
