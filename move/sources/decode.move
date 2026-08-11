@@ -6,12 +6,7 @@
 module contra::decode;
 
 use contra::{
-    encrypted_amount::{
-        new_encrypted_amount,
-        new_decryption_handles,
-        EncryptedAmount,
-        DecryptionHandles,
-    },
+    encrypted_amount::{new_encrypted_amount, EncryptedAmount},
     nizk::{Self, DdhProof, ElGamalProof, MultiKeyElGamalProof},
     twisted_elgamal::{Self, Encryption, PublicKey, public_key}
 };
@@ -26,14 +21,14 @@ public fun public_keys(parts: vector<vector<u8>>): vector<PublicKey> {
     parts.map!(|b| public_key(g_from_bytes(&b)))
 }
 
-/// Build one `DecryptionHandles` per consecutive pair of point-encoded `parts` (two u32-limb handles
-/// per transferred amount, flattened in amount order). Aborts if `parts` has an odd length.
-public fun decryption_handles(parts: vector<vector<u8>>): vector<DecryptionHandles> {
+/// Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts` (two u32-limb
+/// handles per transferred amount, flattened in amount order). Aborts if `parts` has an odd length.
+public fun decryption_handles(parts: vector<vector<u8>>): vector<vector<Element<G>>> {
     let elements = g_vector(parts);
     let mut out = vector[];
     let mut i = 0;
     while (i < elements.length()) {
-        out.push_back(new_decryption_handles(elements[i], elements[i + 1]));
+        out.push_back(vector[elements[i], elements[i + 1]]);
         i = i + 2;
     };
     out

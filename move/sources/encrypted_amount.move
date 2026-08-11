@@ -62,13 +62,6 @@ public struct WellFormedProof has drop {
     consistency_proofs: vector<ElGamalProof>,
 }
 
-/// The two u32-limb auditor decryption handles for one transferred amount. Paired with the amount's
-/// two `collapse_to_u32` ciphertext commitments, they let an auditor recover the amount off-chain.
-public struct DecryptionHandles has copy, drop, store {
-    lo: Element<G>,
-    hi: Element<G>,
-}
-
 public fun new_encrypted_amount(
     l0: Encryption,
     l1: Encryption,
@@ -93,11 +86,6 @@ public fun new_well_formed_proof(
     );
     assert!(range_proofs.all!(|rp| !rp.is_empty()), ERangeProofRequired);
     WellFormedProof { range_proofs, consistency_proofs }
-}
-
-/// Wrap one amount's two u32-limb auditor decryption handles.
-public fun new_decryption_handles(lo: Element<G>, hi: Element<G>): DecryptionHandles {
-    DecryptionHandles { lo, hi }
 }
 
 /// Check `proof` against `amounts` under `pks`: every limb of every amount is u16 (range proof,
@@ -260,11 +248,6 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
 public(package) fun commitments_u32(self: &WellFormedEncryptedAmount): vector<Element<G>> {
     let (lo, hi) = self.amount.collapse_to_u32();
     vector[*lo.ciphertext(), *hi.ciphertext()]
-}
-
-/// The two u32-limb decryption handles `[lo, hi]`.
-public(package) fun handles(self: &DecryptionHandles): vector<Element<G>> {
-    vector[self.lo, self.hi]
 }
 
 /// `lo + shift * hi`.

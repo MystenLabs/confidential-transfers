@@ -5,18 +5,10 @@ import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments, type RawTransactionArgument } from '../utils/index.js';
-import * as group_ops from './deps/sui/group_ops.js';
 import * as nizk from './nizk.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::encrypted_amount';
-export const DecryptionHandles = new MoveStruct({
-	name: `${$moduleName}::DecryptionHandles`,
-	fields: {
-		lo: group_ops.Element,
-		hi: group_ops.Element,
-	},
-});
 export const EncryptedAmount = new MoveStruct({
 	name: `${$moduleName}::EncryptedAmount`,
 	fields: {
@@ -98,27 +90,6 @@ export function newWellFormedProof(options: NewWellFormedProofOptions) {
 			package: packageAddress,
 			module: 'encrypted_amount',
 			function: 'new_well_formed_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewDecryptionHandlesArguments {
-	lo: TransactionArgument;
-	hi: TransactionArgument;
-}
-export interface NewDecryptionHandlesOptions {
-	package?: string;
-	arguments: NewDecryptionHandlesArguments | [lo: TransactionArgument, hi: TransactionArgument];
-}
-/** Wrap one amount's two u32-limb auditor decryption handles. */
-export function newDecryptionHandles(options: NewDecryptionHandlesOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null] satisfies (string | null)[];
-	const parameterNames = ['lo', 'hi'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'encrypted_amount',
-			function: 'new_decryption_handles',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

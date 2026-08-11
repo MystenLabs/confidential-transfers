@@ -3,10 +3,7 @@
 
 module contra::events;
 
-use contra::{
-    encrypted_amount::{EncryptedAmount, DecryptionHandles},
-    twisted_elgamal::{PublicKey, Encryption}
-};
+use contra::{encrypted_amount::EncryptedAmount, twisted_elgamal::{PublicKey, Encryption}};
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -59,7 +56,7 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// receiver commitments are identical) by re-deriving the per-transfer blinding from
 /// `seed = HKDF(sk * seed_point)` and the receiver's `batch_index` within this transfer.
 ///
-/// `auditor_decryption_handles` holds one `DecryptionHandles` (two u32-limb handles) per auditor key,
+/// `auditor_decryption_handles` holds one `[lo, hi]` handle pair (two u32-limb handles) per auditor key,
 /// in the same order as `auditor_pks` (empty when auditing is disabled), each paired off-chain with
 /// the two commitments (the ciphertext halves of `encrypted_amount_receiver`). `auditor_pks` are the
 /// auditor keys they are encrypted under — the set (current or, during a rotation grace window,
@@ -73,7 +70,7 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: vector<Encryption>,
-    auditor_decryption_handles: vector<DecryptionHandles>,
+    auditor_decryption_handles: vector<vector<Element<G>>>,
     auditor_pks: vector<PublicKey>,
     memo: vector<u8>,
 }
@@ -172,7 +169,7 @@ public(package) fun emit_transfer<T>(
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: vector<Encryption>,
-    auditor_decryption_handles: vector<DecryptionHandles>,
+    auditor_decryption_handles: vector<vector<Element<G>>>,
     auditor_pks: vector<PublicKey>,
     memo: vector<u8>,
 ) {

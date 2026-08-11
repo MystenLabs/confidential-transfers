@@ -422,7 +422,7 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
  * for every (auditor, receiver) pair plus one batched `MultiKeyElGamalProof`. `option::some` wrapping
  * `auditors::new_auditor_package(handles, proof)` when `data` is provided, `option::none` when
  * auditing is disabled. `data.handles` are flattened auditor-major (two u32-limb handles per receiver,
- * receiver order within each auditor), grouped into `DecryptionHandles` on-chain by
+ * receiver order within each auditor), grouped into per-pair `[lo, hi]` handle vectors on-chain by
  * `decode::decryption_handles`. Built entirely through `decode` calls (no `makeMoveVec`), so the
  * nested proof/handle structure round-trips on chain.
  */

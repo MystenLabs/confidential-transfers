@@ -4,10 +4,11 @@
 module contra::auditors;
 
 use contra::{
-    encrypted_amount::{DecryptionHandles, WellFormedEncryptedAmount, commitments_u32, handles},
+    encrypted_amount::{WellFormedEncryptedAmount, commitments_u32},
     nizk::{MultiKeyElGamalProof, verify_multi_key_elgamal},
     twisted_elgamal::PublicKey
 };
+use sui::{group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
@@ -41,14 +42,14 @@ public struct Auditors has store {
 /// `MultiKeyElGamalProof` proving all of them consistent under the auditor keys under a single shared
 /// challenge (so the whole set is verified together, not one proof per auditor).
 public struct AuditorPackage has drop {
-    handles: vector<DecryptionHandles>,
+    handles: vector<vector<Element<G>>>,
     proof: MultiKeyElGamalProof,
 }
 
 // === Functions ===
 
 public fun new_auditor_package(
-    handles: vector<DecryptionHandles>,
+    handles: vector<vector<Element<G>>>,
     proof: MultiKeyElGamalProof,
 ): AuditorPackage {
     AuditorPackage { handles, proof }
@@ -77,15 +78,15 @@ public(package) fun update(
 /// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
 /// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
 /// carries none). The single batched proof must verify against `current_pks`, and if it fails against
-/// `previous_pks`. Returns, per receiver, one `DecryptionHandles` per auditor (in key order), and the
-/// verifying key vector (`current_pks` or `previous_pks`), both empty when the transfer carries no
+/// `previous_pks`. Returns, per receiver, one `[lo, hi]` handle pair per auditor (in key order), and
+/// the verifying key vector (`current_pks` or `previous_pks`), both empty when the transfer carries no
 /// auditor data.
 public(package) fun verify_transfer(
     auditors: &Auditors,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
     auditor_package: Option<AuditorPackage>,
     dst: vector<u8>,
-): (vector<vector<DecryptionHandles>>, vector<PublicKey>) {
+): (vector<vector<vector<Element<G>>>>, vector<PublicKey>) {
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
         return (vector[], vector[])
@@ -121,7 +122,7 @@ public(package) fun verify_transfer(
 /// are shared across auditors, so they are passed once; each auditor gets its own flat slice of handles,
 /// and the whole set is one batched `verify_multi_key_elgamal`.
 fun verify_under(
-    decryption_handles: &vector<DecryptionHandles>,
+    decryption_handles: &vector<vector<Element<G>>>,
     proof: &MultiKeyElGamalProof,
     pks: &vector<PublicKey>,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
@@ -133,7 +134,7 @@ fun verify_under(
     let commitments = vector::tabulate!(n, |r| receiver_amounts[r].commitments_u32()).flatten();
     let handles_per_key = vector::tabulate!(
         m,
-        |i| vector::tabulate!(n, |r| decryption_handles[i * n + r].handles()).flatten(),
+        |i| vector::tabulate!(n, |r| decryption_handles[i * n + r]).flatten(),
     );
     proof.verify_multi_key_elgamal(dst, pks, &commitments, &handles_per_key)
 }

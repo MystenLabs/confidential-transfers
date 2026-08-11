@@ -929,14 +929,14 @@ fun total_consistency_proof_for_testing(
 /// blindings `blindings[i]`) under every key in `auditor_pks`. Each amount contributes two u32-limb
 /// commitments (shared across keys) — the low half `r*g + v*h` and the high half `identity` — and,
 /// per auditor key, the matching handles `[r*aud_pk, identity]`. The returned handles are one
-/// `DecryptionHandles` per (auditor, amount), flat and auditor-major (`[aud_0 × amounts, …]`),
+/// `[lo, hi]` pair per (auditor, amount), flat and auditor-major (`[aud_0 × amounts, …]`),
 /// matching `verify_transfer`.
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
     auditor_pks: &vector<Element<G>>,
     dst: vector<u8>,
-): (vector<encrypted_amount::DecryptionHandles>, nizk::MultiKeyElGamalProof) {
+): (vector<vector<Element<G>>>, nizk::MultiKeyElGamalProof) {
     let mut messages = vector[];
     let mut blinds = vector[];
     // Shared commitments: per amount, [ r_i*g + v_i*h , identity ] (key-independent).
@@ -957,7 +957,7 @@ fun build_auditor_data(
         values.length().do!(|i| {
             let lo = *encrypt_trivial_for_testing(values[i], pk, blindings[i]).decryption_handle();
             let hi = ristretto255::g_identity();
-            handles.push_back(encrypted_amount::new_decryption_handles(lo, hi));
+            handles.push_back(vector[lo, hi]);
             key_handles.push_back(lo);
             key_handles.push_back(hi);
         });

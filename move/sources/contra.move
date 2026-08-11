@@ -71,13 +71,7 @@ use contra::{
     auditors::{Auditors, AuditorPackage, new as new_auditors},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
-    encrypted_amount::{
-        Self,
-        EncryptedAmount,
-        DecryptionHandles,
-        WellFormedEncryptedAmount,
-        WellFormedProof,
-    },
+    encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
@@ -197,7 +191,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_decryption_handles: vector<vector<DecryptionHandles>>,
+        auditor_decryption_handles: vector<vector<vector<Element<G>>>>,
         auditor_pks: vector<PublicKey>,
     },
 }
@@ -655,7 +649,7 @@ public fun add_to_batch<T>(
 
             let coin = coins.pop_back();
 
-            // One `DecryptionHandles` per auditor for this receiver (empty when auditing is disabled).
+            // One `[lo, hi]` handle pair per auditor for this receiver (empty when auditing is disabled).
             let receiver_auditor_decryption_handles = if (auditor_decryption_handles.is_empty()) {
                 vector[]
             } else {

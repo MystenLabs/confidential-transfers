@@ -5,7 +5,7 @@ import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
-import * as encrypted_amount from './encrypted_amount.js';
+import * as group_ops from './deps/sui/group_ops.js';
 import * as nizk from './nizk.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
@@ -20,7 +20,7 @@ export const Auditors = new MoveStruct({
 export const AuditorPackage = new MoveStruct({
 	name: `${$moduleName}::AuditorPackage`,
 	fields: {
-		handles: bcs.vector(encrypted_amount.DecryptionHandles),
+		handles: bcs.vector(bcs.vector(group_ops.Element)),
 		proof: nizk.MultiKeyElGamalProof,
 	},
 });
@@ -36,7 +36,7 @@ export interface NewAuditorPackageOptions {
 }
 export function newAuditorPackage(options: NewAuditorPackageOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<null>', null] satisfies (string | null)[];
+	const argumentsTypes = ['vector<vector<null>>', null] satisfies (string | null)[];
 	const parameterNames = ['handles', 'proof'];
 	return (tx: Transaction) =>
 		tx.moveCall({

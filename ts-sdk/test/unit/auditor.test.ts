@@ -51,10 +51,10 @@ function buildTransferEvent(
 			bcsLimb(foldU32(limbs[0], limbs[1])),
 			bcsLimb(foldU32(limbs[2], limbs[3])),
 		],
-		auditor_decryption_handles: auditorPks.map((pk) => ({
-			lo: bcsPoint(mul(pk, rho0)),
-			hi: bcsPoint(mul(pk, rho1)),
-		})),
+		auditor_decryption_handles: auditorPks.map((pk) => [
+			bcsPoint(mul(pk, rho0)),
+			bcsPoint(mul(pk, rho1)),
+		]),
 		auditor_pks: auditorPks.map((pk) => ({ element: bcsPoint(pk) })),
 	};
 }

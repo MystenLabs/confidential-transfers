@@ -95,7 +95,6 @@ import * as auditors from './auditors.js';
 import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
-import * as encrypted_amount from './encrypted_amount.js';
 import * as policy from './policy.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
@@ -198,7 +197,7 @@ export const TransferBatch = new MoveEnum({
 				coins: bcs.vector(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),
-				auditor_decryption_handles: bcs.vector(bcs.vector(encrypted_amount.DecryptionHandles)),
+				auditor_decryption_handles: bcs.vector(bcs.vector(bcs.vector(group_ops.Element))),
 				auditor_pks: bcs.vector(twisted_elgamal.PublicKey),
 			},
 		}),
@@ -1415,14 +1414,10 @@ export interface UpdateAuditorsOptions {
 }
 /**
  * Replace this confidential token's auditor keys. `current_pks` is tried first
- * when verifying a transfer, then `previous_pks`; the two need not be the same
- * length. The caller drives the grace policy: rotate with
- * `update_auditors(new, old_current)`, shrink the set with
- * `update_auditors(fewer, old_current)`, end the grace with
- * `update_auditors(new, new)`, enable with `update_auditors(pks, pks)`, disable
- * with grace via `update_auditors([], old_current)`, or disable outright with
- * `update_auditors([], [])` (see `auditors::update` /
- * `auditors::verify_transfer`).
+ * when verifying a transfer, then `previous_pks`. The two does not have to be the
+ * same length. The caller can drive a grace policy: rotate with
+ * `update_auditors(new, old_current)` and end the grace with
+ * `update_auditors(new, new)`.
  */
 export function updateAuditors(options: UpdateAuditorsOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

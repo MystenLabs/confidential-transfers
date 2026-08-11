@@ -61,9 +61,9 @@ export interface DecryptionHandlesOptions {
 	arguments: DecryptionHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
 /**
- * Build one `DecryptionHandles` per consecutive pair of point-encoded `parts` (two
- * u32-limb handles per transferred amount, flattened in amount order). Aborts if
- * `parts` has an odd length.
+ * Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts`
+ * (two u32-limb handles per transferred amount, flattened in amount order). Aborts
+ * if `parts` has an odd length.
  */
 export function decryptionHandles(options: DecryptionHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
