@@ -653,10 +653,13 @@ public fun add_to_batch<T>(
 
             let coin = coins.pop_back();
 
-            // This receiver's slice: pop each auditor's next `[lo, hi]` pair (empty when auditing is
-            // disabled). The per-auditor stacks stay in the batch state for the remaining receivers.
-            let receiver_auditor_decryption_handles = if (auditor_decryption_handles.is_empty()) {
-                vector[]
+            // This receiver's slice: pop each auditor's next `[lo, hi]` pair plus the auditor keys
+            // (both empty when auditing is disabled). The per-auditor stacks stay in the batch state
+            // for the remaining receivers.
+            let (receiver_auditor_decryption_handles, auditor_pks) = if (
+                auditor_decryption_handles.is_empty()
+            ) {
+                (vector[], vector[])
             } else {
                 pop_receiver(&mut auditor_decryption_handles)
             };
@@ -677,6 +680,7 @@ public fun add_to_batch<T>(
                 receiver_pk,
                 vector[amount_lo, amount_hi],
                 receiver_auditor_decryption_handles,
+                auditor_pks,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver_pk, coin);

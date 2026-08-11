@@ -131,16 +131,21 @@ public(package) fun verify_transfer(
     })
 }
 
-/// Pop the next receiver's `[lo, hi]` pair off every auditor's stack, returning one
-/// `VerifiedDecryptionHandles` per auditor whose `handles` is that single pair — the slice carried on
-/// one receiver's `TransferEvent`. Call once per receiver in submission order.
+/// Pop the next receiver's slice: from every auditor's stack pop one `[lo, hi]` pair, returning the
+/// per-auditor pairs for this receiver together with the auditor keys (both in key order) — the two
+/// fields of that receiver's `TransferEvent`. Call once per receiver in submission order.
 public(package) fun pop_receiver(
     auditor_data: &mut vector<VerifiedDecryptionHandles>,
-): vector<VerifiedDecryptionHandles> {
-    vector::tabulate!(auditor_data.length(), |i| {
+): (vector<vector<Element<G>>>, vector<PublicKey>) {
+    let m = auditor_data.length();
+    let mut handles = vector[];
+    let mut pks = vector[];
+    m.do!(|i| {
         let entry = &mut auditor_data[i];
-        VerifiedDecryptionHandles { handles: vector[entry.handles.pop_back()], pk: entry.pk }
-    })
+        handles.push_back(entry.handles.pop_back());
+        pks.push_back(entry.pk);
+    });
+    (handles, pks)
 }
 
 /// True iff every auditor's stack has been fully popped (one `pop_receiver` per receiver has run).

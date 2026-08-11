@@ -51,12 +51,12 @@ function buildTransferEvent(
 			bcsLimb(foldU32(limbs[0], limbs[1])),
 			bcsLimb(foldU32(limbs[2], limbs[3])),
 		],
-		// One `VerifiedDecryptionHandles` per auditor: this receiver's single `[lo, hi]` pair (the
-		// sliced form), tagged with the auditor key.
-		auditor_decryption_handles: auditorPks.map((pk) => ({
-			handles: [[bcsPoint(mul(pk, rho0)), bcsPoint(mul(pk, rho1))]],
-			pk: { element: bcsPoint(pk) },
-		})),
+		// Per auditor: this receiver's `[lo, hi]` pair, at the same index as `auditor_pks`.
+		auditor_decryption_handles: auditorPks.map((pk) => [
+			bcsPoint(mul(pk, rho0)),
+			bcsPoint(mul(pk, rho1)),
+		]),
+		auditor_pks: auditorPks.map((pk) => ({ element: bcsPoint(pk) })),
 	};
 }
 

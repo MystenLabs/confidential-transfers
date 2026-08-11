@@ -73,27 +73,28 @@ export class ContraAuditor {
 	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
 	 *   disabled for it).
 	 * @throws {@link AuditorKeyNotHeldError} if this auditor holds no key matching any of the event's
-	 *   auditor entries; {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
+	 *   `auditor_pks`; {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
 	 */
 	decryptTransferAmount(event: DecodedTransferEvent): bigint | null {
-		const auditorHandles = event.auditor_decryption_handles;
+		const auditorPks = event.auditor_pks;
 		// No auditor data attached (auditing was disabled for this transfer).
-		if (auditorHandles.length === 0) return null;
-		// Each entry is one auditor's tagged handles for this receiver; find the one this instance holds
-		// the matching private key for. `handles` is a single `[lo, hi]` pair (the receiver's slice).
+		if (auditorPks.length === 0) return null;
+		// Find the auditor key this instance holds; its handles sit at the same index in
+		// `auditor_decryption_handles`.
+		let index = -1;
 		let privateKey: PrivateKey | undefined;
-		let pair: (typeof auditorHandles)[number]['handles'][number] | undefined;
-		for (const entry of auditorHandles) {
-			const held = this.#keys.find((k) => k.publicKey.equals(pointFromBcs(entry.pk.element)));
+		for (const [i, pkBcs] of auditorPks.entries()) {
+			const held = this.#keys.find((k) => k.publicKey.equals(pointFromBcs(pkBcs.element)));
 			if (held) {
+				index = i;
 				privateKey = held.privateKey;
-				pair = entry.handles[0];
 				break;
 			}
 		}
 		if (privateKey === undefined) {
-			throw new AuditorKeyNotHeldError(pointFromBcs(auditorHandles[0].pk.element));
+			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPks[0].element));
 		}
+		const pair = event.auditor_decryption_handles[index];
 		if (pair === undefined || pair.length !== 2) return null;
 		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with this
 		// auditor's matching handle and BSGS-decrypt.
