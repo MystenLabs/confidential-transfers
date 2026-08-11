@@ -387,35 +387,6 @@ export interface RekeyTokenAccountOptions {
 	auth?: AuthThunk;
 }
 
-/** A single re-key in `ContraClient.tryRekeyTokenAccounts`: the token's current account and its new one. */
-export interface KeyRotation {
-	/** The token's current account — its `address`, `tokenType`, and current key. */
-	tokenAccount: TokenAccount;
-	/**
-	 * A `TokenAccount` carrying the new key this token re-keys to (must hold the new private key, of
-	 * the same `tokenType`). Different rotations may use different new keys.
-	 */
-	newTokenAccount: TokenAccount;
-}
-
-/**
- * Arguments to `ContraClient.tryRekeyTokenAccounts`: optimistically re-key one or more tokens in one PTB, each
- * to its own new key (the batched, soft-failing plural of `tryRekeyTokenAccount`).
- */
-export interface TryRekeyTokenAccountsOptions {
-	/**
-	 * The tokens to re-key, as (current, new) pairs. Each token re-keys from its `tokenAccount`'s key
-	 * to the paired `newTokenAccount`'s key; different tokens may go to different keys. All accounts
-	 * must be for the same account (same `address`).
-	 */
-	rotations: readonly KeyRotation[];
-	/**
-	 * When `true` (the default), a `merge` is prepended before each token's re-key so it can proceed
-	 * against the merged active balance (re-key requires an empty pending balance).
-	 */
-	merge?: boolean;
-}
-
 /** Arguments to `ContraClient.shareAccount`. */
 export interface ShareAccountOptions {
 	/**

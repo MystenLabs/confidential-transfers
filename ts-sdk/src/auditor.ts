@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { TransferEvent } from './contracts/contra/events.js';
 import { AuditorKeyNotHeldError } from './error.js';
 import { G, mul, pointFromBcs, type RistrettoPoint } from './ristretto255.js';
 import { Ciphertext, type DiscreteLogTable, type PrivateKey } from './twisted_elgamal.js';
@@ -9,17 +10,11 @@ import type { ContraAuditorOptions } from './types.js';
 const SHIFT_32 = 1n << 32n;
 
 /**
- * The decoded `TransferEvent` fields an auditor reads (`events.ts` `TransferEvent`, via
- * `TransferEventBcs.parse`). A full decoded event is structurally assignable.
+ * A decoded `TransferEvent` an auditor reads (`TransferEventBcs.parse`). This is the inferred type of
+ * the generated `events::TransferEvent` BCS schema, so it tracks the Move struct automatically — but
+ * only after `pnpm codegen` is re-run when that struct changes.
  */
-export type DecodedTransferEvent = {
-	encrypted_amount_receiver: {
-		ciphertext: { bytes: number[] };
-		decryption_handle: { bytes: number[] };
-	}[];
-	auditor_decryption_handles: { handles: { bytes: number[] }[] }[];
-	auditor_pks: { element: { bytes: number[] } }[];
-};
+export type DecodedTransferEvent = typeof TransferEvent.$inferType;
 
 /**
  * Per-transfer auditor SDK. Under per-transfer auditing the auditor never learns a user's viewing
