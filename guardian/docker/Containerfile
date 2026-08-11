@@ -4,7 +4,7 @@
 # Reproducible image the EIF is built from (see Makefile): always the real
 # NSM-attesting enclave — the `non-enclave-dev` mock is for bare `cargo run`
 # on machines without an NSM and never ships in an EIF.
-FROM rust:1.85-alpine3.21 AS build
+FROM rust:1.90-alpine3.22 AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
