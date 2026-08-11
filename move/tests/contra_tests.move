@@ -197,7 +197,7 @@ fun test_simple_flow() {
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_2.merge<TestCurrency>(&auth);
 
-    // Account 2 takes 30 coins from its balance to self. This leaves 20 in the balance since Account 1 transfered 50.
+    // Account 2 takes 30 coins from its balance to self. This leaves 20 in the balance since Account 1 transferred 50.
     let taken_amount = 30;
     let new_balance = encrypted_amount::new_encrypted_amount(
         encrypt_trivial_for_testing(20, &pk_2, 76520),
@@ -1823,7 +1823,7 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
     let amount: u16 = 1234;
     let r: u64 = 7777;
     let prover_dst = b"dst-A-prover-21-bytes";
-    let verifier_dst = b"dst-B-verifier-21-byt";
+    let verifier_dst = b"dst-B-verifier-21-bytes";
 
     let ea = encrypted_amount::new_encrypted_amount(
         encrypt_trivial_for_testing(amount as u64, &pk, r),
