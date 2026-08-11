@@ -563,7 +563,7 @@ public fun batched_transfer<T>(
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
     // `well_formed_proofs` is one aggregate proof over `[receiver_amounts..., new_balance]`
-    // under `[receiver_pks..., sender.pk]`; verify and wrap into WFEAs in one call, then peel
+    // under `[receiver_pks..., sender.pk]`. Verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
     let mut amounts = receiver_amounts;
     let mut pks = receiver_pks;
@@ -993,12 +993,8 @@ public fun set_policy<T, W>(
 // === Auditor flows ===
 
 /// Replace this confidential token's auditor keys. `current_pks` is tried first when verifying a
-/// transfer, then `previous_pks`; the two need not be the same length. The caller drives the grace
-/// policy: rotate with `update_auditors(new, old_current)`, shrink the set with
-/// `update_auditors(fewer, old_current)`, end the grace with `update_auditors(new, new)`, enable
-/// with `update_auditors(pks, pks)`, disable with grace via `update_auditors([], old_current)`, or
-/// disable outright with `update_auditors([], [])` (see `auditors::update` /
-/// `auditors::verify_transfer`).
+/// transfer, then `previous_pks`. The two does not have to be the same length. The caller can drive a grace
+/// policy: rotate with `update_auditors(new, old_current)` and end the grace with `update_auditors(new, new)`.
 public fun update_auditors<T>(
     ct: &mut ConfidentialToken<T>,
     _cap: &ManagementCap<T>,

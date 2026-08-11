@@ -14,12 +14,15 @@ use sui::{
         g_add,
         g_identity,
         g_mul,
-        scalar_add,
         scalar_from_bytes,
         scalar_from_u64,
         scalar_mul,
     }
 };
+
+// Only the `#[test_only]` provers build responses; the on-chain verifiers never add scalars.
+#[test_only]
+use sui::ristretto255::scalar_add;
 
 /// A shared-witness DDH proof of knowledge: one `w` with `images[k] = w * bases[k]` for all `k`.
 public struct DdhProof has drop {
