@@ -71,7 +71,7 @@ use contra::{
     auditors::{
         Auditors,
         AuditorPackage,
-        VerifiedDecryptionHandles,
+        VerifiedDecryptionHandlesBatch,
         per_receiver,
         new as new_auditors,
     },
@@ -197,7 +197,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_decryption_handles: vector<VerifiedDecryptionHandles>,
+        auditor_decryption_handles: vector<VerifiedDecryptionHandlesBatch>,
     },
 }
 
@@ -652,7 +652,6 @@ public fun add_to_batch<T>(
             assert!(!receiver.is_frozen, ETransferDenied);
             assert!(receiver.accepts_deposits, ETransferDenied);
             assert!(receiver.has_deposit_slot(), EBalancesFull);
-            let receiver_pk = receiver.pk;
 
             let coin = coins.pop_back();
             let (receiver_auditor_decryption_handles, auditor_pks) = per_receiver(
@@ -665,13 +664,13 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index,
                 receiver_addr,
-                receiver_pk,
+                receiver.pk,
                 coin.amount().amount().collapse_to_u32(),
                 receiver_auditor_decryption_handles,
                 auditor_pks,
                 memo,
             );
-            receiver.pending.merge_encrypted(&receiver_pk, coin);
+            receiver.pending.merge_encrypted(&receiver.pk, coin);
             TransferBatch::Ok {
                 sender,
                 sender_pk,
@@ -697,8 +696,6 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
             false
         },
         TransferBatch::Ok { coins, .. } => {
-            // `coins` is consumed one per receiver in lockstep with the auditor slices, so an empty
-            // `coins` means every receiver (and its auditor data) was emitted.
             assert!(coins.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
             true

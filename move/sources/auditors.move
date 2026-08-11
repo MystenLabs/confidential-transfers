@@ -49,7 +49,7 @@ public struct AuditorPackage has drop {
 /// One auditor's per-receiver decryption handles for a batch, tagged with that auditor's public key:
 /// `handles[r]` is the `[lo, hi]` pair for receiver `r`. Held in `TransferBatch` state; `per_receiver`
 /// reads one receiver's slice out of the whole set for that receiver's `TransferEvent`.
-public struct VerifiedDecryptionHandles has copy, drop, store {
+public struct VerifiedDecryptionHandlesBatch has copy, drop, store {
     handles: vector<vector<Element<G>>>,
     pk: PublicKey,
 }
@@ -86,7 +86,7 @@ public(package) fun update(
 /// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
 /// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
 /// carries none). The single batched proof must verify against `current_pks`, and if not against
-/// `previous_pks`. Returns one `VerifiedDecryptionHandles` per auditor (in key order, each tagged with
+/// `previous_pks`. Returns one `VerifiedDecryptionHandlesBatch` per auditor (in key order, each tagged with
 /// the verifying key), whose `handles` are that auditor's per-receiver `[lo, hi]` pairs in submission
 /// order (`handles[r]` is receiver `r`'s pair); empty when the transfer carries no auditor data.
 public(package) fun verify_transfer(
@@ -94,7 +94,7 @@ public(package) fun verify_transfer(
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
     auditor_package: Option<AuditorPackage>,
     dst: vector<u8>,
-): vector<VerifiedDecryptionHandles> {
+): vector<VerifiedDecryptionHandlesBatch> {
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
         return vector[]
@@ -123,7 +123,7 @@ public(package) fun verify_transfer(
     // receiver r's pair).
     vector::tabulate!(
         verifying_pks.length(),
-        |i| VerifiedDecryptionHandles {
+        |i| VerifiedDecryptionHandlesBatch {
             handles: vector::tabulate!(n, |r| handles[i * n + r]),
             pk: verifying_pks[i],
         },
@@ -134,7 +134,7 @@ public(package) fun verify_transfer(
 /// the auditor keys (both in key order) — the two fields of that receiver's `TransferEvent`. Empty
 /// when `auditor_data` is empty (auditing disabled). Call with `receiver_index` `0..N-1`.
 public(package) fun per_receiver(
-    auditor_data: &vector<VerifiedDecryptionHandles>,
+    auditor_data: &vector<VerifiedDecryptionHandlesBatch>,
     receiver_index: u64,
 ): (vector<vector<Element<G>>>, vector<PublicKey>) {
     (

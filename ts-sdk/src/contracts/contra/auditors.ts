@@ -24,8 +24,8 @@ export const AuditorPackage = new MoveStruct({
 		proof: nizk.MultiKeyElGamalProof,
 	},
 });
-export const VerifiedDecryptionHandles = new MoveStruct({
-	name: `${$moduleName}::VerifiedDecryptionHandles`,
+export const VerifiedDecryptionHandlesBatch = new MoveStruct({
+	name: `${$moduleName}::VerifiedDecryptionHandlesBatch`,
 	fields: {
 		handles: bcs.vector(bcs.vector(group_ops.Element)),
 		pk: twisted_elgamal.PublicKey,
