@@ -992,10 +992,12 @@ public fun set_policy<T, W>(
 // === Auditor flows ===
 
 /// Replace this confidential token's auditor keys. `current_pks` is tried first when verifying a
-/// transfer, then `previous_pks`; the two must be the same length. The caller drives the grace
-/// policy: rotate with `update_auditors(new, old_current)`, end the grace with
-/// `update_auditors(new, new)`, enable with `update_auditors(pks, pks)`, disable with
-/// `update_auditors([], [])` (see `auditors::update` / `auditors::verify_transfer`).
+/// transfer, then `previous_pks`; the two need not be the same length. The caller drives the grace
+/// policy: rotate with `update_auditors(new, old_current)`, shrink the set with
+/// `update_auditors(fewer, old_current)`, end the grace with `update_auditors(new, new)`, enable
+/// with `update_auditors(pks, pks)`, disable with grace via `update_auditors([], old_current)`, or
+/// disable outright with `update_auditors([], [])` (see `auditors::update` /
+/// `auditors::verify_transfer`).
 public fun update_auditors<T>(
     ct: &mut ConfidentialToken<T>,
     _cap: &ManagementCap<T>,

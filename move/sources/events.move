@@ -128,7 +128,7 @@ public struct AccountUnfreezeEvent<phantom T> has copy, drop {
 
 /// Emitted when the auditor keys for a confidential token of type `T` are updated. `current_pks` is
 /// the new key set tried first on a transfer (empty if auditing is disabled); `previous_pks` is the
-/// set also accepted during a rotation grace window (same length as `current_pks`).
+/// set also accepted during a rotation grace window (need not be the same length as `current_pks`).
 public struct UpdateAuditorsEvent<phantom T> has copy, drop {
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
