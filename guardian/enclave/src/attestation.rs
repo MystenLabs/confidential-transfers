@@ -1,14 +1,19 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Attestation from the Nitro Secure Module, or under `non-enclave-dev` the `user_data`
-//! alone so the guardian runs outside an enclave.
+//! Attestation from the Nitro Secure Module, or the `user_data` alone so the guardian
+//! runs outside an enclave — under `non-enclave-dev`, and on any platform where the
+//! NSM driver crate cannot build (only the Linux `nitro` build talks to the NSM).
 
 use contra_guardian_core::types::EnclaveKeys;
 
 /// An attestation document committing to the enclave's keys in `user_data`, laid out as
 /// `guardian::parse_user_data` expects.
-#[cfg(not(feature = "non-enclave-dev"))]
+#[cfg(all(
+    feature = "nitro",
+    not(feature = "non-enclave-dev"),
+    target_os = "linux"
+))]
 pub(crate) fn attestation_document(keys: &EnclaveKeys) -> anyhow::Result<Vec<u8>> {
     use nsm_api::api::{Request, Response};
     use nsm_api::driver;
@@ -32,7 +37,11 @@ pub(crate) fn attestation_document(keys: &EnclaveKeys) -> anyhow::Result<Vec<u8>
 }
 
 /// Serves a mocked/invalid attestation containing keys in dev mode.
-#[cfg(feature = "non-enclave-dev")]
+#[cfg(not(all(
+    feature = "nitro",
+    not(feature = "non-enclave-dev"),
+    target_os = "linux"
+)))]
 pub(crate) fn attestation_document(keys: &EnclaveKeys) -> anyhow::Result<Vec<u8>> {
     // Announce the stub once so a dev binary is never mistaken for a real enclave.
     static WARNED: std::sync::Once = std::sync::Once::new();

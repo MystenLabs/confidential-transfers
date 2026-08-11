@@ -638,6 +638,7 @@ dependencies = [
  "contra-guardian-core",
  "fastcrypto",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sui-crypto",
  "sui-rpc",
