@@ -133,7 +133,8 @@ public(package) fun verify_transfer(
 
 /// Pop the next receiver's slice: from every auditor's stack pop one `[lo, hi]` pair, returning the
 /// per-auditor pairs for this receiver together with the auditor keys (both in key order) — the two
-/// fields of that receiver's `TransferEvent`. Call once per receiver in submission order.
+/// fields of that receiver's `TransferEvent`. Call once per receiver in submission order. When
+/// `auditor_data` is empty (auditing disabled) both returned vectors are empty.
 public(package) fun pop_receiver(
     auditor_data: &mut vector<VerifiedDecryptionHandles>,
 ): (vector<vector<Element<G>>>, vector<PublicKey>) {

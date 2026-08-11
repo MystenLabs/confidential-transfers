@@ -653,16 +653,9 @@ public fun add_to_batch<T>(
 
             let coin = coins.pop_back();
 
-            // This receiver's slice: pop each auditor's next `[lo, hi]` pair plus the auditor keys
-            // (both empty when auditing is disabled). The per-auditor stacks stay in the batch state
-            // for the remaining receivers.
-            let (receiver_auditor_decryption_handles, auditor_pks) = if (
-                auditor_decryption_handles.is_empty()
-            ) {
-                (vector[], vector[])
-            } else {
-                pop_receiver(&mut auditor_decryption_handles)
-            };
+            let (receiver_auditor_decryption_handles, auditor_pks) = pop_receiver(
+                &mut auditor_decryption_handles,
+            );
 
             let receiver = &mut receiver[TokenAccountKey<T>()];
             assert!(!receiver.is_frozen, ETransferDenied);
@@ -670,7 +663,6 @@ public fun add_to_batch<T>(
             assert!(receiver.has_deposit_slot(), EBalancesFull);
             let receiver_pk = receiver.pk;
 
-            let (amount_lo, amount_hi) = coin.amount().amount().collapse_to_u32();
             events::emit_transfer<T>(
                 sender,
                 sender_pk,
@@ -678,7 +670,7 @@ public fun add_to_batch<T>(
                 next_index,
                 receiver_addr,
                 receiver_pk,
-                vector[amount_lo, amount_hi],
+                coin.amount().amount().collapse_to_u32(),
                 receiver_auditor_decryption_handles,
                 auditor_pks,
                 memo,

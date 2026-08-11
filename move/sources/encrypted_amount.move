@@ -170,15 +170,15 @@ public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
 }
 
 /// The two u32-limb `Encryption`s `(l0 + 2^16 l1, l2 + 2^16 l3)` (ciphertext and handle alike).
-public(package) fun collapse_to_u32(ea: &EncryptedAmount): (Encryption, Encryption) {
+public(package) fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
     let two_16 = scalar_from_u64(1 << 16);
-    (fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16))
+    vector[fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16)]
 }
 
 /// The single `Encryption` of the full u64 value: the two u32 limbs folded by `2^32`.
 public(package) fun collapse(ea: &EncryptedAmount): Encryption {
-    let (lo, hi) = ea.collapse_to_u32();
-    fold_encryption(&lo, &hi, &scalar_from_u64(1 << 32))
+    let u32s = ea.collapse_to_u32();
+    fold_encryption(&u32s[0], &u32s[1], &scalar_from_u64(1 << 32))
 }
 
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
@@ -246,8 +246,7 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
 /// This amount's two u32-limb ciphertext commitments (the shared commitments an auditor pairs with
 /// its own decryption handles).
 public(package) fun commitments_u32(self: &WellFormedEncryptedAmount): vector<Element<G>> {
-    let (lo, hi) = self.amount.collapse_to_u32();
-    vector[*lo.ciphertext(), *hi.ciphertext()]
+    self.amount.collapse_to_u32().map!(|e| *e.ciphertext())
 }
 
 /// `lo + shift * hi`.
