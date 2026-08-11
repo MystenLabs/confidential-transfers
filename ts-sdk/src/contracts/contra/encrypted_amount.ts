@@ -10,6 +10,13 @@ import * as nizk from './nizk.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::encrypted_amount';
+export const DecryptionHandles = new MoveStruct({
+	name: `${$moduleName}::DecryptionHandles`,
+	fields: {
+		lo: group_ops.Element,
+		hi: group_ops.Element,
+	},
+});
 export const EncryptedAmount = new MoveStruct({
 	name: `${$moduleName}::EncryptedAmount`,
 	fields: {
@@ -26,23 +33,11 @@ export const WellFormedEncryptedAmount = new MoveStruct({
 		pk: twisted_elgamal.PublicKey,
 	},
 });
-export const ConsistencyProof = new MoveStruct({
-	name: `${$moduleName}::ConsistencyProof`,
-	fields: {
-		proof: nizk.ElGamalProof,
-	},
-});
 export const WellFormedProof = new MoveStruct({
 	name: `${$moduleName}::WellFormedProof`,
 	fields: {
 		range_proofs: bcs.vector(bcs.vector(bcs.u8())),
-		consistency_proofs: bcs.vector(ConsistencyProof),
-	},
-});
-export const DecryptionHandles = new MoveStruct({
-	name: `${$moduleName}::DecryptionHandles`,
-	fields: {
-		handles: bcs.vector(group_ops.Element),
+		consistency_proofs: bcs.vector(nizk.ElGamalProof),
 	},
 });
 export interface NewEncryptedAmountArguments {
@@ -71,25 +66,6 @@ export function newEncryptedAmount(options: NewEncryptedAmountOptions) {
 			package: packageAddress,
 			module: 'encrypted_amount',
 			function: 'new_encrypted_amount',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewConsistencyProofArguments {
-	proof: TransactionArgument;
-}
-export interface NewConsistencyProofOptions {
-	package?: string;
-	arguments: NewConsistencyProofArguments | [proof: TransactionArgument];
-}
-export function newConsistencyProof(options: NewConsistencyProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null] satisfies (string | null)[];
-	const parameterNames = ['proof'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'encrypted_amount',
-			function: 'new_consistency_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
@@ -126,16 +102,18 @@ export function newWellFormedProof(options: NewWellFormedProofOptions) {
 		});
 }
 export interface NewDecryptionHandlesArguments {
-	handles: TransactionArgument;
+	lo: TransactionArgument;
+	hi: TransactionArgument;
 }
 export interface NewDecryptionHandlesOptions {
 	package?: string;
-	arguments: NewDecryptionHandlesArguments | [handles: TransactionArgument];
+	arguments: NewDecryptionHandlesArguments | [lo: TransactionArgument, hi: TransactionArgument];
 }
+/** Wrap one amount's two u32-limb auditor decryption handles. */
 export function newDecryptionHandles(options: NewDecryptionHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['handles'];
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['lo', 'hi'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

@@ -7,6 +7,12 @@ import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
 import * as group_ops from './deps/sui/group_ops.js';
 
 const $moduleName = '@local-pkg/contra::twisted_elgamal';
+export const PublicKey = new MoveStruct({
+	name: `${$moduleName}::PublicKey`,
+	fields: {
+		element: group_ops.Element,
+	},
+});
 export const Encryption = new MoveStruct({
 	name: `${$moduleName}::Encryption`,
 	fields: {
@@ -40,12 +46,6 @@ export function _new(options: NewOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export const PublicKey = new MoveStruct({
-	name: `${$moduleName}::PublicKey`,
-	fields: {
-		element: group_ops.Element,
-	},
-});
 export interface PublicKeyArguments {
 	element: TransactionArgument;
 }

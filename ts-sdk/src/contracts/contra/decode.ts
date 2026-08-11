@@ -30,25 +30,6 @@ export function gVector(options: GVectorOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface MultiKeyElgamalProofArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-}
-export interface MultiKeyElgamalProofOptions {
-	package?: string;
-	arguments: MultiKeyElgamalProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
-}
-export function multiKeyElgamalProof(options: MultiKeyElgamalProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
-	const parameterNames = ['parts'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'multi_key_elgamal_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
 export interface PublicKeysArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -56,6 +37,10 @@ export interface PublicKeysOptions {
 	package?: string;
 	arguments: PublicKeysArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
+/**
+ * Build one `PublicKey` per point-encoded part; each is validated non-identity by
+ * `public_key`.
+ */
 export function publicKeys(options: PublicKeysOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
@@ -75,6 +60,11 @@ export interface DecryptionHandlesOptions {
 	package?: string;
 	arguments: DecryptionHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
+/**
+ * Build one `DecryptionHandles` per consecutive pair of point-encoded `parts` (two
+ * u32-limb handles per transferred amount, flattened in amount order). Aborts if
+ * `parts` has an odd length.
+ */
 export function decryptionHandles(options: DecryptionHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
@@ -163,14 +153,19 @@ export function elgamalProof(options: ElgamalProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface ConsistencyProofArguments {
+export interface MultiKeyElgamalProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
-export interface ConsistencyProofOptions {
+export interface MultiKeyElgamalProofOptions {
 	package?: string;
-	arguments: ConsistencyProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+	arguments: MultiKeyElgamalProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
-export function consistencyProof(options: ConsistencyProofOptions) {
+/**
+ * Build a `MultiKeyElGamalProof` from `[a_0, …, a_{m-1}, b, z1, z2]`: the leading
+ * `parts.length - 3` point-encoded entries are the per-key handle masks `a`,
+ * followed by the point `b` and the two scalars `z1, z2`.
+ */
+export function multiKeyElgamalProof(options: MultiKeyElgamalProofOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
 	const parameterNames = ['parts'];
@@ -178,7 +173,7 @@ export function consistencyProof(options: ConsistencyProofOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'decode',
-			function: 'consistency_proof',
+			function: 'multi_key_elgamal_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
