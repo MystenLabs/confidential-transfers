@@ -255,17 +255,16 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
     fold(&lo, &hi, &scalar_from_u64(1 << 32))
 }
 
-/// Pair this amount's two u32-limb ciphertext commitments with `handles`' two handles, in limb
-/// order, into the amount's two u32-limb auditor `Encryption`s.
-public(package) fun with_decryption_handles(
-    self: &WellFormedEncryptedAmount,
-    handles: &DecryptionHandles,
-): vector<Encryption> {
+/// This amount's two u32-limb ciphertext commitments (the shared commitments an auditor pairs with
+/// its own decryption handles).
+public(package) fun commitments_u32(self: &WellFormedEncryptedAmount): vector<Element<G>> {
     let (lo, hi) = self.amount.collapse_to_u32();
-    vector[
-        twisted_elgamal::new(*lo.ciphertext(), handles.lo),
-        twisted_elgamal::new(*hi.ciphertext(), handles.hi),
-    ]
+    vector[*lo.ciphertext(), *hi.ciphertext()]
+}
+
+/// The two u32-limb decryption handles `[lo, hi]`.
+public(package) fun handles(self: &DecryptionHandles): vector<Element<G>> {
+    vector[self.lo, self.hi]
 }
 
 /// `lo + shift * hi`.

@@ -127,33 +127,33 @@ public(package) fun verify_multi_key_elgamal(
     proof: &MultiKeyElGamalProof,
     dst: vector<u8>,
     pks: &vector<PublicKey>,
-    encryptions_per_key: &vector<vector<Encryption>>,
+    commitments: &vector<Element<G>>,
+    handles_per_key: &vector<vector<Element<G>>>,
 ): bool {
     let m = pks.length();
-    if (m == 0 || proof.a.length() != m || encryptions_per_key.length() != m) return false;
-    if (encryptions_per_key[0].is_empty()) return false;
+    if (m == 0 || commitments.is_empty()) return false;
+    if (proof.a.length() != m || handles_per_key.length() != m) return false;
+    if (!handles_per_key.all!(|hk| hk.length() == commitments.length())) return false;
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
     let pk_elems = pks.map_ref!(|pk| *pk.as_element());
-    let commitments = encryptions_per_key[0].map_ref!(|e| *e.ciphertext());
-    let handles = encryptions_per_key.map_ref!(|ek| ek.map_ref!(|e| *e.decryption_handle()));
     let c = challenge_multi_key_elgamal(
         dst,
         &g,
         &h,
         &pk_elems,
-        &commitments,
-        &handles,
+        commitments,
+        handles_per_key,
         &proof.a,
         &proof.b,
     );
 
     // Commitment side (shared): b + c * sum_k c^k C_k == z1 * g + z2 * h.
-    is_valid_relation2(&proof.b, &fold(&commitments, &c), &g, &h, &proof.z1, &proof.z2, &c) &&
+    is_valid_relation2(&proof.b, &fold(commitments, &c), &g, &h, &proof.z1, &proof.z2, &c) &&
     // Handle side (per key i): a[i] + c * sum_k c^k D_{i,k} == z1 * pk_i.
     vector::tabulate!(
         m,
-        |i| is_valid_relation(&proof.a[i], &fold(&handles[i], &c), &pk_elems[i], &proof.z1, &c),
+        |i| is_valid_relation(&proof.a[i], &fold(&handles_per_key[i], &c), &pk_elems[i], &proof.z1, &c),
     ).all!(|ok| *ok)
 }
 
@@ -338,14 +338,15 @@ public fun default_multi_key_elgamal_proof(): MultiKeyElGamalProof {
     }
 }
 
-/// Prove a `MultiKeyElGamalProof` for `pks`, where `encryptions_per_key[i]` are the ciphertexts
-/// `(C_k, r_k*pk_i)` under key `i` sharing the commitments `C_k = r_k*g + m_k*h`. `messages` are the
-/// `m_k` and `blindings` the `r_k` (length `K`, shared across keys); `(ma, mb)` are the masks.
+/// Prove a `MultiKeyElGamalProof` for `pks` over the shared commitments `C_k = r_k*g + m_k*h`
+/// (`commitments`) with `handles_per_key[i][k] = r_k*pk_i`. `messages` are the `m_k` and `blindings`
+/// the `r_k` (length `K`, shared across keys); `(ma, mb)` are the masks.
 #[test_only]
 public fun prove_multi_key_elgamal(
     dst: vector<u8>,
     pks: &vector<Element<G>>,
-    encryptions_per_key: &vector<vector<Encryption>>,
+    commitments: &vector<Element<G>>,
+    handles_per_key: &vector<vector<Element<G>>>,
     messages: &vector<u64>,
     blindings: &vector<u64>,
     ma: &Element<Scalar>,
@@ -355,9 +356,7 @@ public fun prove_multi_key_elgamal(
     let h = twisted_elgamal::h();
     let a = pks.map_ref!(|pk| g_mul(ma, pk));
     let b = g_add(&g_mul(ma, &g), &g_mul(mb, &h));
-    let commitments = encryptions_per_key[0].map_ref!(|e| *e.ciphertext());
-    let handles = encryptions_per_key.map_ref!(|ek| ek.map_ref!(|e| *e.decryption_handle()));
-    let c = challenge_multi_key_elgamal(dst, &g, &h, pks, &commitments, &handles, &a, &b);
+    let c = challenge_multi_key_elgamal(dst, &g, &h, pks, commitments, handles_per_key, &a, &b);
     // z1 = ma + sum_k c^{k+1} r_k ; z2 = mb + sum_k c^{k+1} m_k, with c^j starting at c^1.
     let mut z1 = *ma;
     let mut z2 = *mb;
@@ -373,39 +372,39 @@ public fun prove_multi_key_elgamal(
 #[test]
 fun multi_key_elgamal_round_trip() {
     let g = twisted_elgamal::g();
+    let h = twisted_elgamal::h();
     // Three keys share four commitments `C_k = r_k*g + m_k*h`; key i's handles are `r_k*pk_i`.
     let sks = vector[scalar_from_u64(111), scalar_from_u64(222), scalar_from_u64(333)];
     let pks = sks.map_ref!(|sk| g_mul(sk, &g));
     let messages = vector[7u64, 0, 65535, 42];
     let blindings = vector[11u64, 22, 33, 44];
-    let encryptions_per_key = pks.map_ref!(
-        |pk| messages.zip_map_ref!(
-            &blindings,
-            |m, r| twisted_elgamal::encrypt_trivial_for_testing(*m, pk, *r),
-        ),
+    let commitments = messages.zip_map_ref!(
+        &blindings,
+        |m, r| g_add(&g_mul(&scalar_from_u64(*r), &g), &g_mul(&scalar_from_u64(*m), &h)),
     );
+    let handles_per_key = pks.map_ref!(|pk| blindings.map_ref!(|r| g_mul(&scalar_from_u64(*r), pk)));
     let proof = prove_multi_key_elgamal(
         vector[],
         &pks,
-        &encryptions_per_key,
+        &commitments,
+        &handles_per_key,
         &messages,
         &blindings,
         &scalar_from_u64(24680),
         &scalar_from_u64(13579),
     );
     let pk_keys = pks.map_ref!(|pk| twisted_elgamal::public_key(*pk));
-    assert!(verify_multi_key_elgamal(&proof, vector[], &pk_keys, &encryptions_per_key));
+    assert!(verify_multi_key_elgamal(&proof, vector[], &pk_keys, &commitments, &handles_per_key));
 
     // Tampering with any key's handle breaks verification (the challenge binds every handle).
-    let mut bad = encryptions_per_key;
-    *bad.borrow_mut(1).borrow_mut(0) =
-        twisted_elgamal::encrypt_trivial_for_testing(1, &pks[1], 999);
-    assert!(!verify_multi_key_elgamal(&proof, vector[], &pk_keys, &bad));
+    let mut bad = handles_per_key;
+    *bad.borrow_mut(1).borrow_mut(0) = g_mul(&scalar_from_u64(999), &pks[1]);
+    assert!(!verify_multi_key_elgamal(&proof, vector[], &pk_keys, &commitments, &bad));
 
     // A statement with the wrong number of keys fails the length check.
     let mut short = pk_keys;
     short.pop_back();
-    assert!(!verify_multi_key_elgamal(&proof, vector[], &short, &encryptions_per_key));
+    assert!(!verify_multi_key_elgamal(&proof, vector[], &short, &commitments, &handles_per_key));
 }
 
 /// Build a DDH proof of knowledge of `sk` such that `ea.ciphertext - amount*h = sk*g` and

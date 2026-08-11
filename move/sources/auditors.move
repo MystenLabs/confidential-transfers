@@ -4,7 +4,7 @@
 module contra::auditors;
 
 use contra::{
-    encrypted_amount::{DecryptionHandles, WellFormedEncryptedAmount, with_decryption_handles},
+    encrypted_amount::{DecryptionHandles, WellFormedEncryptedAmount, commitments_u32, handles},
     nizk::{MultiKeyElGamalProof, verify_multi_key_elgamal},
     twisted_elgamal::PublicKey
 };
@@ -116,12 +116,12 @@ public(package) fun verify_transfer(
     (event_handles, verifying_pks)
 }
 
-/// Whether the batched proof verifies for `pks`: the flat auditor-major `handles` must be exactly
-/// `pks.length() * receiver_amounts.length()` long, and pairing each auditor's slice of handles with
-/// the receiver amounts (`with_decryption_handles`) must satisfy `verify_multi_key_elgamal`. The
-/// derived commitments are shared across auditors, so the whole set is one batched check.
+/// Whether the batched proof verifies for `pks`: the flat auditor-major `decryption_handles` must be
+/// exactly `pks.length() * receiver_amounts.length()` long. The receiver amounts' u32-limb commitments
+/// are shared across auditors, so they are passed once; each auditor gets its own flat slice of handles,
+/// and the whole set is one batched `verify_multi_key_elgamal`.
 fun verify_under(
-    handles: &vector<DecryptionHandles>,
+    decryption_handles: &vector<DecryptionHandles>,
     proof: &MultiKeyElGamalProof,
     pks: &vector<PublicKey>,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
@@ -129,13 +129,11 @@ fun verify_under(
 ): bool {
     let n = receiver_amounts.length();
     let m = pks.length();
-    if (handles.length() != m * n) return false;
-    let encryptions_per_key = vector::tabulate!(
+    if (decryption_handles.length() != m * n) return false;
+    let commitments = vector::tabulate!(n, |r| receiver_amounts[r].commitments_u32()).flatten();
+    let handles_per_key = vector::tabulate!(
         m,
-        |i| vector::tabulate!(
-            n,
-            |r| receiver_amounts[r].with_decryption_handles(&handles[i * n + r]),
-        ).flatten(),
+        |i| vector::tabulate!(n, |r| decryption_handles[i * n + r].handles()).flatten(),
     );
-    proof.verify_multi_key_elgamal(dst, pks, &encryptions_per_key)
+    proof.verify_multi_key_elgamal(dst, pks, &commitments, &handles_per_key)
 }

@@ -927,10 +927,10 @@ fun total_consistency_proof_for_testing(
 /// Build the flattened auditor-major decryption handles and the single batched
 /// `MultiKeyElGamalProof` for a batch of limb-0-only receiver amounts (values `values[i]`, limb-0
 /// blindings `blindings[i]`) under every key in `auditor_pks`. Each amount contributes two u32-limb
-/// encryptions matching `encrypted_amount::with_decryption_handles`: the low half `(r*g + v*h,
-/// r*aud_pk)` and the high half `(identity, identity)` (committed value and blinding both zero). The
-/// commitments are shared across keys, so all keys' handles are proven together. The handles are
-/// flat and auditor-major (`[aud_0 × amounts, aud_1 × amounts, …]`), matching `verify_transfer`.
+/// commitments (shared across keys) — the low half `r*g + v*h` and the high half `identity` — and,
+/// per auditor key, the matching handles `[r*aud_pk, identity]`. The returned handles are one
+/// `DecryptionHandles` per (auditor, amount), flat and auditor-major (`[aud_0 × amounts, …]`),
+/// matching `verify_transfer`.
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
@@ -939,33 +939,35 @@ fun build_auditor_data(
 ): (vector<encrypted_amount::DecryptionHandles>, nizk::MultiKeyElGamalProof) {
     let mut messages = vector[];
     let mut blinds = vector[];
+    // Shared commitments: per amount, [ r_i*g + v_i*h , identity ] (key-independent).
+    let mut commitments = vector[];
     values.length().do!(|i| {
         messages.push_back(values[i]);
         messages.push_back(0);
         blinds.push_back(blindings[i]);
         blinds.push_back(0);
+        let commitment = encrypt_trivial_for_testing(values[i], &ristretto255::g_generator(), blindings[i]);
+        commitments.push_back(*commitment.ciphertext());
+        commitments.push_back(ristretto255::g_identity());
     });
     let mut handles = vector[];
-    let mut encryptions_per_key = vector[];
+    let mut handles_per_key = vector[];
     auditor_pks.do_ref!(|pk| {
-        let mut encryptions = vector[];
+        let mut key_handles = vector[];
         values.length().do!(|i| {
-            let low = encrypt_trivial_for_testing(values[i], pk, blindings[i]);
-            handles.push_back(
-                encrypted_amount::new_decryption_handles(
-                    *low.decryption_handle(),
-                    ristretto255::g_identity(),
-                ),
-            );
-            encryptions.push_back(low);
-            encryptions.push_back(encrypt_zero());
+            let lo = *encrypt_trivial_for_testing(values[i], pk, blindings[i]).decryption_handle();
+            let hi = ristretto255::g_identity();
+            handles.push_back(encrypted_amount::new_decryption_handles(lo, hi));
+            key_handles.push_back(lo);
+            key_handles.push_back(hi);
         });
-        encryptions_per_key.push_back(encryptions);
+        handles_per_key.push_back(key_handles);
     });
     let proof = nizk::prove_multi_key_elgamal(
         dst,
         auditor_pks,
-        &encryptions_per_key,
+        &commitments,
+        &handles_per_key,
         &messages,
         &blinds,
         &ristretto255::scalar_from_u64(97531),
