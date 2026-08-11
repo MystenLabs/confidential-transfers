@@ -946,7 +946,11 @@ fun build_auditor_data(
         messages.push_back(0);
         blinds.push_back(blindings[i]);
         blinds.push_back(0);
-        let commitment = encrypt_trivial_for_testing(values[i], &ristretto255::g_generator(), blindings[i]);
+        let commitment = encrypt_trivial_for_testing(
+            values[i],
+            &ristretto255::g_generator(),
+            blindings[i],
+        );
         commitments.push_back(*commitment.ciphertext());
         commitments.push_back(ristretto255::g_identity());
     });

@@ -118,11 +118,9 @@ public(package) fun verify_elgamal(
     is_valid_relation2(&proof.b, &agg_c, &g, &h, &proof.z1, &proof.z2, &c)
 }
 
-/// Verify a `MultiKeyElGamalProof`. The shared commitments are the ciphertext parts of
-/// `encryptions_per_key[0]`, and `encryptions_per_key[i]` carries key `i`'s decryption handles for
-/// those same commitments — so every key's ciphertext parts must be equal (the caller derives them
-/// from one commitment set; only `[0]` is read for the commitment side). Runs the commitment-side
-/// check once and the handle-side check once per key, all under one shared challenge.
+/// Verify a `MultiKeyElGamalProof` over the shared `commitments` `C_k` with `handles_per_key[i][k] =
+/// D_{i,k}` (key `i`'s decryption handle for `C_k`). Runs the commitment-side check once and the
+/// handle-side check once per key, all under one shared challenge.
 public(package) fun verify_multi_key_elgamal(
     proof: &MultiKeyElGamalProof,
     dst: vector<u8>,
@@ -382,7 +380,9 @@ fun multi_key_elgamal_round_trip() {
         &blindings,
         |m, r| g_add(&g_mul(&scalar_from_u64(*r), &g), &g_mul(&scalar_from_u64(*m), &h)),
     );
-    let handles_per_key = pks.map_ref!(|pk| blindings.map_ref!(|r| g_mul(&scalar_from_u64(*r), pk)));
+    let handles_per_key = pks.map_ref!(
+        |pk| blindings.map_ref!(|r| g_mul(&scalar_from_u64(*r), pk)),
+    );
     let proof = prove_multi_key_elgamal(
         vector[],
         &pks,
