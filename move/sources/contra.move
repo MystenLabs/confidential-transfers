@@ -675,7 +675,7 @@ public fun add_to_batch<T>(
                 next_index,
                 receiver_addr,
                 receiver_pk,
-                coin.amount().amount().as_u32_encryptions(),
+                coin.amount().amount().collapse_to_u32(),
                 receiver_auditor_decryption_handles,
                 auditor_pks,
                 memo,

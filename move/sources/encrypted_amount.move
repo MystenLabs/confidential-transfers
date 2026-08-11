@@ -10,7 +10,7 @@ use contra::{
 use sui::{
     group_ops::Element,
     rangeproofs,
-    ristretto255::{G, g_add, g_identity, g_mul, scalar_from_u64}
+    ristretto255::{G, Scalar, g_add, g_identity, g_mul, scalar_from_u64}
 };
 
 /// Bulletproof construction version. `0` is the original Bulletproofs construction
@@ -75,7 +75,7 @@ public struct WellFormedProof has drop {
 }
 
 /// The two u32-limb auditor decryption handles for one transferred amount (`D̃_0`, `D̃_1`). Paired
-/// with the amount's two `ciphertexts_as_u32_limbs` commitments, they let an auditor recover the
+/// with the amount's two `collapse_to_u32` ciphertext commitments, they let an auditor recover the
 /// amount off-chain.
 public struct DecryptionHandles has copy, drop, store {
     handles: vector<Element<G>>,
@@ -199,22 +199,16 @@ public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
     }
 }
 
-/// Return a single encryption of the value this encrypted amount encrypts.
-public(package) fun collapse(eq: &EncryptedAmount): Encryption {
-    twisted_elgamal::new(
-        collapse_limbs(
-            eq.l0.ciphertext(),
-            eq.l1.ciphertext(),
-            eq.l2.ciphertext(),
-            eq.l3.ciphertext(),
-        ),
-        collapse_limbs(
-            eq.l0.decryption_handle(),
-            eq.l1.decryption_handle(),
-            eq.l2.decryption_handle(),
-            eq.l3.decryption_handle(),
-        ),
-    )
+/// The two u32-limb `Encryption`s `[l0 + 2^16 l1, l2 + 2^16 l3]` (ciphertext and handle alike).
+public(package) fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
+    let two_16 = scalar_from_u64(1 << 16);
+    vector[fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16)]
+}
+
+/// The single `Encryption` of the full u64 value: the two u32 limbs folded by `2^32`.
+public(package) fun collapse(ea: &EncryptedAmount): Encryption {
+    let u32s = ea.collapse_to_u32();
+    fold_encryption(&u32s[0], &u32s[1], &scalar_from_u64(1 << 32))
 }
 
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
@@ -268,8 +262,8 @@ public(package) fun try_rekey(
 
 /// Sum of the collapsed Pedersen commitments of `amounts` (ciphertext components only).
 public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>): Element<G> {
-    // `collapse_limbs` is linear, so sum the four limb positions across all amounts first (cheap
-    // point adds) and collapse once, rather than collapsing each amount (three scalar mults each).
+    // Folding is linear, so sum the four limb positions across all amounts first (cheap point adds)
+    // and collapse once, rather than collapsing each amount (three scalar mults each).
     let mut c0 = g_identity();
     let mut c1 = g_identity();
     let mut c2 = g_identity();
@@ -281,60 +275,34 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
         c2 = g_add(&c2, a[2].ciphertext());
         c3 = g_add(&c3, a[3].ciphertext());
     });
-    collapse_limbs(&c0, &c1, &c2, &c3)
+    let two_16 = scalar_from_u64(1 << 16);
+    let lo = fold(&c0, &c1, &two_16);
+    let hi = fold(&c2, &c3, &two_16);
+    fold(&lo, &hi, &scalar_from_u64(1 << 32))
 }
 
-/// Pair this amount's two `ciphertexts_as_u32_limbs` commitments with `handles`' two handles, in
-/// limb order, into the amount's two u32-limb auditor `Encryption`s.
+/// Pair this amount's two u32-limb ciphertext commitments with `handles`' two handles, in limb
+/// order, into the amount's two u32-limb auditor `Encryption`s.
 public(package) fun with_decryption_handles(
     self: &WellFormedEncryptedAmount,
     handles: &DecryptionHandles,
 ): vector<Encryption> {
     self
         .amount
-        .ciphertexts_as_u32_limbs()
-        .zip_map!(handles.handles, |c, h| twisted_elgamal::new(c, h))
+        .collapse_to_u32()
+        .zip_map!(handles.handles, |enc, h| twisted_elgamal::new(*enc.ciphertext(), h))
 }
 
-/// The two u32-limb commitments `[C_0 + 2^16 C_1, C_2 + 2^16 C_3]` regrouped from `ea`'s four
-/// u16-limb ciphertext components.
-fun ciphertexts_as_u32_limbs(ea: &EncryptedAmount): vector<Element<G>> {
-    let shift = scalar_from_u64(1 << 16);
-    vector[
-        g_add(ea.l0.ciphertext(), &g_mul(&shift, ea.l1.ciphertext())),
-        g_add(ea.l2.ciphertext(), &g_mul(&shift, ea.l3.ciphertext())),
-    ]
+/// `lo + shift * hi`.
+fun fold(lo: &Element<G>, hi: &Element<G>, shift: &Element<Scalar>): Element<G> {
+    g_add(lo, &g_mul(shift, hi))
 }
 
-/// The amount as its two u32-limb `Encryption`s `[(C_0 + 2^16 C_1, D_0 + 2^16 D_1), (C_2 + 2^16 C_3,
-/// D_2 + 2^16 D_3)]` — folding both ciphertext and decryption handle of each pair of u16 limbs, under
-/// the same key. The receiver-decryptable form emitted on `TransferEvent`; auditors reuse the
-/// ciphertext halves (`ciphertexts_as_u32_limbs`) with their own handles.
-public(package) fun as_u32_encryptions(ea: &EncryptedAmount): vector<Encryption> {
-    vector[fold_u32(&ea.l0, &ea.l1), fold_u32(&ea.l2, &ea.l3)]
-}
-
-/// Fold two consecutive u16 limbs `low`, `high` into one u32 limb `(low + 2^16 high)`, ciphertext and
-/// handle alike.
-fun fold_u32(low: &Encryption, high: &Encryption): Encryption {
-    let shift = scalar_from_u64(1 << 16);
+/// Fold two `Encryption`s into `lo + shift * hi` (ciphertext and handle alike).
+fun fold_encryption(lo: &Encryption, hi: &Encryption, shift: &Element<Scalar>): Encryption {
     twisted_elgamal::new(
-        g_add(low.ciphertext(), &g_mul(&shift, high.ciphertext())),
-        g_add(low.decryption_handle(), &g_mul(&shift, high.decryption_handle())),
-    )
-}
-
-/// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.
-fun collapse_limbs(l0: &Element<G>, l1: &Element<G>, l2: &Element<G>, l3: &Element<G>): Element<G> {
-    g_add(
-        l0,
-        &g_add(
-            &g_mul(&scalar_from_u64(1 << 16), l1),
-            &g_add(
-                &g_mul(&scalar_from_u64(1 << 32), l2),
-                &g_mul(&scalar_from_u64(1 << 48), l3),
-            ),
-        ),
+        fold(lo.ciphertext(), hi.ciphertext(), shift),
+        fold(lo.decryption_handle(), hi.decryption_handle(), shift),
     )
 }
 
