@@ -72,8 +72,7 @@ use contra::{
         Auditors,
         AuditorPackage,
         VerifiedDecryptionHandles,
-        pop_receiver,
-        all_consumed,
+        per_receiver,
         new as new_auditors,
     },
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
@@ -602,9 +601,7 @@ public fun batched_transfer<T>(
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
-        // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order. The auditor
-        // handles are per-auditor (shared across receivers) and already reverse-ordered within each
-        // auditor by `verify_transfer`, so the outer vector is not reversed.
+        // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order.
         coins.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
@@ -643,7 +640,7 @@ public fun add_to_batch<T>(
             mut coins,
             seed_point,
             next_index,
-            mut auditor_decryption_handles,
+            auditor_decryption_handles,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -651,18 +648,19 @@ public fun add_to_batch<T>(
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
             assert!(receiver.has_token<T>(), EReceiverNotRegistered);
 
-            let coin = coins.pop_back();
-
-            let (receiver_auditor_decryption_handles, auditor_pks) = pop_receiver(
-                &mut auditor_decryption_handles,
-            );
-
             let receiver = &mut receiver[TokenAccountKey<T>()];
             assert!(!receiver.is_frozen, ETransferDenied);
             assert!(receiver.accepts_deposits, ETransferDenied);
             assert!(receiver.has_deposit_slot(), EBalancesFull);
             let receiver_pk = receiver.pk;
 
+            let coin = coins.pop_back();
+            // This receiver's slice, read by index; the per-auditor batch data stays in the state
+            // for the remaining receivers (empty when auditing is disabled).
+            let (receiver_auditor_decryption_handles, auditor_pks) = per_receiver(
+                &auditor_decryption_handles,
+                next_index as u64,
+            );
             events::emit_transfer<T>(
                 sender,
                 sender_pk,
@@ -700,11 +698,10 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
             events::emit_try_transfer_failed();
             false
         },
-        TransferBatch::Ok { coins, auditor_decryption_handles, .. } => {
-            assert!(
-                coins.is_empty() && all_consumed(&auditor_decryption_handles),
-                EAllAmountsMustBeUsed,
-            );
+        TransferBatch::Ok { coins, .. } => {
+            // `coins` is consumed one per receiver in lockstep with the auditor slices, so an empty
+            // `coins` means every receiver (and its auditor data) was emitted.
+            assert!(coins.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
             true
         },
