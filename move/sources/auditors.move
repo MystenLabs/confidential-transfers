@@ -5,7 +5,7 @@ module contra::auditors;
 
 use contra::{
     encrypted_amount::{WellFormedEncryptedAmount, handles_u32},
-    nizk::{DdhProof, verify_ddh},
+    nizk::{DdhProof, verify_ddh_batch},
     twisted_elgamal::PublicKey
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -19,7 +19,8 @@ const EMismatchedAuditorCount: u64 = 4;
 
 // === Constants ===
 
-/// u32 limbs per amount — two `(lo, hi)` handles per (auditor, receiver), each with its own DDH.
+/// u32 limbs per amount — two `(lo, hi)` handles per (auditor, receiver), folded into one DDH per
+/// receiver (the two limbs share the receiver+auditor base set; see `nizk::verify_ddh_batch`).
 const U32_LIMBS: u64 = 2;
 
 // === Main Type ===
@@ -36,7 +37,8 @@ public struct Auditors has store {
 /// The per-transfer auditor data a sender attaches to a `batched_transfer`: the decryption handles
 /// for every (auditor, receiver) pair, flat and auditor-major — `[auditor_0 × receivers, auditor_1 ×
 /// receivers, …]`, so `M * N` entries (each an `[lo, hi]` pair) for `M` auditor keys and `N` receivers
-/// — plus one `DdhProof` per (receiver, u32-limb) (`U32_LIMBS * N` of them, receiver-major).
+/// — plus one batched `DdhProof` per receiver (`N` of them), each folding that receiver's two u32
+/// limbs (`nizk::verify_ddh_batch`).
 public struct AuditorPackage has drop {
     handles: vector<vector<Element<G>>>,
     proofs: vector<DdhProof>,
@@ -79,8 +81,8 @@ public(package) fun update(
 
 /// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
 /// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
-/// carries none). Every per-(receiver, u32-limb) DDH must verify against `current_pks`, else against
-/// `previous_pks`. Returns one `VerifiedDecryptionHandlesBatch` per auditor (in key order, each tagged with
+/// carries none). Every receiver's batched DDH (over both u32 limbs) must verify against `current_pks`,
+/// else against `previous_pks`. Returns one `VerifiedDecryptionHandlesBatch` per auditor (in key order, each tagged with
 /// the verifying key), whose `handles` are that auditor's per-receiver `[lo, hi]` pairs in submission
 /// order (`handles[r]` is receiver `r`'s pair); empty when the transfer carries no auditor data.
 public(package) fun verify_transfer(
@@ -137,12 +139,14 @@ public(package) fun per_receiver(
     )
 }
 
-/// Whether every per-(receiver, u32-limb) DDH verifies for `pks`. The flat auditor-major
-/// `decryption_handles` must be `pks.length() * receiver_amounts.length()` long and `proofs`
-/// `U32_LIMBS * receiver_amounts.length()`. For receiver `r`, limb `l`, the DDH proves one witness
-/// `ρ̃_{r,l}` maps the bases `[pk_receiver, pk_0, …, pk_{M-1}]` to the images
-/// `[D_receiver, D_{0}, …, D_{M-1}]` — the receiver's own u32 handle (which the receiver's
-/// consistency proof already ties to the commitment) plus each auditor's re-keyed handle for that limb.
+/// Whether every receiver's batched DDH verifies for `pks`. The flat auditor-major
+/// `decryption_handles` must be `pks.length() * receiver_amounts.length()` long and `proofs` one per
+/// receiver (`receiver_amounts.length()`). For receiver `r`, a single `verify_ddh_batch` covers both
+/// u32 limbs: each limb `l` is a witness `ρ̃_{r,l}` mapping the shared bases `[pk_receiver, pk_0, …,
+/// pk_{M-1}]` to the images `[D_receiver, D_{0}, …, D_{M-1}]` — the receiver's own u32 handle (which
+/// the receiver's consistency proof already ties to the commitment) plus each auditor's re-keyed
+/// handle for that limb. The two limbs share the base set but have independent blindings, so they fold
+/// into one proof (see `nizk::verify_ddh_batch`).
 fun verify_under(
     decryption_handles: &vector<vector<Element<G>>>,
     proofs: &vector<DdhProof>,
@@ -152,15 +156,17 @@ fun verify_under(
 ): bool {
     let n = receiver_amounts.length();
     let m = pks.length();
-    if (decryption_handles.length() != m * n || proofs.length() != n * U32_LIMBS) return false;
+    if (decryption_handles.length() != m * n || proofs.length() != n) return false;
     vector::tabulate!(n, |r| {
         let receiver_handles = receiver_amounts[r].handles_u32();
         let mut bases = vector[*receiver_amounts[r].pk().as_element()];
         pks.do_ref!(|pk| bases.push_back(*pk.as_element()));
-        vector::tabulate!(U32_LIMBS, |l| {
+        // One image vector per u32 limb (witness): [receiver handle, auditor_0 handle, …].
+        let images_per_limb = vector::tabulate!(U32_LIMBS, |l| {
             let mut images = vector[receiver_handles[l]];
             m.do!(|i| images.push_back(decryption_handles[i * n + r][l]));
-            proofs[r * U32_LIMBS + l].verify_ddh(dst, &bases, &images)
-        }).all!(|ok| *ok)
+            images
+        });
+        proofs[r].verify_ddh_batch(dst, &bases, &images_per_limb)
     }).all!(|ok| *ok)
 }

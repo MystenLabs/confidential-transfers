@@ -5,7 +5,7 @@ import { ristretto255 } from '@noble/curves/ed25519.js';
 import { equalBytes } from '@noble/curves/utils.js';
 
 import { fiatShamirChallenge } from './helpers.js';
-import { G, H, mul, randomScalar, type RistrettoPoint } from './ristretto255.js';
+import { G, H, mul, randomScalar, ZERO, type RistrettoPoint } from './ristretto255.js';
 import type { Ciphertext } from './twisted_elgamal.js';
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,26 @@ export function challengeDdh(
 		dst,
 		...bases.map((b) => b.toBytes()),
 		...images.map((i) => i.toBytes()),
+		...commitments.map((c) => c.toBytes()),
+	]);
+}
+
+/**
+ * Fiat-Shamir challenge for a batched DDH proof (`DdhNizk.proveBatch`). Binds, in order, the DST,
+ * every base, then every witness's images witness-major (all of witness 0, then witness 1, …), then
+ * every Schnorr commitment (matching Move's `challenge_ddh_batch`).
+ * Exported for the transcript-regression test only — not part of the public API.
+ */
+export function challengeDdhBatch(
+	dst: Uint8Array,
+	bases: RistrettoPoint[],
+	imagesPerWitness: RistrettoPoint[][],
+	commitments: RistrettoPoint[],
+): bigint {
+	return fiatShamirChallenge([
+		dst,
+		...bases.map((b) => b.toBytes()),
+		...imagesPerWitness.flatMap((images) => images.map((i) => i.toBytes())),
 		...commitments.map((c) => c.toBytes()),
 	]);
 }
@@ -59,6 +79,32 @@ export class DdhNizk {
 		return new DdhNizk(commitments, z);
 	}
 
+	/**
+	 * Batch several DDH relations that share one base set but have independent witnesses into a single
+	 * proof: `witnesses[l]` opens `imagesPerWitness[l][k] = witnesses[l] * bases[k]` for every `k`. The
+	 * per-witness image vectors are folded into each base's Schnorr row with powers of the challenge
+	 * (`c^{l+1}`), so the proof stays `bases.length` commitments + `1` response regardless of the
+	 * witness count. Verified on-chain by `nizk::verify_ddh_batch`.
+	 */
+	static proveBatch(
+		dst: Uint8Array,
+		witnesses: bigint[],
+		bases: RistrettoPoint[],
+		imagesPerWitness: RistrettoPoint[][],
+	): DdhNizk {
+		const s = randomScalar();
+		const commitments = bases.map((b) => mul(b, s));
+		const c = challengeDdhBatch(dst, bases, imagesPerWitness, commitments);
+		// z = s + sum_l c^{l+1} w_l.
+		let z = s;
+		let power = c;
+		for (const w of witnesses) {
+			z = ristretto255.Point.Fn.create(z + power * w);
+			power = ristretto255.Point.Fn.create(power * c);
+		}
+		return new DdhNizk(commitments, z);
+	}
+
 	verify(dst: Uint8Array, bases: RistrettoPoint[], images: RistrettoPoint[]): boolean {
 		if (images.length !== bases.length || this.commitments.length !== bases.length) return false;
 		const c = challengeDdh(dst, bases, images, this.commitments);
@@ -66,6 +112,28 @@ export class DdhNizk {
 		return bases.every((base, k) =>
 			isValidRelation(this.commitments[k], images[k], base, this.z, c),
 		);
+	}
+
+	/** Verify a proof from {@link proveBatch}; mirrors Move's `nizk::verify_ddh_batch`. */
+	verifyBatch(
+		dst: Uint8Array,
+		bases: RistrettoPoint[],
+		imagesPerWitness: RistrettoPoint[][],
+	): boolean {
+		if (this.commitments.length !== bases.length) return false;
+		if (imagesPerWitness.some((images) => images.length !== bases.length)) return false;
+		const c = challengeDdhBatch(dst, bases, imagesPerWitness, this.commitments);
+		// Fold each base's images with powers of `c` (c^0, c^1, …); isValidRelation's own `c` factor
+		// then weights witness `l` by `c^{l+1}`: commitments[k] + c * folded == z * bases[k].
+		return bases.every((base, k) => {
+			let folded = ZERO;
+			let power = 1n;
+			for (const images of imagesPerWitness) {
+				folded = folded.add(mul(images[k], power));
+				power = ristretto255.Point.Fn.create(power * c);
+			}
+			return isValidRelation(this.commitments[k], folded, base, this.z, c);
+		});
 	}
 }
 

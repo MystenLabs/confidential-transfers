@@ -919,8 +919,9 @@ fun total_consistency_proof_for_testing(
 /// under `receiver_pks[i]`) and every key in `auditor_pks`. Each amount's low u32 limb has blinding
 /// `r_i` and receiver handle `r_i*pk_receiver`; the high u32 limb is zero. Per auditor key the handles
 /// are `[r_i*aud_pk, identity]`; the returned handles are one `[lo, hi]` pair per (auditor, amount),
-/// flat and auditor-major (`[aud_0 × amounts, …]`), matching `verify_transfer`. The DDHs prove each
-/// limb's auditor handles re-key `r_i` from `pk_receiver` to the auditor keys.
+/// flat and auditor-major (`[aud_0 × amounts, …]`), matching `verify_transfer`. One batched DDH per
+/// receiver proves both limbs' auditor handles re-key their blinding from `pk_receiver` to the auditor
+/// keys (limb 0 witness `r_i`, limb 1 the zero high limb with witness 0 and all-identity images).
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
@@ -936,8 +937,9 @@ fun build_auditor_data(
             handles.push_back(vector[lo, ristretto255::g_identity()]);
         });
     });
-    // One DDH per (receiver, u32 limb): bases `[pk_receiver, aud_pks…]`, limb 0 witness `r_i`, limb 1
-    // (the zero high limb) witness 0 with all-identity images.
+    // One batched DDH per receiver over both u32 limbs: bases `[pk_receiver, aud_pks…]`, limb 0 witness
+    // `r_i` with images `[r_i*pk_receiver, r_i*aud_pks…]`, limb 1 (the zero high limb) witness 0 with
+    // all-identity images.
     let mut proofs = vector[];
     values.length().do!(|r| {
         let pk_recv = receiver_pks[r];
@@ -952,23 +954,14 @@ fun build_auditor_data(
                 *encrypt_trivial_for_testing(values[r], pk, br).decryption_handle(),
             ),
         );
-        proofs.push_back(
-            nizk::prove_ddh(
-                dst,
-                &ristretto255::scalar_from_u64(br),
-                &bases,
-                &images_lo,
-                &ristretto255::scalar_from_u64(97531),
-            ),
-        );
         let images_hi = vector::tabulate!(bases.length(), |_| ristretto255::g_identity());
         proofs.push_back(
-            nizk::prove_ddh(
+            nizk::prove_ddh_batch(
                 dst,
-                &ristretto255::scalar_from_u64(0),
+                &vector[ristretto255::scalar_from_u64(br), ristretto255::scalar_from_u64(0)],
                 &bases,
-                &images_hi,
-                &ristretto255::scalar_from_u64(86420),
+                &vector[images_lo, images_hi],
+                &ristretto255::scalar_from_u64(97531),
             ),
         );
     });

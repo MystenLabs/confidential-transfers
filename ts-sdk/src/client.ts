@@ -1402,11 +1402,13 @@ type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb
  * fold into two u32 limbs, limb `l` having blinding `ρ̃_l = ρ_{2l} + 2^16 ρ_{2l+1}` and the receiver's
  * own u32 handle `D̃_l^recv = D_{2l} + 2^16 D_{2l+1}` (already tied to its range/consistency-proven
  * commitment by the receiver's proof). Each auditor key `pk` gets the handle `D̃_{i,l} = ρ̃_l · pk`; and
- * one `DdhNizk` per (receiver, u32 limb) proves those auditor handles re-key `ρ̃_l` from `pk_receiver`
- * to the auditor keys — bases `[pk_receiver, ...auditorPks]`, images `[D̃_l^recv, ...D̃_{i,l}]`.
+ * one batched `DdhNizk` per receiver proves those auditor handles re-key both limbs' `ρ̃_l` from
+ * `pk_receiver` to the auditor keys — the two limbs share the bases `[pk_receiver, ...auditorPks]` (only
+ * the blinding/images differ), so they fold into a single proof (one image vector `[D̃_l^recv, ...D̃_{i,l}]`
+ * per limb; see `DdhNizk.proveBatch` / `nizk::verify_ddh_batch`).
  *
  * Returns the flattened handles auditor-major (per key, two per receiver in `prepared` order — matching
- * `verify_transfer`'s `handles[i*n + r]` indexing) and one proof per (receiver, limb) (`proofs[r*2 + l]`).
+ * `verify_transfer`'s `handles[i*n + r]` indexing) and one proof per receiver (`proofs[r]`).
  */
 function buildAuditorData(
 	dst: Uint8Array,
@@ -1414,9 +1416,10 @@ function buildAuditorData(
 	prepared: readonly PreparedAmount[],
 ): { handles: PublicKey[]; proofs: DdhNizk[] } {
 	const shift = 1n << 16n;
-	// Per (receiver, u32 limb), in `prepared` order (receiver-major, limb-minor).
-	const limbData = prepared.flatMap((p) =>
-		(
+	// Per receiver: its two u32 limbs (blinding ρ̃_l + the receiver's own u32 handle D̃_l^recv).
+	const perReceiver = prepared.map((p) => ({
+		receiverPk: p.receiverPk,
+		limbs: (
 			[
 				[0, 1],
 				[2, 3],
@@ -1428,18 +1431,21 @@ function buildAuditorData(
 			receiverHandle: p.encAmountReceiver[lo].ciphertext.decryptionHandle.add(
 				mul(p.encAmountReceiver[hi].ciphertext.decryptionHandle, shift),
 			),
-			receiverPk: p.receiverPk,
 		})),
+	}));
+	// Flat, auditor-major handles: for each key, `ρ̃_l · pk` over every receiver then limb
+	// (receiver-major, limb-minor) — consecutive pairs form each (auditor, receiver) `[lo, hi]`.
+	const handles = auditorPks.flatMap((pk) =>
+		perReceiver.flatMap((r) => r.limbs.map((limb) => mul(pk, limb.blinding))),
 	);
-	// Flat, auditor-major handles: for each key, `ρ̃_l · pk` over every (receiver, limb).
-	const handles = auditorPks.flatMap((pk) => limbData.map((d) => mul(pk, d.blinding)));
-	// One DDH per (receiver, u32 limb), anchored to the receiver's own u32 handle.
-	const proofs = limbData.map(({ blinding, receiverHandle, receiverPk }) =>
-		DdhNizk.prove(
+	// One batched DDH per receiver folding its two u32 limbs, each anchored to the receiver's own u32
+	// handle: bases `[pk_receiver, ...auditorPks]`, one image vector per limb, witnesses `[ρ̃_0, ρ̃_1]`.
+	const proofs = perReceiver.map(({ receiverPk, limbs }) =>
+		DdhNizk.proveBatch(
 			dst,
-			blinding,
+			limbs.map((limb) => limb.blinding),
 			[receiverPk, ...auditorPks],
-			[receiverHandle, ...auditorPks.map((pk) => mul(pk, blinding))],
+			limbs.map((limb) => [limb.receiverHandle, ...auditorPks.map((pk) => mul(pk, limb.blinding))]),
 		),
 	);
 	return { handles, proofs };

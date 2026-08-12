@@ -37,6 +37,21 @@ describe('nizk', () => {
 		expect(proof.verify(dst, bases, badImages)).toBeFalsy();
 	});
 
+	it('ddh nizk multi-witness batch round trip (auditor two-limb fold)', () => {
+		// Shared bases (receiver key + auditor keys); two independent witnesses (the two u32 limbs).
+		const bases = Array.from({ length: 4 }, (_, i) => mul(G, BigInt(i + 3) * 7n));
+		const witnesses = [randomScalar(), randomScalar()];
+		const imagesPerWitness = witnesses.map((w) => bases.map((b) => mul(b, w)));
+
+		const proof = DdhNizk.proveBatch(dst, witnesses, bases, imagesPerWitness);
+		expect(proof.verifyBatch(dst, bases, imagesPerWitness)).toBeTruthy();
+
+		// Tampering with any witness's image at any base breaks verification.
+		const badImages = imagesPerWitness.map((imgs) => [...imgs]);
+		badImages[1][0] = G;
+		expect(proof.verifyBatch(dst, bases, badImages)).toBeFalsy();
+	});
+
 	// Pinned to the same constant as Move's `nizk::fiat_shamir_challenge_regression`, so the two
 	// BCS transcripts cannot silently diverge (which would break on-chain proof verification).
 	it('fiat-shamir challenge matches the on-chain BCS transcript', () => {
