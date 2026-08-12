@@ -45,9 +45,9 @@ public struct AuditorPackage has drop {
 }
 
 /// The verified auditor decryption handles for a batch: `handles` holds one `[lo, hi]` pair per
-/// receiver in submission order, tagged with the auditor's `pk`. Held in `TransferBatch` state (as an
-/// `Option`, `none` when auditing is disabled); `next` pops the front pair for each receiver's
-/// `TransferEvent`, and `destroy` consumes the (then-empty) container.
+/// receiver (stored reversed, so `next` pops the back in submission order), tagged with the auditor's
+/// `pk`. Held in `TransferBatch` state (as an `Option`, `none` when auditing is disabled); `next` pops
+/// each receiver's pair for its `TransferEvent`, and `destroy` consumes the (then-empty) container.
 public struct VerifiedAuditorHandles has drop, store {
     handles: vector<vector<Element<G>>>,
     pk: PublicKey,
@@ -101,7 +101,7 @@ public(package) fun verify_transfer(
         !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
         EUnexpectedAuditorData,
     );
-    let AuditorPackage { handles, proofs } = auditor_package.destroy_some();
+    let AuditorPackage { mut handles, proofs } = auditor_package.destroy_some();
     let n = receiver_amounts.length();
     // At most one auditor: exactly one `[lo, hi]` pair and one proof per receiver.
     assert!(handles.length() == n, EMismatchedAuditorCount);
@@ -112,6 +112,8 @@ public(package) fun verify_transfer(
     } else {
         abort EAuditorProofFailed
     };
+    // Store reversed so `next` pops the back (O(1)) yet yields receivers in submission order.
+    handles.reverse();
     option::some(VerifiedAuditorHandles { handles, pk })
 }
 
@@ -123,7 +125,7 @@ public(package) fun next(
 ): (vector<Element<G>>, Option<PublicKey>) {
     if (auditor_data.is_none()) return (vector[], option::none());
     let verified = auditor_data.borrow_mut();
-    (verified.handles.remove(0), option::some(verified.pk))
+    (verified.handles.pop_back(), option::some(verified.pk))
 }
 
 /// Consume the auditor data once every receiver's pair has been popped by `next`. Asserts the
