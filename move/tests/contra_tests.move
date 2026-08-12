@@ -745,6 +745,7 @@ fun auditor_disabled_accepts_no_data() {
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
     let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
     assert!(handles.is_none());
+    auditors::destroy(handles);
     unit_test::destroy(auditor);
 }
 
@@ -753,7 +754,7 @@ fun auditor_disabled_accepts_no_data() {
 fun auditor_enabled_requires_data() {
     let auditor = auditors::new(vector[test_key()]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
+    auditors::destroy(auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst"));
     unit_test::destroy(auditor);
 }
 
@@ -764,7 +765,7 @@ fun auditor_disabled_forbids_data() {
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
     // A trivial (empty) package suffices: the presence check aborts before the proofs are inspected.
     let package = auditors::new_auditor_package(vector[], vector[]);
-    auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst");
+    auditors::destroy(auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst"));
     unit_test::destroy(auditor);
 }
 
@@ -778,6 +779,7 @@ fun auditor_disable_grace_accepts_no_data() {
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
     let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
     assert!(handles.is_none());
+    auditors::destroy(handles);
     unit_test::destroy(auditor);
 }
 
