@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { bytesToHex } from '@noble/curves/utils.js';
+
 import { TransferEvent } from './contracts/contra/events.js';
 import { AuditorKeyNotHeldError } from './error.js';
 import { G, mul, pointFromBcs, type RistrettoPoint } from './ristretto255.js';
@@ -33,13 +35,15 @@ export type DecodedTransferEvent = typeof TransferEvent.$inferType;
  */
 export class ContraAuditor {
 	#tokenType: string;
-	#keys: { publicKey: RistrettoPoint; privateKey: PrivateKey }[];
+	// Keyed by the hex of the public key's compressed bytes, so a transfer's `auditor_pk` (the same
+	// canonical encoding) is a direct lookup rather than a scan over every held key.
+	#keys: Map<string, { publicKey: RistrettoPoint; privateKey: PrivateKey }>;
 	#table: DiscreteLogTable;
 
 	constructor(options: ContraAuditorOptions) {
 		this.#tokenType = options.tokenType;
 		this.#table = options.table;
-		this.#keys = [];
+		this.#keys = new Map();
 		for (const privateKey of options.privateKeys) this.addKey(privateKey);
 	}
 
@@ -49,7 +53,7 @@ export class ContraAuditor {
 
 	/** The auditor public keys this instance can decrypt transfers for (`pk = sk * G`). */
 	get publicKeys(): RistrettoPoint[] {
-		return this.#keys.map((k) => k.publicKey);
+		return [...this.#keys.values()].map((k) => k.publicKey);
 	}
 
 	/**
@@ -59,8 +63,7 @@ export class ContraAuditor {
 	 */
 	addKey(privateKey: PrivateKey): void {
 		const publicKey = mul(G, privateKey);
-		if (this.#keys.some((k) => k.publicKey.equals(publicKey))) return;
-		this.#keys.push({ publicKey, privateKey });
+		this.#keys.set(bytesToHex(publicKey.toBytes()), { publicKey, privateKey });
 	}
 
 	/**
@@ -79,22 +82,21 @@ export class ContraAuditor {
 		const auditorPks = event.auditor_pks;
 		// No auditor data attached (auditing was disabled for this transfer).
 		if (auditorPks.length === 0) return null;
-		// Find the auditor key this instance holds; its handles sit at the same index in
-		// `auditor_decryption_handles`.
-		let index = -1;
+		// Find the auditor key this instance holds; its handle pair sits at the same index in
+		// `auditor_decryption_handles`, so grab it in the same pass.
 		let privateKey: PrivateKey | undefined;
+		let pair: DecodedTransferEvent['auditor_decryption_handles'][number] | undefined;
 		for (const [i, pkBcs] of auditorPks.entries()) {
-			const held = this.#keys.find((k) => k.publicKey.equals(pointFromBcs(pkBcs.element)));
+			const held = this.#keys.get(bytesToHex(Uint8Array.from(pkBcs.element.bytes)));
 			if (held) {
-				index = i;
 				privateKey = held.privateKey;
+				pair = event.auditor_decryption_handles[i];
 				break;
 			}
 		}
 		if (privateKey === undefined) {
 			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPks[0].element));
 		}
-		const pair = event.auditor_decryption_handles[index];
 		if (pair === undefined || pair.length !== 2) return null;
 		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with this
 		// auditor's matching handle and BSGS-decrypt.
