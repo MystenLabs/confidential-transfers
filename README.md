@@ -216,7 +216,7 @@ By default `register`, `wrap`, and `unwrap` are open to any holder of `T`. The i
 
 An auditor is a passive reader of transfer amounts for a given confidential token: they hold the token's auditor secret key, whose public counterpart the issuer registers on-chain, and use it off-chain to decrypt the amount of each transfer. Auditors never sign protocol transactions, and never learn a user's viewing key or standing balance.
 
-The contract implements **per-transfer auditing** and supports **multiple auditors per token**: the sender attaches an auditor-readable copy of each transfer amount (two u32-limb decryption handles per receiver, per auditor key) derived from the same range-proven commitments the receiver gets, plus a single batched proof covering every auditor at once (the commitments are shared across keys). Balances stay encrypted only under the user's own key, so the same account key can be reused across tokens. See [Auditor Support in Confidential Transfers](AUDITORS.md) for the design and the alternatives considered.
+The contract implements **per-transfer auditing** and supports **multiple auditors per token**: the sender attaches an auditor-readable copy of each transfer amount (two u32-limb decryption handles per receiver, per auditor key) derived from the same range-proven commitments the receiver gets, plus one short zero-knowledge proof per (receiver, u32-limb) that ties every auditor's handle to the receiver's own range-proven commitment. Balances stay encrypted only under the user's own key, so the same account key can be reused across tokens. See [Auditor Support in Confidential Transfers](AUDITORS.md) for the design and the alternatives considered.
 
 ### Onboarding flow
 

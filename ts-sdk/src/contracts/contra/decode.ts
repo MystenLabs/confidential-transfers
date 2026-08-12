@@ -134,6 +134,36 @@ export function ddhProof(options: DdhProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface DdhProofsArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+	numCommitments: RawTransactionArgument<number | bigint>;
+}
+export interface DdhProofsOptions {
+	package?: string;
+	arguments:
+		| DdhProofsArguments
+		| [
+				parts: RawTransactionArgument<Array<Array<number>>>,
+				numCommitments: RawTransactionArgument<number | bigint>,
+		  ];
+}
+/**
+ * Build a vector of `DdhProof`s, each with `num_commitments` point-encoded
+ * commitments followed by one scalar `z` (so `num_commitments + 1` `parts` per
+ * proof, concatenated). Aborts unless `parts` divides evenly.
+ */
+export function ddhProofs(options: DdhProofsOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
+	const parameterNames = ['parts', 'numCommitments'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'ddh_proofs',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface ElgamalProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -150,30 +180,6 @@ export function elgamalProof(options: ElgamalProofOptions) {
 			package: packageAddress,
 			module: 'decode',
 			function: 'elgamal_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface MultiKeyElgamalProofArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-}
-export interface MultiKeyElgamalProofOptions {
-	package?: string;
-	arguments: MultiKeyElgamalProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
-}
-/**
- * Build a `MultiKeyElGamalProof` from `[a_0, …, a_{m-1}, b, z1, z2]`: the leading
- * `parts.length - 3` point-encoded entries are the per-key handle masks `a`,
- * followed by the point `b` and the two scalars `z1, z2`.
- */
-export function multiKeyElgamalProof(options: MultiKeyElgamalProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
-	const parameterNames = ['parts'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'multi_key_elgamal_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

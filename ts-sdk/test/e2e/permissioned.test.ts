@@ -15,7 +15,7 @@
 import { bcs } from '@mysten/sui/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { deriveObjectID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
+import { deriveObjectID } from '@mysten/sui/utils';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -35,8 +35,8 @@ import {
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_RANGE_PROOF_16,
 } from '../../src/helpers.js';
-import { DdhNizk, ElGamalNizk, MultiKeyElGamalNizk } from '../../src/nizk.js';
-import { G, mul, randomScalar, type RistrettoPoint } from '../../src/ristretto255.js';
+import { DdhNizk, ElGamalNizk } from '../../src/nizk.js';
+import { G, mul, randomScalar } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from '../../src/twisted_elgamal.js';
 import { Admin } from './admin.js';
@@ -143,29 +143,33 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		);
 
 		// Per-transfer auditor data for the single receiver: `auditors::verify_transfer` runs before the
-		// balance proof, so valid handles + proof must be present for the transfer to reach the
-		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor).
+		// balance proof, so valid handles + proofs must be present for the transfer to reach the
+		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor):
+		// one DDH per u32 limb anchored to the receiver's own u32 handle.
 		const auditorPk = tokenIssuer.auditorPublicKey!;
+		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL);
 		const shift = 1n << 16n;
-		const derived: { commitment: RistrettoPoint; value: bigint; blinding: bigint }[] = [];
-		for (const [lo, hi] of [
-			[0, 1],
-			[2, 3],
-		] as const) {
-			const blinding = ristretto255.Point.Fn.create(
+		const limbData = (
+			[
+				[0, 1],
+				[2, 3],
+			] as const
+		).map(([lo, hi]) => ({
+			blinding: ristretto255.Point.Fn.create(
 				encAmountReceiver[lo].blinding + shift * encAmountReceiver[hi].blinding,
-			);
-			const value = encAmountReceiver[lo].value + shift * encAmountReceiver[hi].value;
-			const commitment = encAmountReceiver[lo].ciphertext.ciphertext.add(
-				mul(encAmountReceiver[hi].ciphertext.ciphertext, shift),
-			);
-			derived.push({ commitment, value, blinding });
-		}
-		const auditorHandles = derived.map((d) => mul(auditorPk, d.blinding));
-		const auditorProof = MultiKeyElGamalNizk.prove(
-			sender.tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL),
-			[auditorPk],
-			derived,
+			),
+			receiverHandle: encAmountReceiver[lo].ciphertext.decryptionHandle.add(
+				mul(encAmountReceiver[hi].ciphertext.decryptionHandle, shift),
+			),
+		}));
+		const auditorHandles = limbData.map((d) => mul(auditorPk, d.blinding));
+		const auditorProofs = limbData.map((d) =>
+			DdhNizk.prove(
+				auditorDst,
+				d.blinding,
+				[receiverPk, auditorPk],
+				[d.receiverHandle, mul(auditorPk, d.blinding)],
+			),
 		);
 
 		const { batchRangeProver } = await getBulletproofs();
@@ -216,7 +220,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
 					auditorPackage: buildAuditorPackageOption(pid, {
 						handles: auditorHandles,
-						proof: auditorProof,
+						proofs: auditorProofs,
 					}),
 				},
 			}),

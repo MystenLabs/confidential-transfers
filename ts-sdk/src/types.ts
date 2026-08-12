@@ -29,13 +29,6 @@ export interface WrapOptions {
 	tokenType: string;
 	/** Optional memo attached to the wrap event; omit or empty for no memo. */
 	memo?: string;
-	/**
-	 * If `true`, and `receiver` has an `Account` with a `default_pk` but no `TokenAccount<T>` yet,
-	 * register one for them (under their `default_pk`) in the same PTB before wrapping. Only works for
-	 * tokens with permissionless registration. When `false` (the default), `receiver` must already be
-	 * registered — otherwise `wrap` throws `TokenAccountDoesNotExistError`.
-	 */
-	registerReceiver?: boolean;
 }
 
 /**
@@ -170,13 +163,6 @@ export interface TransferOptions {
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
-	/**
-	 * If `true`, any receiver that has an `Account` with a `default_pk` but no `TokenAccount<T>` yet
-	 * is registered (under their `default_pk`) in the same PTB before the transfer. Only works for
-	 * tokens with permissionless registration. When `false` (the default), every receiver must
-	 * already be registered — otherwise the transfer throws `TokenAccountDoesNotExistError`.
-	 */
-	registerReceiver?: boolean;
 }
 
 /** A single (receiver, amount, memo) entry in a batched transfer. */
@@ -214,13 +200,6 @@ export interface BatchedTransferOptions {
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
-	/**
-	 * If `true`, any receiver that has an `Account` with a `default_pk` but no `TokenAccount<T>` yet
-	 * is registered (under their `default_pk`) in the same PTB before the transfer. Only works for
-	 * tokens with permissionless registration. When `false` (the default), every receiver must
-	 * already be registered — otherwise the transfer throws `TokenAccountDoesNotExistError`.
-	 */
-	registerReceiver?: boolean;
 }
 
 /** Arguments to `ContraClient.unwrap`. */

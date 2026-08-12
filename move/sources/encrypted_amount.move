@@ -249,6 +249,12 @@ public(package) fun commitments_u32(self: &WellFormedEncryptedAmount): vector<El
     self.amount.collapse_to_u32().map!(|e| *e.ciphertext())
 }
 
+/// This amount's two u32-limb decryption handles under the receiver's key — the anchor `ρ̃_l · pk` the
+/// auditor DDH proves the auditor handles re-key from.
+public(package) fun handles_u32(self: &WellFormedEncryptedAmount): vector<Element<G>> {
+    self.amount.collapse_to_u32().map!(|e| *e.decryption_handle())
+}
+
 /// `lo + shift * hi`.
 fun fold(lo: &Element<G>, hi: &Element<G>, shift: &Element<Scalar>): Element<G> {
     g_add(lo, &g_mul(shift, hi))

@@ -41,7 +41,7 @@ import {
 	PROTOCOL_RANGE_PROOF_16,
 	type WellFormedLimb,
 } from './helpers.js';
-import { DdhNizk, ElGamalNizk, MultiKeyElGamalNizk } from './nizk.js';
+import { DdhNizk, ElGamalNizk } from './nizk.js';
 import { addScalars, mul, pointFromBcs, randomScalar } from './ristretto255.js';
 import { TokenAccount } from './token_account.js';
 import { sampleTransferRandomness } from './transfer_randomness.js';
@@ -144,19 +144,12 @@ export class ContraClient {
 
 	/**
 	 * Multi-get version of `#getAccountState`. Issues a single
-	 * `core.getObjects` RPC for all addresses, preserving order. Throws if any
-	 * underlying object fetch returned an `Error` entry.
-	 *
-	 * With `autoRegisterFallback`, a receiver that has no `TokenAccount<T>` yet does not throw: its
-	 * state is taken from the receiver's `Account` (`pk = Account.default_pk`, deposits accepted, not frozen)
-	 * and flagged `needsRegistration`, so the caller can prepend a `register_with_default_pk` call
-	 * before depositing (deposits no longer auto-register on chain). A receiver with no `Account` at
-	 * all still throws.
+	 * `core.getObjects` RPC for all addresses, preserving order. Throws
+	 * `TokenAccountDoesNotExistError` if any address has no `TokenAccount<T>` for the token.
 	 */
 	async #getAccountStates(
 		addresses: readonly string[],
 		tokenType: string,
-		{ autoRegisterFallback = false }: { autoRegisterFallback?: boolean } = {},
 	): Promise<AccountState[]> {
 		const objectIds = addresses.map((a) => this.getTokenAccountId(a, tokenType));
 
@@ -167,44 +160,8 @@ export class ContraClient {
 			include: { content: true },
 		});
 
-		// For auto-registration, resolve any missing token accounts from the receiver's `Account`
-		// (created on first receive) in a single follow-up multi-get.
-		const missing = autoRegisterFallback
-			? objects.flatMap((object, i) => (object instanceof Error ? [i] : []))
-			: [];
-		const accountFallback = new Map<number, AccountState>();
-		if (missing.length > 0) {
-			const { objects: accounts } = await this.#suiClient.core.getObjects({
-				objectIds: missing.map((i) => this.getAccountId(addresses[i])),
-				include: { content: true },
-			});
-			accounts.forEach((account, k) => {
-				const i = missing[k];
-				if (account instanceof Error) {
-					throw new TokenAccountDoesNotExistError(addresses[i], account.message);
-				}
-				// `default_pk` is the account's optional default key. A missing token account can only be
-				// auto-registered (and deposited to) when it is set — that key becomes the token's key.
-				const accountPk = contraContracts.Account.parse(account.content).default_pk;
-				if (!accountPk) {
-					throw new TokenAccountDoesNotExistError(
-						addresses[i],
-						'account has no default key set, so no token account can be auto-registered for it',
-					);
-				}
-				accountFallback.set(i, {
-					pk: pointFromBcs(accountPk.element),
-					acceptsEncryptedDeposits: true,
-					isFrozen: false,
-					needsRegistration: true,
-				});
-			});
-		}
-
 		return objects.map((object, i) => {
 			if (object instanceof Error) {
-				const fallback = accountFallback.get(i);
-				if (fallback) return fallback;
 				throw new TokenAccountDoesNotExistError(addresses[i], object.message);
 			}
 			const parsed = TokenAccountField.parse(object.content).value;
@@ -212,7 +169,6 @@ export class ContraClient {
 				pk: pointFromBcs(parsed.pk.element),
 				acceptsEncryptedDeposits: parsed.accepts_deposits,
 				isFrozen: parsed.is_frozen,
-				needsRegistration: false,
 			};
 		});
 	}
@@ -501,8 +457,8 @@ export class ContraClient {
 	 * Register a `TokenAccount<T>` for `receiver` on their behalf, without any `Auth` — the
 	 * permissionless counterpart to `register`, keyed under the receiver's `Account.default_pk`. A
 	 * no-op if `receiver` is already registered for `T` (rather than aborting), so concurrent
-	 * registrations for the same receiver don't fight. `wrap` and `transferBatch` call this for an
-	 * unregistered receiver only when passed `registerReceiver: true`; use it directly to pre-register.
+	 * registrations for the same receiver don't fight. Deposits (`wrap` / `transferBatch`) never
+	 * auto-register: prepend this to the same PTB yourself to deposit to an unregistered receiver.
 	 *
 	 * @example
 	 * ```ts
@@ -534,9 +490,9 @@ export class ContraClient {
 	 *
 	 * The supplied coin is consumed, its value is added to the pool for
 	 * that token, and the same amount is credited to the receiver's
-	 * pending public balance. The receiver must already be registered for the token, unless
-	 * `registerReceiver` is set: then a receiver that has an `Account` with a `default_pk` but no
-	 * `TokenAccount<T>` yet is registered on their behalf in the same PTB (permissionless tokens only).
+	 * pending public balance. The receiver must already be registered for the token — deposits
+	 * never auto-register. To deposit to an as-yet-unregistered receiver, prepend a
+	 * `tryRegisterWithDefaultPk` call to the same PTB yourself (permissionless tokens only).
 	 *
 	 * @example
 	 * ```ts
@@ -552,36 +508,22 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `TokenAccountDoesNotExistError` — `receiver` has no `TokenAccount<T>` (and either
-	 *   `registerReceiver` is not set, or it is set but the receiver has no `Account`/`default_pk`).
+	 * - `TokenAccountDoesNotExistError` — `receiver` has no `TokenAccount<T>`.
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `ETransferDenied` — the token is paused, the deny list is globally frozen, the receiver
 	 *   is on the deny list, or the receiver's per-account freeze is active.
-	 * - `ERegistrationNotPermissionless` — `registerReceiver` was set for a receiver with no
-	 *   `TokenAccount<T>`, but the token's registration is permissioned, so `register_with_default_pk`
-	 *   aborts.
 	 */
 	async wrap({
 		coin,
 		receiver,
 		tokenType,
 		memo,
-		registerReceiver = false,
 	}: WrapOptions): Promise<(tx: Transaction) => TransactionResult> {
-		// With `registerReceiver`, a receiver that has an `Account` but no `TokenAccount<T>` yet is
-		// registered on their behalf first (permissionless tokens only); otherwise they must already
-		// be registered.
-		const [{ needsRegistration }] = await this.#getAccountStates([receiver], tokenType, {
-			autoRegisterFallback: registerReceiver,
-		});
+		// Deposits never auto-register: fail early if the receiver has no token account.
+		await this.#getAccountStates([receiver], tokenType);
 		return (tx: Transaction): TransactionResult => {
-			if (needsRegistration) {
-				// try_ variant: a concurrent wrap/transfer may register `receiver` first, so a plain
-				// register_with_default_pk here would abort this PTB in that race.
-				tx.add(this.tryRegisterWithDefaultPk({ receiver, tokenType }));
-			}
 			return tx.add(
 				contraContracts.wrap({
 					package: this.#packageConfig.packageId,
@@ -1085,14 +1027,12 @@ export class ContraClient {
 		memo,
 		merge = true,
 		auth,
-		registerReceiver = false,
 	}: TransferOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return this.transferBatch({
 			tokenAccount,
 			recipients: [{ receiverAddress, amount, memo }],
 			merge,
 			auth,
-			registerReceiver,
 		});
 	}
 
@@ -1145,10 +1085,8 @@ export class ContraClient {
 	 * - `InsufficientBalanceError` — total amount exceeds the spendable balance (active,
 	 *   or active + pending when `merge` is `true`).
 	 * - `TokenAccountDoesNotExistError` — the sender is not registered for the token, or a receiver
-	 *   has no `TokenAccount<T>` (and either `registerReceiver` is not set, or it is set but the
-	 *   receiver has no `Account`/`default_pk`). With `registerReceiver`, a receiver that has an
-	 *   `Account` with a `default_pk` is registered on their behalf in the same PTB (permissionless
-	 *   tokens only).
+	 *   has no `TokenAccount<T>`. Deposits never auto-register; pre-register an unregistered receiver
+	 *   yourself with `tryRegisterWithDefaultPk` (permissionless tokens only) before transferring.
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
@@ -1156,9 +1094,6 @@ export class ContraClient {
 	 *   or a receiver is on the deny list, the sender has a per-account freeze active (the
 	 *   receiver-frozen case is caught by the SDK), or a receiver's state changed between the
 	 *   SDK check and execution.
-	 * - `ERegistrationNotPermissionless` — `registerReceiver` was set for a receiver with no
-	 *   `TokenAccount<T>`, but the token's registration is permissioned, so `register_with_default_pk`
-	 *   aborts.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — sender or receiver lost its registration between the
 	 *   SDK's check and execution.
 	 */
@@ -1167,7 +1102,6 @@ export class ContraClient {
 		recipients,
 		merge = true,
 		auth,
-		registerReceiver = false,
 	}: BatchedTransferOptions): Promise<(tx: Transaction) => TransactionResult> {
 		if (recipients.length === 0 || recipients.length > MAX_BATCH_RECIPIENTS) {
 			throw new InvalidArgumentError(
@@ -1189,7 +1123,6 @@ export class ContraClient {
 		const receiverStates = await this.#getAccountStates(
 			recipients.map((r) => r.receiverAddress),
 			tokenType,
-			{ autoRegisterFallback: registerReceiver },
 		);
 		const refusing = recipients
 			.map((recipient, i) => ({ recipient, state: receiverStates[i] }))
@@ -1256,16 +1189,6 @@ export class ContraClient {
 			if (shouldMerge) {
 				tx.add(this.#merge({ tokenAccount, auth: authArg }));
 			}
-
-			// With `registerReceiver`, any receiver flagged `needsRegistration` (has an `Account` with a
-			// `default_pk` but no `TokenAccount<T>` yet) is registered on their behalf first via
-			// `try_register_with_default_pk` (permissionless tokens only; try_ so a concurrent transfer
-			// registering the same receiver doesn't abort this PTB).
-			recipients.forEach((recipient, i) => {
-				if (receiverStates[i].needsRegistration) {
-					tx.add(this.tryRegisterWithDefaultPk({ receiver: recipient.receiverAddress, tokenType }));
-				}
-			});
 
 			const pid = this.#packageConfig.packageId;
 
@@ -1466,12 +1389,6 @@ interface AccountState {
 	pk: PublicKey;
 	acceptsEncryptedDeposits: boolean;
 	isFrozen: boolean;
-	/**
-	 * True when the address has an `Account` but no `TokenAccount<T>` yet, so this state was resolved
-	 * from the `Account` fallback (see `#getAccountStates` with `autoRegisterFallback`). The caller
-	 * must prepend a `register_with_default_pk` call before depositing to it.
-	 */
-	needsRegistration: boolean;
 }
 
 /** Max recipients in a single `transferBatch` PTB. Mirrors `MAX_BATCH_RECIPIENTS` in `contra.move`. */
@@ -1481,41 +1398,51 @@ const MAX_BATCH_RECIPIENTS = 255;
 type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb[] };
 
 /**
- * Build the per-transfer auditor data (Appendix C) for every auditor key. For each receiver, its four
- * u16 limbs regroup into two u32-limb commitments `Č_k = C_{2k} + 2^16 C_{2k+1}` with blinding
- * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` — these reuse the receiver's range-proven commitments and are shared
- * across all auditor keys, so they are computed once. Each key `pk` then gets the handle `D̃_k = ρ̃_k ·
- * pk` for every limb; a single batched `MultiKeyElGamalNizk` over the shared commitments proves all
- * keys' handles at once. Returns the flattened handles auditor-major (per key, two per receiver in
- * `prepared` order — matching `verify_transfer`'s `handles[i*n + r]` indexing) and that one proof.
+ * Build the per-transfer auditor data for every auditor key. For each receiver, its four u16 limbs
+ * fold into two u32 limbs, limb `l` having blinding `ρ̃_l = ρ_{2l} + 2^16 ρ_{2l+1}` and the receiver's
+ * own u32 handle `D̃_l^recv = D_{2l} + 2^16 D_{2l+1}` (already tied to its range/consistency-proven
+ * commitment by the receiver's proof). Each auditor key `pk` gets the handle `D̃_{i,l} = ρ̃_l · pk`; and
+ * one `DdhNizk` per (receiver, u32 limb) proves those auditor handles re-key `ρ̃_l` from `pk_receiver`
+ * to the auditor keys — bases `[pk_receiver, ...auditorPks]`, images `[D̃_l^recv, ...D̃_{i,l}]`.
+ *
+ * Returns the flattened handles auditor-major (per key, two per receiver in `prepared` order — matching
+ * `verify_transfer`'s `handles[i*n + r]` indexing) and one proof per (receiver, limb) (`proofs[r*2 + l]`).
  */
 function buildAuditorData(
 	dst: Uint8Array,
 	auditorPks: readonly PublicKey[],
 	prepared: readonly PreparedAmount[],
-): { handles: PublicKey[]; proof: MultiKeyElGamalNizk } {
+): { handles: PublicKey[]; proofs: DdhNizk[] } {
 	const shift = 1n << 16n;
-	const derived: { commitment: PublicKey; value: bigint; blinding: bigint }[] = [];
-	for (const p of prepared) {
-		const limbs = p.encAmountReceiver;
-		for (const [lo, hi] of [
-			[0, 1],
-			[2, 3],
-		] as const) {
-			const blinding = ristretto255.Point.Fn.create(
-				limbs[lo].blinding + shift * limbs[hi].blinding,
-			);
-			const value = limbs[lo].value + shift * limbs[hi].value;
-			const commitment = limbs[lo].ciphertext.ciphertext.add(
-				mul(limbs[hi].ciphertext.ciphertext, shift),
-			);
-			derived.push({ commitment, value, blinding });
-		}
-	}
-	// Flat, auditor-major handles: for each key, `ρ̃_k · pk` over every derived limb.
-	const handles = auditorPks.flatMap((pk) => derived.map((d) => mul(pk, d.blinding)));
-	const proof = MultiKeyElGamalNizk.prove(dst, [...auditorPks], derived);
-	return { handles, proof };
+	// Per (receiver, u32 limb), in `prepared` order (receiver-major, limb-minor).
+	const limbData = prepared.flatMap((p) =>
+		(
+			[
+				[0, 1],
+				[2, 3],
+			] as const
+		).map(([lo, hi]) => ({
+			blinding: ristretto255.Point.Fn.create(
+				p.encAmountReceiver[lo].blinding + shift * p.encAmountReceiver[hi].blinding,
+			),
+			receiverHandle: p.encAmountReceiver[lo].ciphertext.decryptionHandle.add(
+				mul(p.encAmountReceiver[hi].ciphertext.decryptionHandle, shift),
+			),
+			receiverPk: p.receiverPk,
+		})),
+	);
+	// Flat, auditor-major handles: for each key, `ρ̃_l · pk` over every (receiver, limb).
+	const handles = auditorPks.flatMap((pk) => limbData.map((d) => mul(pk, d.blinding)));
+	// One DDH per (receiver, u32 limb), anchored to the receiver's own u32 handle.
+	const proofs = limbData.map(({ blinding, receiverHandle, receiverPk }) =>
+		DdhNizk.prove(
+			dst,
+			blinding,
+			[receiverPk, ...auditorPks],
+			[receiverHandle, ...auditorPks.map((pk) => mul(pk, blinding))],
+		),
+	);
+	return { handles, proofs };
 }
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */

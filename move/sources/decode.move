@@ -7,7 +7,7 @@ module contra::decode;
 
 use contra::{
     encrypted_amount::{new_encrypted_amount, EncryptedAmount},
-    nizk::{Self, DdhProof, ElGamalProof, MultiKeyElGamalProof},
+    nizk::{Self, DdhProof, ElGamalProof},
     twisted_elgamal::{Self, Encryption, PublicKey, public_key}
 };
 use sui::{group_ops::Element, ristretto255::{G, g_from_bytes, scalar_from_bytes}};
@@ -52,21 +52,22 @@ public fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
     nizk::new_ddh_proof(g_range(&parts, 0, n), scalar_from_bytes(parts.borrow(n)))
 }
 
-public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
-    elgamal_proof_at(&parts, 0)
+/// Build a vector of `DdhProof`s, each with `num_commitments` point-encoded commitments followed by
+/// one scalar `z` (so `num_commitments + 1` `parts` per proof, concatenated). Aborts unless `parts`
+/// divides evenly.
+public fun ddh_proofs(parts: vector<vector<u8>>, num_commitments: u64): vector<DdhProof> {
+    let per = num_commitments + 1;
+    vector::tabulate!(
+        parts.length() / per,
+        |i| nizk::new_ddh_proof(
+            g_range(&parts, i * per, num_commitments),
+            scalar_from_bytes(parts.borrow(i * per + num_commitments)),
+        ),
+    )
 }
 
-/// Build a `MultiKeyElGamalProof` from `[a_0, …, a_{m-1}, b, z1, z2]`: the leading `parts.length - 3`
-/// point-encoded entries are the per-key handle masks `a`, followed by the point `b` and the two
-/// scalars `z1, z2`.
-public fun multi_key_elgamal_proof(parts: vector<vector<u8>>): MultiKeyElGamalProof {
-    let m = parts.length() - 3;
-    nizk::new_multi_key_elgamal_proof(
-        g_range(&parts, 0, m),
-        g_from_bytes(parts.borrow(m)),
-        scalar_from_bytes(parts.borrow(m + 1)),
-        scalar_from_bytes(parts.borrow(m + 2)),
-    )
+public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
+    elgamal_proof_at(&parts, 0)
 }
 
 fun encryption_at(parts: &vector<vector<u8>>, off: u64): Encryption {
