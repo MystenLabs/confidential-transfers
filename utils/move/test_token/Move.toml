@@ -1,9 +1,12 @@
 [package]
 name = "bu_token"
 edition = "2024"
+implicit-dependencies = false
 
 [dependencies]
 contra = { local = "../../../move" }
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
 
 [environments]
-devnet = "80d3582e"
+fresh = "00000001"

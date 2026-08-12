@@ -80,16 +80,19 @@ use contra::{
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
     events,
+    guardian::{Self, GuardianPolicy, GuardianApproval, Pcrs},
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    twisted_elgamal::PublicKey
+    twisted_elgamal::{Encryption, PublicKey}
 };
+use std::string::String;
 use sui::{
     coin::{Self, Coin, TreasuryCap},
     deny_list::DenyList,
     derived_object,
     dynamic_field as df,
     group_ops::Element,
+    nitro_attestation::NitroAttestationDocument,
     ristretto255::G,
     vec_set::{Self, VecSet}
 };
@@ -111,6 +114,9 @@ const EBatchTooLarge: u64 = 11;
 const EReceiverNotRegistered: u64 = 12;
 const ERegistrationNotPermissionless: u64 = 13;
 const EDefaultPkNotSet: u64 = 14;
+const EGuardianPolicyExists: u64 = 15;
+/// The token has a guardian policy but the transfer or unwrap carried no `GuardianApproval`.
+const EApprovalMissing: u64 = 16;
 
 // === Constants ===
 
@@ -150,6 +156,8 @@ public struct ConfidentialToken<phantom T> has key {
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
     auditors: Auditors,
+    // If present, every transfer and unwrap must also submit an enclave signature.
+    guardian_policy: Option<GuardianPolicy>,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -294,6 +302,7 @@ public fun new_confidential_token<T>(
             freeze_admins: vec_set::empty(),
             policy: policy::permissionless(),
             auditors: new_auditors(auditor_public_keys),
+            guardian_policy: option::none(),
         },
         ManagementCap { id: object::new(ctx) },
     )
@@ -549,6 +558,7 @@ public fun batched_transfer<T>(
     new_balance: EncryptedAmount,
     balance_proof: DdhProof,
     auditor_package: Option<AuditorPackage>,
+    guardian_approval: Option<GuardianApproval>,
 ): TransferBatch<T> {
     assert!(ct.is_active, ETransferDenied);
     assert!(auth.is_authenticated(sender.owner), EAuthorizationError);
@@ -562,6 +572,19 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
+
+    // If `guardian_policy` is set, verify enclave guardian transfer approval on transfer. Ignore if not set.
+    ct.guardian_policy.do_ref!(|policy| {
+        assert!(guardian_approval.is_some(), EApprovalMissing);
+        policy.assert_transfer_approval(
+            guardian_approval.borrow(),
+            sender.pk,
+            receiver_pks,
+            sender.active.collapse(),
+            new_balance.collapse(),
+            receiver_amounts.map_ref!(|amount| amount.collapse()),
+        )
+    });
     // `well_formed_proofs` is one aggregate proof over `[receiver_amounts..., new_balance]`
     // under `[receiver_pks..., sender.pk]`. Verify and wrap into WFEAs in one call, then peel
     // the last entry off as the sender's new-balance WFEA.
@@ -781,6 +804,7 @@ public fun unwrap<T>(
     new_balance_proof: WellFormedProof,
     amount: u64,
     balance_proof: &DdhProof,
+    guardian_approval: Option<GuardianApproval>,
     ctx: &mut TxContext,
 ): Coin<T> {
     let (success, coin) = account.try_unwrap_internal(
@@ -792,6 +816,7 @@ public fun unwrap<T>(
         new_balance_proof,
         amount,
         balance_proof,
+        guardian_approval,
         ctx,
     );
     assert!(success, EBalanceProofFailed);
@@ -810,6 +835,7 @@ public fun try_unwrap<T>(
     new_balance_proof: WellFormedProof,
     amount: u64,
     balance_proof: &DdhProof,
+    guardian_approval: Option<GuardianApproval>,
     ctx: &mut TxContext,
 ): Coin<T> {
     let (success, coin) = account.try_unwrap_internal(
@@ -821,6 +847,7 @@ public fun try_unwrap<T>(
         new_balance_proof,
         amount,
         balance_proof,
+        guardian_approval,
         ctx,
     );
     if (!success) {
@@ -841,6 +868,7 @@ fun try_unwrap_internal<T>(
     new_balance_proof: WellFormedProof,
     amount: u64,
     balance_proof: &DdhProof,
+    guardian_approval: Option<GuardianApproval>,
     ctx: &mut TxContext,
 ): (bool, Coin<T>) {
     assert!(auth.is_allowed(PERMISSIONED_UNWRAP), EAuthorizationError);
@@ -853,6 +881,18 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
+
+    // If `guardian_policy` is set, verify enclave guardian approval on unwrap. Ignore if not set.
+    ct.guardian_policy.do_ref!(|policy| {
+        assert!(guardian_approval.is_some(), EApprovalMissing);
+        policy.assert_unwrap_approval(
+            guardian_approval.borrow(),
+            account.pk,
+            account.active.collapse(),
+            new_balance.collapse(),
+            amount,
+        )
+    });
     let sid = account.session_id;
     let new_balance = new_balance.into_well_formed(
         sid.dst(DST_ELGAMAL),
@@ -976,6 +1016,144 @@ public fun set_policy<T, W>(
     events::emit_policy_update<T, W>(permissioned_operations);
 }
 
+// === Guardian flows ===
+
+/// Called by the issuer with ManagementCap.
+/// Enable the guardian by creating its policy (pcrs, operator). Aborts if one
+/// already exists.
+public fun set_guardian_policy<T>(
+    ct: &mut ConfidentialToken<T>,
+    _cap: &ManagementCap<T>,
+    pcrs: Pcrs,
+    operator: address,
+) {
+    assert!(ct.guardian_policy.is_none(), EGuardianPolicyExists);
+    let policy = guardian::new(pcrs, operator);
+    events::emit_guardian_policy_update<T>(policy);
+    ct.guardian_policy.fill(policy);
+}
+
+/// Called by the issuer with ManagementCap.
+/// Disable the guardian by dropping its policy, can enable again with `set_guardian_policy`.
+public fun unset_guardian_policy<T>(ct: &mut ConfidentialToken<T>, _cap: &ManagementCap<T>) {
+    let _ = ct.guardian_policy.extract();
+    events::emit_guardian_policy_removed<T>();
+}
+
+/// Called by the issuer with ManagementCap.
+/// Update the policy's pcrs, min_version, and operator address. If pcrs are updated,
+/// `version` is bumped. If `min_version` is bumped, all keys of older versions are
+/// pruned.
+public fun update_guardian_policy<T>(
+    ct: &mut ConfidentialToken<T>,
+    _cap: &ManagementCap<T>,
+    pcrs: Pcrs,
+    min_version: u16,
+    operator: address,
+) {
+    let policy = ct.guardian_policy.borrow_mut();
+    policy
+        .update(pcrs, min_version, operator)
+        .do!(|key| events::emit_guardian_enclave_removed<T>(key));
+    events::emit_guardian_policy_update<T>(*policy);
+}
+
+/// Called by operator address defined in guardian policy.
+/// Register an enclave where the keys are parsed from its attestation document.
+public fun register_guardian_enclave<T>(
+    ct: &mut ConfidentialToken<T>,
+    document: NitroAttestationDocument,
+    ctx: &TxContext,
+) {
+    let policy = ct.guardian_policy.borrow_mut();
+    let key = policy.register_enclave(document, ctx);
+    events::emit_guardian_enclave_registered<T>(key);
+}
+
+/// Called by the operator address defined in guardian policy.
+/// Remove a registered enclave by its signing pk.
+public fun remove_guardian_enclave<T>(
+    ct: &mut ConfidentialToken<T>,
+    signing_pk: vector<u8>,
+    ctx: &TxContext,
+) {
+    let policy = ct.guardian_policy.borrow_mut();
+    let key = policy.remove_enclave(signing_pk, ctx);
+    events::emit_guardian_enclave_removed<T>(key);
+}
+
+/// Called by the operator address defined in guardian policy.
+/// Update the url for the enclave fleet.
+public fun set_guardian_url<T>(ct: &mut ConfidentialToken<T>, url: String, ctx: &TxContext) {
+    let policy = ct.guardian_policy.borrow_mut();
+    policy.set_url(url, ctx);
+    events::emit_guardian_policy_update<T>(*policy);
+}
+
+// === Guardian Flow Dev Functions ===
+
+/// TODO: DEV ONLY CONVENIENCE TESTING FUNCTION. REMOVE FOR PRODUCTION.
+/// Verify only the guardian signature over a transfer payload, mirror the call for transfer with proofs.
+public fun verify_transfer_approval_for_dev<T>(
+    ct: &ConfidentialToken<T>,
+    sender_pk: PublicKey,
+    receiver_pks: vector<PublicKey>,
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
+    encrypted_amounts: vector<Encryption>,
+    approval: GuardianApproval,
+) {
+    ct
+        .guardian_policy
+        .do_ref!(
+            |policy| policy.assert_transfer_approval(
+                &approval,
+                sender_pk,
+                receiver_pks,
+                old_encrypted_balance,
+                new_encrypted_balance,
+                encrypted_amounts,
+            ),
+        );
+}
+
+/// TODO: DEV ONLY CONVENIENCE TESTING FUNCTION. REMOVE FOR PRODUCTION.
+/// Verify only the guardian signature over an unwrap payload, mirror the call for unwrap with proofs.
+public fun verify_unwrap_approval_for_dev<T>(
+    ct: &ConfidentialToken<T>,
+    sender_pk: PublicKey,
+    old_encrypted_balance: Encryption,
+    new_encrypted_balance: Encryption,
+    amount: u64,
+    approval: GuardianApproval,
+) {
+    ct
+        .guardian_policy
+        .do_ref!(
+            |policy| policy.assert_unwrap_approval(
+                &approval,
+                sender_pk,
+                old_encrypted_balance,
+                new_encrypted_balance,
+                amount,
+            ),
+        );
+}
+
+/// TODO: DEV ONLY CONVENIENCE TESTING FUNCTION. REMOVE FOR PRODUCTION.
+/// Called by operator address defined in guardian policy.
+/// Register an enclave for provided keys.
+public fun register_guardian_enclave_for_dev<T>(
+    ct: &mut ConfidentialToken<T>,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+    ctx: &TxContext,
+) {
+    let policy = ct.guardian_policy.borrow_mut();
+    let key = policy.register_guardian_enclave_key_for_dev(signing_pk, enc_pk, ctx);
+    events::emit_guardian_enclave_registered<T>(key);
+}
+
 // === Auditor flows ===
 
 /// Replace this confidential token's auditor keys. `current_pks` is tried first when verifying a
@@ -1040,9 +1218,6 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 // === Test Helpers ===
 
 #[test_only]
-use contra::twisted_elgamal::Encryption;
-
-#[test_only]
 public fun protocol_id_ddh(): u8 { DST_DDH }
 
 #[test_only]
@@ -1099,4 +1274,22 @@ public fun token_public_key<T>(account: &Account): Element<G> {
 #[test_only]
 public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
     account.session_id<T>().dst(protocol_id)
+}
+
+/// Register an enclave key directly on the guardian policy, bypassing the attestation
+/// document (tests cannot mint a verifiable Nitro attestation).
+#[test_only]
+public fun guardian_policy_for_testing<T>(ct: &ConfidentialToken<T>): &Option<GuardianPolicy> {
+    &ct.guardian_policy
+}
+
+/// Register an enclave key directly on the guardian policy, bypassing the
+/// attestation document and the operator gate.
+#[test_only]
+public fun register_guardian_enclave_for_testing<T>(
+    ct: &mut ConfidentialToken<T>,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+) {
+    ct.guardian_policy.borrow_mut().register_guardian_enclave_key_for_testing(signing_pk, enc_pk);
 }

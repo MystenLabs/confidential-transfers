@@ -217,6 +217,7 @@ fun test_simple_flow() {
         new_balance_proof,
         taken_amount,
         &sum_proof,
+        option::none(),
         scenario.ctx(),
     );
     assert!(coins.value() == 30);
@@ -371,6 +372,7 @@ fun test_batched_transfer() {
             ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
+            option::none(),
             option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
@@ -534,6 +536,7 @@ fun test_batched_transfer_with_auditor() {
             new_balance_ea,
             balance_proof,
             option::some(auditor_package),
+            option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -699,6 +702,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
             new_balance_ea,
             balance_proof,
             option::some(auditor_package),
+            option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -884,6 +888,7 @@ fun transfer<T>(
             new_balance,
             balance_proof,
             option::none(),
+            option::none(),
         )
         .add<T>(receiver, memo, deny_list)
         .finalize();
@@ -892,7 +897,7 @@ fun transfer<T>(
 /// Consistency proof for the collapsed sender total of a transfer: a value-`value` encryption
 /// under `sender_pk` with blinding `r`, matching the total `try_split_batch` reconstructs from the
 /// receiver commitments and the single sender decryption handle.
-fun total_consistency_proof_for_testing(
+public fun total_consistency_proof_for_testing(
     value: u64,
     sender_pk: &Element<G>,
     r: u64,
@@ -952,7 +957,11 @@ fun build_auditor_data(
 
 /// Build a single-value `EncryptedAmount` (`value` in limb 0, zero elsewhere) under `pk`, with
 /// limb 0 encrypted using blinding `r`.
-fun amount_for_testing(value: u16, pk: &Element<G>, r: u64): encrypted_amount::EncryptedAmount {
+public fun amount_for_testing(
+    value: u16,
+    pk: &Element<G>,
+    r: u64,
+): encrypted_amount::EncryptedAmount {
     encrypted_amount::new_encrypted_amount(
         encrypt_trivial_for_testing(value as u64, pk, r),
         encrypt_zero(),
@@ -2032,6 +2041,7 @@ fun test_account_freeze_blocks_unwrap() {
         new_balance_proof,
         taken_amount,
         &sum_proof,
+        option::none(),
         scenario.ctx(),
     );
 

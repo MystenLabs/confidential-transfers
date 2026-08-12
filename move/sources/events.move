@@ -3,7 +3,12 @@
 
 module contra::events;
 
-use contra::{encrypted_amount::EncryptedAmount, twisted_elgamal::PublicKey};
+use contra::{
+    encrypted_amount::EncryptedAmount,
+    guardian::{GuardianEnclaveKey, GuardianPolicy},
+    twisted_elgamal::PublicKey
+};
+use std::string::String;
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -130,6 +135,22 @@ public struct UpdateAuditorsEvent<phantom T> has copy, drop {
     previous_pks: vector<PublicKey>,
 }
 
+/// The guardian policy for token `T` was created or any of its fields updated
+/// (PCRs, `min_version`, operator, url); carries the full post-change policy.
+public struct GuardianPolicyUpdatedEvent<phantom T>(GuardianPolicy) has copy, drop;
+
+/// The guardian policy for token `T` was removed: enforcement is off and its
+/// registered enclave keys are gone.
+public struct GuardianPolicyRemovedEvent<phantom T>() has copy, drop;
+
+/// An enclave key was registered with token `T`'s guardian (its `version` is the
+/// policy version current at registration).
+public struct GuardianEnclaveRegisteredEvent<phantom T>(GuardianEnclaveKey) has copy, drop;
+
+/// An enclave key was removed from token `T`'s guardian — explicitly by the
+/// operator, or pruned by an issuer `min_version` bump.
+public struct GuardianEnclaveRemovedEvent<phantom T>(GuardianEnclaveKey) has copy, drop;
+
 // === Emit functions ===
 
 public(package) fun emit_new_confidential_token<T>() {
@@ -231,4 +252,20 @@ public(package) fun emit_update_auditors<T>(
     previous_pks: vector<PublicKey>,
 ) {
     event::emit(UpdateAuditorsEvent<T> { current_pks, previous_pks });
+}
+
+public(package) fun emit_guardian_policy_update<T>(policy: GuardianPolicy) {
+    event::emit(GuardianPolicyUpdatedEvent<T>(policy));
+}
+
+public(package) fun emit_guardian_policy_removed<T>() {
+    event::emit(GuardianPolicyRemovedEvent<T>());
+}
+
+public(package) fun emit_guardian_enclave_registered<T>(key: GuardianEnclaveKey) {
+    event::emit(GuardianEnclaveRegisteredEvent<T>(key));
+}
+
+public(package) fun emit_guardian_enclave_removed<T>(key: GuardianEnclaveKey) {
+    event::emit(GuardianEnclaveRemovedEvent<T>(key));
 }

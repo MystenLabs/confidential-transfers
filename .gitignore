@@ -24,3 +24,7 @@ next-env.d.ts
 .vite/
 
 .claude/
+
+# Guardian local fleet state and EIF build output
+guardian/.fleet/
+guardian/docker/out/
