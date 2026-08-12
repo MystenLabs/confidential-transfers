@@ -25,17 +25,9 @@ const U32_LIMBS: u64 = 2;
 // === Main Type ===
 
 /// The auditor configuration for a confidential token: the `current_pks` key set (tried first on a
-/// transfer) and the `previous_pks` set (also accepted, for a grace window). Auditing is per-transfer
-/// — every transfer carries auditor-readable ciphertexts of the amount, one set of decryption handles
-/// per auditor key.
-///
-/// Empty `current_pks` means auditing is disabled going forward. In steady state `current_pks ==
-/// previous_pks`. A change is expressed by pointing `current_pks` at the new set while `previous_pks`
-/// still holds the outgoing set, so a transfer built against either set verifies (a sender-built
-/// package matches one set or the other by its key count); ending the grace sets `previous_pks` equal
-/// to `current_pks`. The two sets need not be the same length — the set can shrink (`current_pks`
-/// shorter, dropping an auditor) or empty out (disabling) while `previous_pks` keeps auditing in-flight
-/// transfers during the grace.
+/// transfer) and the `previous_pks` set (also accepted), allowing a grace period. Auditing is per-transfer
+/// every transfer carries auditor-readable ciphertexts of the amount, one set of decryption handles
+/// per auditor key. If either `current_pks` or `previous_pks` are empty, auditing is disabled.
 public struct Auditors has store {
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
@@ -44,10 +36,7 @@ public struct Auditors has store {
 /// The per-transfer auditor data a sender attaches to a `batched_transfer`: the decryption handles
 /// for every (auditor, receiver) pair, flat and auditor-major — `[auditor_0 × receivers, auditor_1 ×
 /// receivers, …]`, so `M * N` entries (each an `[lo, hi]` pair) for `M` auditor keys and `N` receivers
-/// — plus one `DdhProof` per (receiver, u32-limb) (`U32_LIMBS * N` of them, receiver-major). Since the
-/// receiver's own u32 handle already anchors the limb's blinding `ρ̃` to its range/consistency-proven
-/// commitment, each proof only needs to show the auditor handles re-key `ρ̃` to the auditor keys — a
-/// shared-witness DDH over bases `[pk_receiver, pk_auditors…]`, no commitment re-proof.
+/// — plus one `DdhProof` per (receiver, u32-limb) (`U32_LIMBS * N` of them, receiver-major).
 public struct AuditorPackage has drop {
     handles: vector<vector<Element<G>>>,
     proofs: vector<DdhProof>,
@@ -76,8 +65,8 @@ public(package) fun new(pks: vector<PublicKey>): Auditors {
 }
 
 /// Replace both auditor key vectors. `current_pks` is tried first on a transfer, then`previous_pks`.
-/// The caller drives the grace policy: rotate with `update(new, old_current)`, shrink the set with 
-/// `update(fewer, old_current)`, end the grace with `update(new, new)`, enable with `update(pks, pks)`. 
+/// The caller drives the grace policy: rotate with `update(new, old_current)`, shrink the set with
+/// `update(fewer, old_current)`, end the grace with `update(new, new)`, enable with `update(pks, pks)`.
 /// Disable with grace via `update([], old)`, or disable immediatly with `update([], [])`.
 public(package) fun update(
     auditors: &mut Auditors,
