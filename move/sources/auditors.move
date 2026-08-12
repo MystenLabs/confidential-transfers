@@ -17,7 +17,6 @@ const EMissingAuditorData: u64 = 1;
 const EUnexpectedAuditorData: u64 = 2;
 const EMismatchedAuditorCount: u64 = 3;
 const ETooManyAuditors: u64 = 4;
-const EAuditorDataNotFullyConsumed: u64 = 5;
 
 // === Constants ===
 
@@ -46,9 +45,10 @@ public struct AuditorPackage has drop {
 
 /// The verified auditor decryption handles for a batch: `handles` holds one `[lo, hi]` pair per
 /// receiver (stored reversed, so `next` pops the back in submission order), tagged with the auditor's
-/// `pk`. Held in `TransferBatch` state (as an `Option`, `none` when auditing is disabled); `next` pops
-/// each receiver's pair for its `TransferEvent`, and `destroy` consumes the (then-empty) container.
-public struct VerifiedAuditorHandles has drop, store {
+/// `pk`. Held in `TransferBatch` state (as an `Option`, `none` when auditing is disabled). It has no
+/// `drop`, so it must be consumed explicitly: `next` pops each receiver's pair for its `TransferEvent`,
+/// and `destroy` takes the container when the batch is finalized.
+public struct VerifiedAuditorHandles has store {
     handles: vector<vector<Element<G>>>,
     pk: PublicKey,
 }
@@ -117,9 +117,9 @@ public(package) fun verify_transfer(
     option::some(VerifiedAuditorHandles { handles, pk })
 }
 
-/// Pop the next receiver's auditor data for its `TransferEvent`: its two `[lo, hi]` handles (a flat
-/// `vector<Element<G>>`, empty when auditing is disabled) and the auditor key (`none` when disabled).
-/// Called once per receiver, in submission order.
+/// Pop the next receiver's auditor data for its `TransferEvent`: its two `[lo, hi]` handles (empty when
+/// auditing is disabled) and the auditor key (`none` when disabled). Called once per receiver; since
+/// `handles` is stored reversed, popping the back yields receivers in submission order.
 public(package) fun next(
     auditor_data: &mut Option<VerifiedAuditorHandles>,
 ): (vector<Element<G>>, Option<PublicKey>) {
@@ -128,15 +128,15 @@ public(package) fun next(
     (verified.handles.pop_back(), option::some(verified.pk))
 }
 
-/// Consume the auditor data once every receiver's pair has been popped by `next`. Asserts the
-/// container is fully drained (`none`, or `some` with empty `handles`); the auditor key is dropped.
+/// Consume the auditor data (it has no `drop`, so this is the only way to discard it). In the normal
+/// flow every receiver's pair has been popped by `next` and only the key is left; on a failed batch
+/// it is discarded unpopped. Either way its contents are dropped.
 public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
     if (auditor_data.is_none()) {
         auditor_data.destroy_none();
         return
     };
-    let VerifiedAuditorHandles { handles, pk: _ } = auditor_data.destroy_some();
-    assert!(handles.is_empty(), EAuditorDataNotFullyConsumed);
+    let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
 }
 
 /// Whether every receiver's per-limb DDH verifies for the single key in `pks`. Returns false unless

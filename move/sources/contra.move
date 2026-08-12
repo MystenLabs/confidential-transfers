@@ -614,6 +614,8 @@ public fun batched_transfer<T>(
         }
     } else {
         withdrawn.destroy_none();
+        // The balance proof failed, so no receiver is credited; discard the (unpopped) auditor data.
+        destroy(auditor_data);
         TransferBatch::BalanceProofFailed
     }
 }
