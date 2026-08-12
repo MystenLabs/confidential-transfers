@@ -1,0 +1,95 @@
+name: Guardian Release
+
+# Cut a guardian release when the workspace cargo version is bumped on main:
+# build the reproducible EIF, measure its PCRs, and publish a GitHub release
+# tagged v<version> carrying the EIF, the measurements, and the source commit.
+# Token issuers act on the announced PCRs with their own ManagementCap
+# (sui-operations: contra-guardian-update-pcrs workflow assembles the unsigned
+# tx); the fleet rolls to the tag via the contra-guardian-scale workflow.
+#
+# The build is reproducible (pinned base image, SOURCE_DATE_EPOCH=0, buildx
+# rewrite-timestamp), so anyone can verify an announcement: check out the tag,
+# run `make -C guardian/docker`, and compare PCR0.
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read workspace version
+        id: version
+        run: |
+          version=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' Cargo.toml | head -1)
+          [ -n "$version" ] || { echo "no workspace version found"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already released
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "release ${{ steps.version.outputs.tag }} already exists; nothing to do"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the reproducible image
+        if: steps.guard.outputs.exists == 'false'
+        run: |
+          docker buildx create --name eif --driver docker-container --use
+          make -C guardian/docker image GIT_REVISION="$GITHUB_SHA"
+
+      # nitro-cli ships in Amazon Linux repos only; run it in an AL2023
+      # container against the host docker daemon. build-enclave is pure
+      # packaging (no Nitro hardware involved), so the runner suffices.
+      - name: Build the EIF and measure PCRs
+        if: steps.guard.outputs.exists == 'false'
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/guardian/docker:/work" \
+            amazonlinux:2023 bash -ec '
+              dnf install -y -q aws-nitro-enclaves-cli docker
+              nitro-cli build-enclave \
+                --docker-uri "contra-guardian-enclave:'"$GITHUB_SHA"'" \
+                --output-file /work/out/nitro.eif | tee /work/out/build-enclave.json'
+          jq .Measurements guardian/docker/out/build-enclave.json
+
+      - name: Create release
+        if: steps.guard.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          m() { jq -r ".Measurements.$1" guardian/docker/out/build-enclave.json; }
+          cat > notes.md <<NOTES
+          Guardian enclave release ${{ steps.version.outputs.tag }}, built from \`$GITHUB_SHA\`.
+
+          | Measurement | Value |
+          |---|---|
+          | PCR0 | \`$(m PCR0)\` |
+          | PCR1 | \`$(m PCR1)\` |
+          | PCR2 | \`$(m PCR2)\` |
+
+          Verify independently: \`git checkout ${{ steps.version.outputs.tag }} && make -C guardian/docker\` and compare PCR0.
+          Issuers: pin these PCRs via \`contra::update_guardian_policy\` (sui-operations \`contra-guardian-update-pcrs\` assembles the unsigned tx). Operators: roll the fleet with \`contra-guardian-scale\` and \`contra_commit=${{ steps.version.outputs.tag }}\`.
+          NOTES
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "guardian ${{ steps.version.outputs.tag }}" \
+            --notes-file notes.md \
+            guardian/docker/out/nitro.eif \
+            guardian/docker/out/build-enclave.json

@@ -60,78 +60,20 @@ GuardianEnclaveKey {
 
 ## Enclave Scaling
 
-- **Onchain option (implemented): each enclave registers with attestation against
-  `policy.pcrs` and adds its own `{ enc_pk, signing_pk }` to the policy**
-  - Client fetches all live `enc_pk`s onchain and encrypts the request to all keys;
-    the LB forwards it to an instance and gets a response identified by `signing_pk`.
-  - Onchain the client submits `enclave_sig, signing_pk`. Checks: 1) look up
-    `signing_pk` in `guardian_enclave_keys`, 2) verify the sig, 3)
-    `key.version >= policy.min_version`.
-  - Provision new instances:
-    - Each instance deploys and exposes `/attestation`.
-    - Registers with its own `{ enc_pk, signing_pk }`.
-  - Rotate keys:
-    - Boot a new instance with its own keys; add it to the LB (if the LB routes a
-      request to it early, it just fails and round-robins to the next).
-    - One PTB: remove the old key + register the new key.
-    - LB terminates the old instance.
-  - Proxy:
-    - Simple round robin: if a request (encrypted under a set of pks) is forwarded to
-      a freshly registered instance not in that set, the instance returns failure and
-      the LB tries the next.
-    - Recipient-aware: only forward to instances whose key the request is encrypted
-      under.
-- **Offchain option (design alternative, not implemented): provision the fleet of
-  enclaves to the same pk**
-  - Client sends the request encrypted under the single `enc_key`.
-  - Onchain the client submits `enclave_sig` only. Checks: 1) `enclave_sig` verifies
-    against `enclave.active.signing_pk`, 2) `enclave.version >= policy.min_version`.
-  - Provision new instances:
-    - Primary:
-      - One primary enclave generates fresh `{ enc_key, signing_key }`.
-      - Registers onchain an enclave object
-        `{ url, active: (enc_pk, signing_pk), standby: None }`, its attestation
-        verified against the policy PCRs.
-    - Scale up:
-      - A child instance spins up in `pending_provisioning` mode and exposes
-        `/provision_attestation`.
-      - The primary calls the child's `/provision_attestation`, verifies the PCRs, and
-        parses `provision_pk`.
-      - The primary calls the child's `/provision` with `{ enc_key, signing_key }`
-        encrypted under `provision_pk`.
-      - The child boots with `{ enc_key, signing_key }`, enters ready mode, and serves
-        traffic; the LB sends traffic to ready instances only.
-  - Remove instance: drop it from the LB.
-  - Rotate keys:
-    - Boot a new primary with `{ new_enc_key, new_signing_key }`.
-    - Update onchain `{ active: (new_enc_pk, new_signing_pk),
-      standby: (enc_pk, signing_pk) }`.
-    - All requests try to verify with the active pk first, then the standby.
-    - Provision new child instances the same way.
-    - Safe to remove the standby onchain once the old fleet drains.
-  - Proxy: simple round robin.
-- Scale up / down never involves the issuer: the operator registers a booting
-  instance's key (stamped with the current `policy.version`) and removes keys at
-  leisure — a dead instance's key can never sign again, so removal is hygiene, not
-  security.
-- Image updates (PCR changes — often routine dependency bumps): `update_pcrs` bumps
-  `policy.version` and only affects *new* registrations; existing keys stay valid, and
-  it is up to the issuer which keys to keep:
-  - **Routine upgrade**: `update_pcrs`, register the new fleet, let both images serve
-    while the old fleet drains, remove old keys when convenient. `min_version` never
-    moves; in-flight signed requests survive and there is no downtime — `update_pcrs` is
-    not a revocation, so the old fleet serves until the new one is registered.
-  - **Security fix**: bump `min_version` in the same PTB as the new registrations —
-    every old-image signature dies at that instant; clients retry, but there is no
-    keyless window. Bundling the bump matters twice over: registering first avoids
-    downtime, and lazy invalidation fails open if a security revocation is left "for
-    later".
-  - The grace window is closed-membership: after `update_pcrs` the old image can no
-    longer register keys, so the set of grace keys only shrinks.
-  - Rollback is free: old keys were never invalidated, so if the new image is broken,
-    remove its keys and keep serving on the old fleet.
-  - `min_version` is a floor (revoke everything older than X); revoking one specific
-    version while keeping older ones is per-key `remove_guardian_enclave` instead.
+Each enclave holds its own keys, generated inside the enclave.
+
+- A booting instance exposes `/attestation`; the operator registers its keys
+  (stamped with the current `policy.version`) and removes keys at leisure — a
+  dead instance's key can never sign again, so removal is hygiene, not security.
+- Clients seal each request to every registered `enc_pk`. The proxy round-robins;
+  an instance that is not among the request's recipients answers 422 and the
+  proxy retries the next host.
+- Onchain, an approval is `{ signing_pk, signature }`: look the key up, verify
+  the signature, require `key.version >= policy.min_version`.
+
+(A shared-key design — one `enc_pk` provisioned to the whole fleet — was
+considered and rejected: it would reintroduce key distribution, ceremony, and a
+sealed-secrets channel, and weaken what attestation proves.)
 
 ## Transfer Flow
 
@@ -214,26 +156,60 @@ overwrites —
 valid exactly until the sender's active balance changes, no TTL needed. (Deposits land
 in `pending`, so they don't invalidate an in-flight signed request.)
 
-## DDoS protection for enclave
-
-- Basic per-IP rate limiting at the edge (e.g. Cloudflare) is enough: per-request
-  enclave work is a few scalar mults.
-
 ## Code layout
 
 - `core/` — wire types, plaintext checks, HPKE sealing, keys, and response signing.
 - `enclave/` — the binary: `/attestation`, `/registered` (GET gates the proxy, POST marks it), and `/process_request` for
   sealed requests.
 - `docker/` — the reproducible EIF build (`make GIT_REVISION=<commit>`), always
-  the real NSM-attesting enclave, consumed by the deploy stacks' user-data.
+  the real NSM-attesting enclave, consumed by the deploy stacks' user-data and
+  by the release flow (see Operations).
 
 Deployment lives in `sui-operations` (`contra-guardian-enclave`, and
-`contra-guardian-proxy` for the ALB + Envoy config). Routing is round robin plus a
-retry when an instance answers 422 ("not a recipient"), configured in Envoy.
+`contra-guardian-proxy` for the ALB + Envoy config). Routing is round robin plus
+retry-on-422, and a WAF per-IP rate limit at the ALB is enough DDoS protection —
+per-request enclave work is a few scalar mults.
 Devnet runs the real NSM build under `--debug-mode`: attestation documents are
 genuinely signed but every PCR reads all-zero, so the policy pins zero PCRs once
 and iteration only ever re-registers fresh keys; testnet+ pins real CI-built
 measurements. The `non-enclave-dev` mock below is for machines with no NSM at all.
+
+## Operations
+
+Who signs what: the issuer (`ManagementCap`) changes trust — PCRs, `min_version`,
+operator; the operator changes the fleet — instances and registered keys. All
+operator flows are one workflow, `sui-operations/.github/workflows/contra-guardian-scale.yaml`,
+which converges the fleet to `count` and the onchain key set to "keys held by
+live enclaves": removes departing keys before shrinking, registers anything at
+gate 503, and sweeps orphaned keys (a restarted enclave re-registers fresh; its
+old key is deleted by the sweep).
+
+- **Release**: bumping the workspace cargo version on main tags `v<version>`
+  with the EIF + PCRs (`.github/workflows/guardian-release.yml`, verifiable by
+  rebuilding the tag). Issuer pins the PCRs (`contra-guardian-update-pcrs.yaml`
+  assembles the unsigned tx); operator rolls the fleet
+  (`contra-guardian-scale.yaml`, `contra_commit: v<version>` — in-place today,
+  so guarded transfers pause until re-registration). Pinning PCRs auto-bumps
+  `version` and only affects new registrations, so a routine upgrade leaves old
+  keys valid (both images serve; rollback = remove the new keys); a security fix
+  additionally raises `min_version` — after the new fleet registers — killing
+  every old-image signature at that instant, with no keyless window.
+- **Scale up / down / recover**: dispatch scale with the desired `count`.
+  Recovery from any drift is the same dispatch at the current count.
+- **Bootstrap / devnet regenesis** (issuer + operator, manual today): publish +
+  register the token (`scripts/issuer_setup.sh`), `set_guardian_policy`, then
+  register each instance.
+- **Monitoring**: `contra-guardian-monitor.yaml` scans every ~10 min — per-instance
+  gate over SSM plus the public endpoint — and posts problems to Slack; recovery
+  is a scale dispatch at the current count.
+- **Not built yet**: blue-green rolls (`min_version` already permits the mixed
+  fleet), a regenesis workflow.
+
+Registration itself is one shared subflow — fetch `/attestation`, submit the
+register tx, `POST /registered`, strictly in that order (the gate opens last so
+Envoy only routes to keys the chain accepts). `scripts/register.sh` is the
+canonical implementation (local fleet, manual SSM); the scale workflow inlines
+the same steps over SSM `send-command` and adds the tagging the sweep reads.
 
 ## Test
 
@@ -249,7 +225,7 @@ against the signed payload.
 
 ## Local fleet
 
-`scripts/` runs a e2e test against localnet with: issuer setup, a registered fleet, 
+`scripts/` runs an e2e test against localnet with: issuer setup, a registered fleet, 
 the production Envoy routing, and a wallet that submits the payload onchain.
 
 Registration goes through `scripts/register.sh` — shared with the AWS deploy, where
