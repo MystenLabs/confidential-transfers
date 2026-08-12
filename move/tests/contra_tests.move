@@ -509,7 +509,7 @@ fun test_batched_transfer_with_auditor() {
     // The auditor's handles + one batched DDH per receiver, for the two receiver amounts (both
     // limb-0-only). `verify_transfer` checks every DDH.
     let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_auditor_elgamal(),
+        contra::protocol_id_auditor_ddh(),
     );
     let (handles, proofs) = build_auditor_data(
         vector[30, 20],
@@ -682,7 +682,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
         vector[r_a, r_b],
         &vector[pk_2, pk_3],
         &auditor_pk,
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_ddh()),
     );
     let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proofs);
 

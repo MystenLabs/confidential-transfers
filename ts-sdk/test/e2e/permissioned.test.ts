@@ -30,7 +30,7 @@ import {
 	buildPublicKeyVector,
 	buildWellFormedProof,
 	point,
-	PROTOCOL_AUDITOR_ELGAMAL,
+	PROTOCOL_AUDITOR_DDH,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_RANGE_PROOF_16,
@@ -147,7 +147,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor):
 		// one DDH per u32 limb, anchored to the receiver's own u32 handle.
 		const auditorPk = tokenIssuer.auditorPublicKey!;
-		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL);
+		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_DDH);
 		const shift = 1n << 16n;
 		const limbData = (
 			[

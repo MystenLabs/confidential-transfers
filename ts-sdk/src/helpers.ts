@@ -52,8 +52,8 @@ export const PROTOCOL_ELGAMAL = 0x02;
 export const PROTOCOL_RANGE_PROOF_16 = 0x04;
 /** Domain-separation byte for the batched re-keying DDH proof (Π_rekey). */
 export const PROTOCOL_BATCH_DDH = 0x06;
-/** Domain-separation byte for the batched per-transfer auditor ElGamal proof. */
-export const PROTOCOL_AUDITOR_ELGAMAL = 0x07;
+/** Domain-separation byte for the per-transfer auditor DDH proofs. */
+export const PROTOCOL_AUDITOR_DDH = 0x07;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.
@@ -421,7 +421,7 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
  * u32-limb decryption handles per receiver plus one batched `DdhProof` per receiver. `option::some`
  * wrapping `auditors::new_auditor_package(handles, proofs)` when `data` is provided, `option::none`
  * when auditing is disabled. `data.handles` are flattened in receiver order (two per receiver),
- * grouped into per-receiver `[lo, hi]` handle vectors on-chain by `decode::decryption_handles`. Built
+ * grouped into per-receiver `[lo, hi]` handle vectors on-chain by `decode::auditor_decryption_handles`. Built
  * entirely through `decode` calls (no `makeMoveVec`), so the nested proof/handle structure round-trips
  * on chain.
  */
@@ -439,7 +439,7 @@ export function buildAuditorPackageOption(
 					auditorsContracts.newAuditorPackage({
 						package: packageId,
 						arguments: {
-							handles: decodeContracts.decryptionHandles({
+							handles: decodeContracts.auditorDecryptionHandles({
 								package: packageId,
 								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
 							}),

@@ -56,12 +56,12 @@ public struct WrapEvent<phantom T> has copy, drop {
 /// receiver commitments are identical) by re-deriving the per-transfer blinding from
 /// `seed = HKDF(sk * seed_point)` and the receiver's `batch_index` within this transfer.
 ///
-/// `auditor_pks` is the verifying auditor key set — length 0 (auditing disabled) or 1 (the current
-/// key, or during a rotation grace window the previous one) — and `auditor_decryption_handles` holds
-/// the matching auditor's `[lo, hi]` handles at the same index (so both are empty when auditing is
-/// disabled). An auditor whose key is in `auditor_pks` pairs its handles off-chain with the two
-/// commitments (the ciphertext halves of `encrypted_amount_receiver`). `memo` is an opaque
-/// caller-supplied blob, empty if none was provided.
+/// `auditor_pk` is the verifying auditor key — `none` when auditing is disabled, else the current key
+/// (or, during a rotation grace window, the previous one) — and `auditor_decryption_handles` holds
+/// that auditor's two u32-limb `[lo, hi]` handles (empty when auditing is disabled). An auditor whose
+/// key equals `auditor_pk` pairs those handles off-chain with the two commitments (the ciphertext
+/// halves of `encrypted_amount_receiver`). `memo` is an opaque caller-supplied blob, empty if none was
+/// provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
     sender_pk: PublicKey,
@@ -70,8 +70,8 @@ public struct TransferEvent<phantom T> has copy, drop {
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: vector<Encryption>,
-    auditor_decryption_handles: vector<vector<Element<G>>>,
-    auditor_pks: vector<PublicKey>,
+    auditor_decryption_handles: vector<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 }
 
@@ -169,8 +169,8 @@ public(package) fun emit_transfer<T>(
     receiver: address,
     receiver_pk: PublicKey,
     encrypted_amount_receiver: vector<Encryption>,
-    auditor_decryption_handles: vector<vector<Element<G>>>,
-    auditor_pks: vector<PublicKey>,
+    auditor_decryption_handles: vector<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 ) {
     event::emit(TransferEvent<T> {
@@ -182,7 +182,7 @@ public(package) fun emit_transfer<T>(
         receiver_pk,
         encrypted_amount_receiver,
         auditor_decryption_handles,
-        auditor_pks,
+        auditor_pk,
         memo,
     });
 }

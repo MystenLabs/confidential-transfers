@@ -23,7 +23,7 @@ public fun public_keys(parts: vector<vector<u8>>): vector<PublicKey> {
 
 /// Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts` (two u32-limb
 /// handles per transferred amount, flattened in amount order). Aborts if `parts` has an odd length.
-public fun decryption_handles(parts: vector<vector<u8>>): vector<vector<Element<G>>> {
+public fun auditor_decryption_handles(parts: vector<vector<u8>>): vector<vector<Element<G>>> {
     let elements = g_vector(parts);
     let mut out = vector[];
     let mut i = 0;

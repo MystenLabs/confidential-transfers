@@ -100,10 +100,10 @@ const EAmountsEqualityProofFailed: u64 = 7;
 const EEmptyTransferBatch: u64 = 8;
 const ETooManyReceivers: u64 = 9;
 const EBalancesFull: u64 = 10;
-const EBatchTooLarge: u64 = 12;
-const EReceiverNotRegistered: u64 = 16;
-const ERegistrationNotPermissionless: u64 = 17;
-const EDefaultPkNotSet: u64 = 18;
+const EBatchTooLarge: u64 = 11;
+const EReceiverNotRegistered: u64 = 12;
+const ERegistrationNotPermissionless: u64 = 13;
+const EDefaultPkNotSet: u64 = 14;
 
 // === Constants ===
 
@@ -121,7 +121,7 @@ const DST_DDH: u8 = 0x01;
 const DST_ELGAMAL: u8 = 0x02;
 const DST_RANGE_PROOF_16: u8 = 0x04;
 const DST_BATCH_DDH: u8 = 0x06;
-const DST_AUDITOR_ELGAMAL: u8 = 0x07;
+const DST_AUDITOR_DDH: u8 = 0x07;
 
 // === Registries ===
 
@@ -577,7 +577,7 @@ public fun batched_transfer<T>(
         .verify_transfer(
             &receiver_amounts,
             auditor_package,
-            sender.session_id.dst(DST_AUDITOR_ELGAMAL),
+            sender.session_id.dst(DST_AUDITOR_DDH),
         );
 
     let withdrawn = sender
@@ -648,7 +648,7 @@ public fun add_to_batch<T>(
             assert!(receiver.has_deposit_slot(), EBalancesFull);
 
             let coin = coins.pop_back();
-            let (receiver_auditor_decryption_handles, auditor_pks) = per_receiver(
+            let (receiver_auditor_decryption_handles, auditor_pk) = per_receiver(
                 &auditor_data,
                 next_index as u64,
             );
@@ -661,7 +661,7 @@ public fun add_to_batch<T>(
                 receiver.pk,
                 coin.amount().amount().collapse_to_u32(),
                 receiver_auditor_decryption_handles,
-                auditor_pks,
+                auditor_pk,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver.pk, coin);
@@ -1045,7 +1045,7 @@ public fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
 public fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 
 #[test_only]
-public fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
+public fun protocol_id_auditor_ddh(): u8 { DST_AUDITOR_DDH }
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {

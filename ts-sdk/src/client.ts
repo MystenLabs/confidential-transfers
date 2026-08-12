@@ -34,7 +34,7 @@ import {
 	getConfidentialTokenId,
 	getTokenAccountId,
 	point,
-	PROTOCOL_AUDITOR_ELGAMAL,
+	PROTOCOL_AUDITOR_DDH,
 	PROTOCOL_BATCH_DDH,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
@@ -1181,7 +1181,7 @@ export class ContraClient {
 		// `undefined` (option::none) when auditing is disabled (no current keys).
 		const { currentPks } = await this.getAuditor(tokenType);
 		const auditorData = currentPks.length
-			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), currentPks[0], prepared)
+			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_DDH), currentPks[0], prepared)
 			: undefined;
 
 		return (tx: Transaction): TransactionResult => {

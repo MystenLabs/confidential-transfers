@@ -113,7 +113,7 @@ export interface ContraAuditorOptions {
 	 * The auditor's twisted ElGamal private key(s). Provide every key the auditor has held — the
 	 * current one plus any rotated-out keys — so transfers made before a rotation, which stay
 	 * encrypted under an old key, still decrypt; `decryptTransferAmount` matches the transfer's
-	 * `auditor_pks` to the right key. More can be added later with `ContraAuditor.addKey`.
+	 * `auditor_pk` to the right key. More can be added later with `ContraAuditor.addKey`.
 	 */
 	privateKeys: PrivateKey[];
 	/**

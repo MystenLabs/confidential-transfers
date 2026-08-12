@@ -12,11 +12,11 @@ use sui::{group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
-const EAuditorProofFailed: u64 = 1;
-const EMissingAuditorData: u64 = 2;
-const EUnexpectedAuditorData: u64 = 3;
-const EMismatchedAuditorCount: u64 = 4;
-const ETooManyAuditors: u64 = 5;
+const EAuditorProofFailed: u64 = 0;
+const EMissingAuditorData: u64 = 1;
+const EUnexpectedAuditorData: u64 = 2;
+const EMismatchedAuditorCount: u64 = 3;
+const ETooManyAuditors: u64 = 4;
 
 // === Constants ===
 
@@ -113,16 +113,16 @@ public(package) fun verify_transfer(
     option::some(VerifiedAuditorHandles { handles, pk })
 }
 
-/// Receiver `receiver_index`'s auditor data as length-0-or-1 vectors: its `[lo, hi]` pair and the
-/// auditor key — the two fields of that receiver's `TransferEvent`, empty when auditing is disabled.
-/// Call with `receiver_index` `0..N-1`.
+/// Receiver `receiver_index`'s auditor data for that receiver's `TransferEvent`: its two `[lo, hi]`
+/// handles (a flat `vector<Element<G>>`, empty when auditing is disabled) and the auditor key
+/// (`none` when disabled). Call with `receiver_index` `0..N-1`.
 public(package) fun per_receiver(
     auditor_data: &Option<VerifiedAuditorHandles>,
     receiver_index: u64,
-): (vector<vector<Element<G>>>, vector<PublicKey>) {
-    if (auditor_data.is_none()) return (vector[], vector[]);
+): (vector<Element<G>>, Option<PublicKey>) {
+    if (auditor_data.is_none()) return (vector[], option::none());
     let verified = auditor_data.borrow();
-    (vector[verified.handles[receiver_index]], vector[verified.pk])
+    (verified.handles[receiver_index], option::some(verified.pk))
 }
 
 /// Whether every receiver's per-limb DDH verifies for the single key in `pks`. Returns false unless

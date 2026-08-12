@@ -53,19 +53,21 @@ export function publicKeys(options: PublicKeysOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface DecryptionHandlesArguments {
+export interface AuditorDecryptionHandlesArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
-export interface DecryptionHandlesOptions {
+export interface AuditorDecryptionHandlesOptions {
 	package?: string;
-	arguments: DecryptionHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+	arguments:
+		| AuditorDecryptionHandlesArguments
+		| [parts: RawTransactionArgument<Array<Array<number>>>];
 }
 /**
  * Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts`
  * (two u32-limb handles per transferred amount, flattened in amount order). Aborts
  * if `parts` has an odd length.
  */
-export function decryptionHandles(options: DecryptionHandlesOptions) {
+export function auditorDecryptionHandles(options: AuditorDecryptionHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
 	const parameterNames = ['parts'];
@@ -73,7 +75,7 @@ export function decryptionHandles(options: DecryptionHandlesOptions) {
 		tx.moveCall({
 			package: packageAddress,
 			module: 'decode',
-			function: 'decryption_handles',
+			function: 'auditor_decryption_handles',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

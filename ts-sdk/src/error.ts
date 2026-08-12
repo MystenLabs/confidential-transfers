@@ -98,7 +98,7 @@ export class AuditorKeyNotHeldError extends ContraError {
 	readonly auditorPk: RistrettoPoint;
 	constructor(auditorPk: RistrettoPoint) {
 		super(
-			"This auditor holds no private key matching the transfer's auditor_pks; add it with addKey.",
+			"This auditor holds no private key matching the transfer's auditor_pk; add it with addKey.",
 		);
 		this.auditorPk = auditorPk;
 	}
