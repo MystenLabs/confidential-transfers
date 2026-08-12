@@ -20,7 +20,7 @@ const bcsLimb = (c: Ciphertext) => ({
  * mirroring the on-chain event: `encrypted_amount_receiver` is the two u32-limb ciphertexts
  * `(Ǎ_k, Ď_k)` folded from the receiver's four u16 limbs (`Ǎ_k = C_{2k} + 2^16 C_{2k+1}`, and likewise
  * the handle), plus, when `auditorPk` is set, its two u32-limb handles `D̃_k = ρ̃_k · pk`,
- * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (`auditor_pk` / `auditor_decryption_handle`, both `null` otherwise).
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (`auditor_pks` / `auditor_decryption_handles`, both empty otherwise).
  */
 function buildTransferEvent(
 	receiverPk: RistrettoPoint,
@@ -51,10 +51,10 @@ function buildTransferEvent(
 			bcsLimb(foldU32(limbs[0], limbs[1])),
 			bcsLimb(foldU32(limbs[2], limbs[3])),
 		],
-		auditor_decryption_handle: auditorPk
-			? [bcsPoint(mul(auditorPk, rho0)), bcsPoint(mul(auditorPk, rho1))]
-			: null,
-		auditor_pk: auditorPk ? { element: bcsPoint(auditorPk) } : null,
+		auditor_decryption_handles: auditorPk
+			? [[bcsPoint(mul(auditorPk, rho0)), bcsPoint(mul(auditorPk, rho1))]]
+			: [],
+		auditor_pks: auditorPk ? [{ element: bcsPoint(auditorPk) }] : [],
 	};
 }
 
@@ -86,7 +86,7 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 		expect(auditorFor().decryptTransferAmount(event)).toBeNull();
 	});
 
-	it('throws when it holds no key matching the transfer auditor_pk', () => {
+	it('throws when it holds no key matching the transfer auditor_pks', () => {
 		const event = buildTransferEvent(receiverPk, auditorPk, 500n);
 		const [, wrongSk] = generateKeyPair();
 		const wrongAuditor = new ContraAuditor({
@@ -105,7 +105,7 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 			privateKeys: [oldSk, newSk],
 			table,
 		});
-		// Matches each transfer's auditor_pk to the right held key.
+		// Matches each transfer's auditor_pks to the right held key.
 		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, oldPk, 111n))).toBe(111n);
 		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, newPk, 222n))).toBe(222n);
 	});

@@ -113,16 +113,16 @@ public(package) fun verify_transfer(
     option::some(VerifiedAuditorHandles { handles, pk })
 }
 
-/// Receiver `receiver_index`'s auditor data: its `[lo, hi]` pair and the auditor key — the two fields
-/// of that receiver's `TransferEvent`. `(none, none)` when auditing is disabled. Call with
-/// `receiver_index` `0..N-1`.
+/// Receiver `receiver_index`'s auditor data as length-0-or-1 vectors: its `[lo, hi]` pair and the
+/// auditor key — the two fields of that receiver's `TransferEvent`, empty when auditing is disabled.
+/// Call with `receiver_index` `0..N-1`.
 public(package) fun per_receiver(
     auditor_data: &Option<VerifiedAuditorHandles>,
     receiver_index: u64,
-): (Option<vector<Element<G>>>, Option<PublicKey>) {
-    if (auditor_data.is_none()) return (option::none(), option::none());
+): (vector<vector<Element<G>>>, vector<PublicKey>) {
+    if (auditor_data.is_none()) return (vector[], vector[]);
     let verified = auditor_data.borrow();
-    (option::some(verified.handles[receiver_index]), option::some(verified.pk))
+    (vector[verified.handles[receiver_index]], vector[verified.pk])
 }
 
 /// Whether every receiver's per-limb DDH verifies for the single key in `pks`. Returns false unless

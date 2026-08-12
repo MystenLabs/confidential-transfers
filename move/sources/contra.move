@@ -648,7 +648,7 @@ public fun add_to_batch<T>(
             assert!(receiver.has_deposit_slot(), EBalancesFull);
 
             let coin = coins.pop_back();
-            let (receiver_auditor_decryption_handle, auditor_pk) = per_receiver(
+            let (receiver_auditor_decryption_handles, auditor_pks) = per_receiver(
                 &auditor_data,
                 next_index as u64,
             );
@@ -660,8 +660,8 @@ public fun add_to_batch<T>(
                 receiver_addr,
                 receiver.pk,
                 coin.amount().amount().collapse_to_u32(),
-                receiver_auditor_decryption_handle,
-                auditor_pk,
+                receiver_auditor_decryption_handles,
+                auditor_pks,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver.pk, coin);
