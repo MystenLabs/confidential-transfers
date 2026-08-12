@@ -117,6 +117,7 @@ The kaisho app publishes contracts from a pre-compiled bytecode bundle at `apps/
 - **twisted_elgamal.move**: On-chain `Encryption` type (ciphertext + decryption handle), homomorphic add/sub, consistency verification.
 - **nizk.move**: Fiat-Shamir NIZKs over Ristretto255 — `DdhProof` (shared-witness DDH over a vector of base/image pairs: the classic Chaum-Pedersen tuple is the two-pair case, used for balance/equality proofs; key rotation is the five-pair case, one `w` re-keying the public key and all four limb decryption handles at once) and `ElGamalProof` (witness-folded twisted ElGamal well-formedness over any number of same-key ciphertexts at a constant `2` points + `2` scalars; a single ciphertext is the batch-of-1 case), plus `KeyConsistencyProof` (auditor viewing-key encryption). All verifiers reduce to two shared Schnorr row-checkers and bind the statement bases into the Blake2b256 challenge transcript, so the same proof types are reusable across different DDH/ElGamal/key-encryption contexts.
 - **deny_list.move**: Sui DenyList integration for per-address freezing and global pause (KYC/compliance).
+- **guardian.move**: Optional TEE second factor for transfers and unwraps if enabled. `Option<GuardianPolicy>` on `ConfidentialToken` (`Some` enables it) holds the expected enclave `Pcrs`, `version`/`min_version`, an operator address, a `url`, and the registered `GuardianEnclaveKey`s. Registration verifies a `sui::nitro_attestation` document against the PCRs and parses `signing_pk || enc_pk`. When enabled, `batched_transfer` and `unwrap` require a `GuardianApproval`: an enclave signature over the BCS `RequestPayload` enum.
 
 ### TypeScript SDK (`ts-sdk/src/`)
 Client-side cryptographic operations and transaction building, mirroring the Move modules.
@@ -138,6 +139,14 @@ Note on Fiat-Shamir hash functions:
 
 ### WASM bindings (`utils/bulletproofs-wasm/`)
 - **@contra/bulletproofs-wasm**: Standalone package wrapping `fastcrypto::bulletproofs` (Rust crate in `src/lib.rs`, built with `wasm-pack`). Ships two builds selected by `package.json` `exports` conditions: a `nodejs/` build (CommonJS, loads synchronously — its `init` is a no-op) and a `web/` build (needs an async `init`). `ts-sdk` consumes it via `file:` and wraps init in `bp.ts`'s `getBulletproofs()` factory. The package has no `"type": "module"` so the CommonJS `nodejs` build resolves cleanly.
+
+### Guardian (`guardian/`)
+Rust workspace for the off-chain half of the TEE second factor (design: `guardian/README.md`; on-chain counterpart: `move/sources/guardian.move`).
+- **core/**: all the crypto — wire types, plaintext checks, HPKE sealing, the enclave keypair, response signing. 
+- **enclave/**: the binary — `/attestation`, `/registered` (GET is the proxy's readiness gate, POST marks the key registered), and `/process_request` for HPKE-sealed requests. `--features non-enclave-dev` stubs the NSM attestation call so it runs outside an enclave.
+- **scripts/**: issuer setup, bootstrap / scale / remove, and a local Envoy for a fleet against a localnet; `enclave/examples/process_request.rs` uses the CLI wallet local wallet to send request to the guardian, then submits the guardian approval onchain to verify.
+- **docker/**: reproducible EIF build (Containerfile + Makefile); `FEATURES=non-enclave-dev` builds the mock-attestation dev image.
+Deployment (EIF build, Pulumi stacks, CI) lives in `sui-operations`.
 
 ### Apps (`apps/`)
 - **kaisho/**: Example React/Vite wallet demonstrating the full flow (connect wallet, create account, wrap, transfer, unwrap) plus an issuer setup page that deploys the BU test token and Contra contracts to Sui devnet or testnet (the active network is chosen at runtime via the header picker; see `src/network.ts`). Consumes `ts-sdk` from its built `dist/`.
