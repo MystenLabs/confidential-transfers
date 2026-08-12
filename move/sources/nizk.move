@@ -71,32 +71,6 @@ public(package) fun verify_ddh(
     ).all!(|b| *b)
 }
 
-/// Verify a `DdhProof` batched over several witnesses sharing one base set: witness `w_l` maps every
-/// base to its image, `images_per_witness[l][k] == w_l * bases[k]` for all `l` and `k`.
-public(package) fun verify_ddh_batch(
-    proof: &DdhProof,
-    dst: vector<u8>,
-    bases: &vector<Element<G>>,
-    images_per_witness: &vector<vector<Element<G>>>,
-): bool {
-    let n = bases.length();
-    if (proof.commitments.length() != n) return false;
-    if (images_per_witness.any!(|images| images.length() != n)) return false;
-    if (bases.all!(|b| *b == g_identity())) return false;
-    let c = challenge_ddh_batch(dst, bases, images_per_witness, &proof.commitments);
-    // Fold each base's images with powers of `c` (c^0, c^1, …); `is_valid_relation`'s own `c` factor
-    // then weights witness `l` by `c^{l+1}`, checking `commitment + c * folded == z * base`.
-    vector::tabulate!(n, |k| {
-        let mut folded = g_identity();
-        let mut power = scalar_from_u64(1);
-        images_per_witness.do_ref!(|images| {
-            folded = g_add(&folded, &g_mul(&power, &images[k]));
-            power = scalar_mul(&power, &c);
-        });
-        is_valid_relation(&proof.commitments[k], &folded, &bases[k], &proof.z, &c)
-    }).all!(|b| *b)
-}
-
 /// Verify that the prover knows `(r_j, m_j)` for every ciphertext `(C_j, D_j)` in the batch.
 public(package) fun verify_elgamal(
     proof: &ElGamalProof,
@@ -136,22 +110,6 @@ fun challenge_ddh(
     let mut inputs = vector[dst];
     bases.do_ref!(|b| inputs.push_back(*b.bytes()));
     images.do_ref!(|i| inputs.push_back(*i.bytes()));
-    commitments.do_ref!(|cm| inputs.push_back(*cm.bytes()));
-    fiat_shamir_challenge(inputs)
-}
-
-/// Fiat-Shamir challenge for a batched `DdhProof` (`verify_ddh_batch`). Binds, in order, the DST,
-/// every base, then every witness's images witness-major (all of witness 0, then witness 1, …), then
-/// every Schnorr commitment.
-fun challenge_ddh_batch(
-    dst: vector<u8>,
-    bases: &vector<Element<G>>,
-    images_per_witness: &vector<vector<Element<G>>>,
-    commitments: &vector<Element<G>>,
-): Element<Scalar> {
-    let mut inputs = vector[dst];
-    bases.do_ref!(|b| inputs.push_back(*b.bytes()));
-    images_per_witness.do_ref!(|images| images.do_ref!(|i| inputs.push_back(*i.bytes())));
     commitments.do_ref!(|cm| inputs.push_back(*cm.bytes()));
     fiat_shamir_challenge(inputs)
 }
@@ -232,28 +190,6 @@ public fun prove_ddh(
     let commitments = bases.map_ref!(|b| g_mul(s, b));
     let c = challenge_ddh(dst, bases, images, &commitments);
     let z = scalar_add(s, &scalar_mul(&c, w));
-    DdhProof { commitments, z }
-}
-
-/// Prove the batched DDH checked by `verify_ddh_batch`: `witnesses[l]` opens
-/// `images_per_witness[l][k] = witnesses[l] * bases[k]` for every `k`. `s` is the single mask.
-#[test_only]
-public fun prove_ddh_batch(
-    dst: vector<u8>,
-    witnesses: &vector<Element<Scalar>>,
-    bases: &vector<Element<G>>,
-    images_per_witness: &vector<vector<Element<G>>>,
-    s: &Element<Scalar>,
-): DdhProof {
-    let commitments = bases.map_ref!(|b| g_mul(s, b));
-    let c = challenge_ddh_batch(dst, bases, images_per_witness, &commitments);
-    // z = s + sum_l c^{l+1} w_l.
-    let mut z = *s;
-    let mut power = c;
-    witnesses.do_ref!(|w| {
-        z = scalar_add(&z, &scalar_mul(&power, w));
-        power = scalar_mul(&power, &c);
-    });
     DdhProof { commitments, z }
 }
 
@@ -408,34 +344,6 @@ fun ddh_proof_batch_round_trip() {
     let mut short_images = images;
     short_images.pop_back();
     assert!(!verify_ddh(&proof, vector[], &short_bases, &short_images));
-}
-
-#[test]
-fun ddh_batch_multi_witness_round_trip() {
-    let g = ristretto255::g_generator();
-    // Shared bases (the receiver key + auditor keys); two independent witnesses (the two u32-limb
-    // blindings), each opening its own image at every base.
-    let bases = vector::tabulate!(4, |i| g_mul(&scalar_from_u64((i + 3) * 7), &g));
-    let witnesses = vector[scalar_from_u64(13579), scalar_from_u64(24680)];
-    let images_per_witness = witnesses.map_ref!(|w| bases.map_ref!(|b| g_mul(w, b)));
-    let proof = prove_ddh_batch(
-        vector[],
-        &witnesses,
-        &bases,
-        &images_per_witness,
-        &scalar_from_u64(11223),
-    );
-    assert!(verify_ddh_batch(&proof, vector[], &bases, &images_per_witness));
-
-    // Tampering with any witness's image at any base breaks verification.
-    let mut bad = images_per_witness;
-    *bad.borrow_mut(1).borrow_mut(0) = g;
-    assert!(!verify_ddh_batch(&proof, vector[], &bases, &bad));
-
-    // A statement with the wrong number of bases fails the length check (returns false, no abort).
-    let mut short_bases = bases;
-    short_bases.pop_back();
-    assert!(!verify_ddh_batch(&proof, vector[], &short_bases, &images_per_witness));
 }
 
 /// A statement whose every base is the identity binds no witness and is rejected outright, even

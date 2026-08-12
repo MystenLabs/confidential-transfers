@@ -428,10 +428,6 @@ fun test_batched_transfer_with_auditor() {
         &ristretto255::scalar_from_u64(0xA1),
         &ristretto255::g_generator(),
     );
-    let auditor_pk_2 = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(0xA2),
-        &ristretto255::g_generator(),
-    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -450,11 +446,11 @@ fun test_batched_transfer_with_auditor() {
         scenario.ctx(),
     );
 
-    // Token created with two auditor keys enabled: every transfer carries one handle set per key.
+    // Token created with the auditor key enabled: every transfer carries a handle set for it.
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector[public_key(auditor_pk), public_key(auditor_pk_2)],
+        vector[public_key(auditor_pk)],
         scenario.ctx(),
     );
 
@@ -510,8 +506,8 @@ fun test_batched_transfer_with_auditor() {
         &sk_1,
     );
 
-    // The handles for both auditor keys + one DDH per (receiver, u32-limb), for the two receiver
-    // amounts (both limb-0-only). `verify_transfer` checks every DDH.
+    // The auditor's handles + one batched DDH per receiver, for the two receiver amounts (both
+    // limb-0-only). `verify_transfer` checks every DDH.
     let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_auditor_elgamal(),
     );
@@ -519,7 +515,7 @@ fun test_batched_transfer_with_auditor() {
         vector[30, 20],
         vector[r_a, r_b],
         &vector[pk_2, pk_3],
-        &vector[auditor_pk, auditor_pk_2],
+        &auditor_pk,
         auditor_dst,
     );
     let auditor_package = auditors::new_auditor_package(handles, proofs);
@@ -685,7 +681,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
         vector[30, 20],
         vector[r_a, r_b],
         &vector[pk_2, pk_3],
-        &vector[auditor_pk],
+        &auditor_pk,
         account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
     );
     let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proofs);
@@ -733,10 +729,10 @@ fun test_batched_transfer_auditor_rotation_grace() {
 
 // === Auditor presence policy ===
 //
-// With the same-length `current_pks` / `previous_pks` model, auditing is disabled exactly when the
-// key vectors are empty. A transfer must carry auditor data iff auditing is enabled. These exercise
-// `verify_transfer`'s presence branches directly (they never read `receiver_amounts`, so an empty
-// vector is fine).
+// At most one auditor key (each of `current_pks` / `previous_pks` holds ≤1). Auditing is disabled
+// exactly when `current_pks` is empty. A transfer must carry auditor data iff auditing is enabled.
+// These exercise `verify_transfer`'s presence branches directly (they never read `receiver_amounts`,
+// so an empty vector is fine).
 
 fun test_key(): PublicKey {
     public_key(ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()))
@@ -748,7 +744,7 @@ fun auditor_disabled_accepts_no_data() {
     let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
     let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
-    assert!(handles.is_empty());
+    assert!(handles.is_none());
     unit_test::destroy(auditor);
 }
 
@@ -781,7 +777,7 @@ fun auditor_disable_grace_accepts_no_data() {
     auditors::update(&mut auditor, vector[], vector[test_key()]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
     let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
-    assert!(handles.is_empty());
+    assert!(handles.is_none());
     unit_test::destroy(auditor);
 }
 
@@ -914,54 +910,56 @@ fun total_consistency_proof_for_testing(
     )
 }
 
-/// Build the flattened auditor-major decryption handles and one `DdhProof` per (receiver, u32-limb)
-/// for a batch of limb-0-only receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`,
-/// under `receiver_pks[i]`) and every key in `auditor_pks`. Each amount's low u32 limb has blinding
-/// `r_i` and receiver handle `r_i*pk_receiver`; the high u32 limb is zero. Per auditor key the handles
-/// are `[r_i*aud_pk, identity]`; the returned handles are one `[lo, hi]` pair per (auditor, amount),
-/// flat and auditor-major (`[aud_0 × amounts, …]`), matching `verify_transfer`. One batched DDH per
-/// receiver proves both limbs' auditor handles re-key their blinding from `pk_receiver` to the auditor
-/// keys (limb 0 witness `r_i`, limb 1 the zero high limb with witness 0 and all-identity images).
+/// Build the decryption handles and one batched `DdhProof` per receiver for a batch of limb-0-only
+/// receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`, under `receiver_pks[i]`) and
+/// the single `auditor_pk`. Each amount's low u32 limb has blinding `r_i` and receiver handle
+/// `r_i*pk_receiver`; the high u32 limb is zero. The returned handles are one `[lo, hi]` pair per
+/// amount (`[r_i*auditor_pk, identity]`), matching `verify_transfer`, and one DDH per (receiver,
+/// u32-limb): limb 0 witness `r_i` with images `[r_i*pk_receiver, r_i*auditor_pk]`, limb 1 (the zero
+/// high limb) witness 0 with all-identity images.
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
     receiver_pks: &vector<Element<G>>,
-    auditor_pks: &vector<Element<G>>,
+    auditor_pk: &Element<G>,
     dst: vector<u8>,
 ): (vector<vector<Element<G>>>, vector<nizk::DdhProof>) {
-    // Auditor-major handles: per (auditor, amount), the `[lo, hi]` pair `[r_i*aud_pk, identity]`.
+    // Per amount, the `[lo, hi]` pair `[r_i*auditor_pk, identity]`.
     let mut handles = vector[];
-    auditor_pks.do_ref!(|pk| {
-        values.length().do!(|i| {
-            let lo = *encrypt_trivial_for_testing(values[i], pk, blindings[i]).decryption_handle();
-            handles.push_back(vector[lo, ristretto255::g_identity()]);
-        });
+    values.length().do!(|i| {
+        let lo =
+            *encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]).decryption_handle();
+        handles.push_back(vector[lo, ristretto255::g_identity()]);
     });
-    // One batched DDH per receiver over both u32 limbs: bases `[pk_receiver, aud_pks…]`, limb 0 witness
-    // `r_i` with images `[r_i*pk_receiver, r_i*aud_pks…]`, limb 1 (the zero high limb) witness 0 with
-    // all-identity images.
+    // Two DDHs per receiver over the bases `[pk_receiver, auditor_pk]` (receiver-major, limb-minor).
     let mut proofs = vector[];
     values.length().do!(|r| {
         let pk_recv = receiver_pks[r];
         let br = blindings[r];
-        let mut bases = vector[pk_recv];
-        auditor_pks.do_ref!(|pk| bases.push_back(*pk));
-        let mut images_lo = vector[
+        let bases = vector[pk_recv, *auditor_pk];
+        // Limb 0: witness `r_i`, images `[r_i*pk_receiver, r_i*auditor_pk]`.
+        let images_lo = vector[
             *encrypt_trivial_for_testing(values[r], &pk_recv, br).decryption_handle(),
+            *encrypt_trivial_for_testing(values[r], auditor_pk, br).decryption_handle(),
         ];
-        auditor_pks.do_ref!(
-            |pk| images_lo.push_back(
-                *encrypt_trivial_for_testing(values[r], pk, br).decryption_handle(),
+        proofs.push_back(
+            nizk::prove_ddh(
+                dst,
+                &ristretto255::scalar_from_u64(br),
+                &bases,
+                &images_lo,
+                &ristretto255::scalar_from_u64(97531),
             ),
         );
-        let images_hi = vector::tabulate!(bases.length(), |_| ristretto255::g_identity());
+        // Limb 1: the zero high limb, witness 0, all-identity images.
+        let images_hi = vector[ristretto255::g_identity(), ristretto255::g_identity()];
         proofs.push_back(
-            nizk::prove_ddh_batch(
+            nizk::prove_ddh(
                 dst,
-                &vector[ristretto255::scalar_from_u64(br), ristretto255::scalar_from_u64(0)],
+                &ristretto255::scalar_from_u64(0),
                 &bases,
-                &vector[images_lo, images_hi],
-                &ristretto255::scalar_from_u64(97531),
+                &images_hi,
+                &ristretto255::scalar_from_u64(86420),
             ),
         );
     });

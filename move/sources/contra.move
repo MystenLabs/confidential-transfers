@@ -68,13 +68,7 @@
 module contra::contra;
 
 use contra::{
-    auditors::{
-        Auditors,
-        AuditorPackage,
-        VerifiedDecryptionHandlesBatch,
-        per_receiver,
-        new as new_auditors,
-    },
+    auditors::{Auditors, AuditorPackage, VerifiedAuditorHandles, per_receiver, new as new_auditors},
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
@@ -197,7 +191,7 @@ public enum TransferBatch<phantom T> {
         coins: vector<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
-        auditor_decryption_handles: vector<VerifiedDecryptionHandlesBatch>,
+        auditor_data: Option<VerifiedAuditorHandles>,
     },
 }
 
@@ -578,7 +572,7 @@ public fun batched_transfer<T>(
     let new_balance = wfeas.pop_back();
     let receiver_amounts = wfeas;
 
-    let auditor_decryption_handles = ct
+    let auditor_data = ct
         .auditors
         .verify_transfer(
             &receiver_amounts,
@@ -609,7 +603,7 @@ public fun batched_transfer<T>(
             coins,
             seed_point,
             next_index: 0,
-            auditor_decryption_handles,
+            auditor_data,
         }
     } else {
         withdrawn.destroy_none();
@@ -640,7 +634,7 @@ public fun add_to_batch<T>(
             mut coins,
             seed_point,
             next_index,
-            auditor_decryption_handles,
+            auditor_data,
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
@@ -654,8 +648,8 @@ public fun add_to_batch<T>(
             assert!(receiver.has_deposit_slot(), EBalancesFull);
 
             let coin = coins.pop_back();
-            let (receiver_auditor_decryption_handles, auditor_pks) = per_receiver(
-                &auditor_decryption_handles,
+            let (receiver_auditor_decryption_handle, auditor_pk) = per_receiver(
+                &auditor_data,
                 next_index as u64,
             );
             events::emit_transfer<T>(
@@ -666,8 +660,8 @@ public fun add_to_batch<T>(
                 receiver_addr,
                 receiver.pk,
                 coin.amount().amount().collapse_to_u32(),
-                receiver_auditor_decryption_handles,
-                auditor_pks,
+                receiver_auditor_decryption_handle,
+                auditor_pk,
                 memo,
             );
             receiver.pending.merge_encrypted(&receiver.pk, coin);
@@ -677,7 +671,7 @@ public fun add_to_batch<T>(
                 coins,
                 seed_point,
                 next_index: next_index + 1,
-                auditor_decryption_handles,
+                auditor_data,
             }
         },
     }
