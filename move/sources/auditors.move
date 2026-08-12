@@ -17,6 +17,7 @@ const EMissingAuditorData: u64 = 1;
 const EUnexpectedAuditorData: u64 = 2;
 const EMismatchedAuditorCount: u64 = 3;
 const ETooManyAuditors: u64 = 4;
+const EAuditorDataNotFullyConsumed: u64 = 5;
 
 // === Constants ===
 
@@ -43,10 +44,11 @@ public struct AuditorPackage has drop {
     proofs: vector<DdhProof>,
 }
 
-/// The verified auditor decryption handles for a batch: `handles[r]` is receiver `r`'s `[lo, hi]`
-/// pair, tagged with the auditor's `pk`. Held in `TransferBatch` state (as an `Option`, `none` when
-/// auditing is disabled); `per_receiver` reads one receiver's pair for that receiver's `TransferEvent`.
-public struct VerifiedAuditorHandles has copy, drop, store {
+/// The verified auditor decryption handles for a batch: `handles` holds one `[lo, hi]` pair per
+/// receiver in submission order, tagged with the auditor's `pk`. Held in `TransferBatch` state (as an
+/// `Option`, `none` when auditing is disabled); `next` pops the front pair for each receiver's
+/// `TransferEvent`, and `destroy` consumes the (then-empty) container.
+public struct VerifiedAuditorHandles has drop, store {
     handles: vector<vector<Element<G>>>,
     pk: PublicKey,
 }
@@ -113,16 +115,26 @@ public(package) fun verify_transfer(
     option::some(VerifiedAuditorHandles { handles, pk })
 }
 
-/// Receiver `receiver_index`'s auditor data for that receiver's `TransferEvent`: its two `[lo, hi]`
-/// handles (a flat `vector<Element<G>>`, empty when auditing is disabled) and the auditor key
-/// (`none` when disabled). Call with `receiver_index` `0..N-1`.
-public(package) fun per_receiver(
-    auditor_data: &Option<VerifiedAuditorHandles>,
-    receiver_index: u64,
+/// Pop the next receiver's auditor data for its `TransferEvent`: its two `[lo, hi]` handles (a flat
+/// `vector<Element<G>>`, empty when auditing is disabled) and the auditor key (`none` when disabled).
+/// Called once per receiver, in submission order.
+public(package) fun next(
+    auditor_data: &mut Option<VerifiedAuditorHandles>,
 ): (vector<Element<G>>, Option<PublicKey>) {
     if (auditor_data.is_none()) return (vector[], option::none());
-    let verified = auditor_data.borrow();
-    (verified.handles[receiver_index], option::some(verified.pk))
+    let verified = auditor_data.borrow_mut();
+    (verified.handles.remove(0), option::some(verified.pk))
+}
+
+/// Consume the auditor data once every receiver's pair has been popped by `next`. Asserts the
+/// container is fully drained (`none`, or `some` with empty `handles`); the auditor key is dropped.
+public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
+    if (auditor_data.is_none()) {
+        auditor_data.destroy_none();
+        return
+    };
+    let VerifiedAuditorHandles { handles, pk: _ } = auditor_data.destroy_some();
+    assert!(handles.is_empty(), EAuditorDataNotFullyConsumed);
 }
 
 /// Whether every receiver's per-limb DDH verifies for the single key in `pks`. Returns false unless
