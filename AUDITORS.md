@@ -119,14 +119,20 @@ The two options trade cost against operational complexity. The table below summa
 
 ## Selected approach
 
-We implement **Option 1 (per-transfer)** with a single auditor key. Each transfer attaches auditor-readable ciphertexts of the amount; the auditor never learns a user's viewing key, so balances stay encrypted only under the user's own key and users may reuse one account public key across tokens.
+We implement **Option 1 (per-transfer)** and support **multiple auditor keys per token**. Each transfer attaches auditor-readable ciphertexts of the amount, one set per auditor key; the auditor never learns a user's viewing key, so balances stay encrypted only under the user's own key and users may reuse one account public key across tokens.
 
-Concretely (see `auditors.move` / `contra.move`):
+Concretely (see `auditors.move` / `contra.move` / `nizk.move`):
 
-- **One auditor key with a grace window.** The token stores a `current_pk`, a `previous_pk`, and a `previous_expiration_epoch`. On rotation the outgoing key becomes `previous_pk` and stays valid for transfers through `previous_expiration_epoch`, so transfers built against the old key just before a rotation still verify. Setting `current_pk = none` disables auditing.
-- **Cheap per-transfer overhead.** A twisted-ElGamal ciphertext `c = r·g + m·h` is key-independent, so the receiver's four range-proven u16-limb commitments are reused for the auditor: the chain derives two u32-limb commitments (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`) on-chain, and the sender sends only two auditor decryption handles per amount (one per two limbs) plus one batched `ElGamalProof` over the whole transfer. No separate auditor commitments or range proofs.
+- **A set of auditor keys with a grace window.** The token stores two key vectors, `current_pks` (tried first on a transfer) and `previous_pks` (also accepted). A transfer verifies against `current_pks`, else against `previous_pks`, so transfers built against the outgoing set just before a rotation still validate. There is no expiration epoch; the issuer drives the grace explicitly with one `update(current_pks, previous_pks)` call: rotate with `update(new, old)`, end the grace with `update(new, new)`, and disable auditing going forward with an empty `current_pks`. The two vectors need not be the same length, so the set can also grow or shrink across a rotation.
+
+- **Cheap per-transfer overhead, no auditor range proofs.** A twisted-ElGamal ciphertext `c = r·g + m·h` is key-independent, so the receiver's four range-proven u16-limb commitments double as the auditors' commitments: the chain folds them into two u32-limb commitments (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`) for free, and per auditor key the sender attaches only two decryption handles per receiver amount — `D̃_{i,l} = ρ̃_l · pk_i`, one per u32 limb `l`. No separate auditor commitments or range proofs.
+
+- **A DDH proof instead of an ElGamal proof.** The receiver's *own* u32 decryption handle `ρ̃_l · pk_recv` (part of the transfer it already range/consistency-proves) pins each limb's blinding `ρ̃_l` to the commitment, so the sender does not re-prove well-formedness. It proves only that the auditor handles re-key that same `ρ̃_l` — a **DDH** over the bases `[pk_recv, pk_0, …, pk_{M-1}]` mapping to the images `[ρ̃_l · pk_recv, ρ̃_l · pk_0, …]`, anchored by the receiver's handle at the first base.
+
+- **One batched proof per receiver.** A receiver's two u32 limbs share that same base set and differ only in their blinding, so the two DDHs fold into a single proof with powers of the Fiat-Shamir challenge (the DDH analog of the batched `ElGamalProof`): `1 + M` group elements plus one scalar per receiver, for `M` auditor keys, regardless of the number of limbs. It cannot fold across receivers, since each receiver contributes a distinct `pk_recv` base.
+
 - **Offboarding is clean.** Because auditors hold no user viewing keys, removing an auditor key immediately ends its visibility into future transfers, with no user-driven viewing-key rotation required (unlike Option 2).
 
-Auditors read amounts from `TransferEvent`s (the two handles plus the commitments derived from `encrypted_amount_receiver`); reading is stateful (balances are reconstructed from the transfer graph), and history before an auditor's key was installed requires the previous keys, which the issuer key-derivation scheme above can supply.
+Auditors read amounts from `TransferEvent`s (each auditor's two handles plus the two u32-limb commitments in `encrypted_amount_receiver`); reading is stateful (balances are reconstructed from the transfer graph), and history before an auditor's key was installed requires the previous keys, which the issuer key-derivation scheme above can supply.
 
 > **Disclaimer:** This selection is preliminary. The design may change based on feedback from the community and partners as we gather more input on auditor requirements and operational constraints.
