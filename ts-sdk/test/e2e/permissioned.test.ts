@@ -145,7 +145,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		// Per-transfer auditor data for the single receiver: `auditors::verify_transfer` runs before the
 		// balance proof, so valid handles + proofs must be present for the transfer to reach the
 		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor):
-		// one batched DDH over both u32 limbs, anchored to the receiver's own u32 handles.
+		// one DDH per u32 limb, anchored to the receiver's own u32 handle.
 		const auditorPk = tokenIssuer.auditorPublicKey!;
 		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL);
 		const shift = 1n << 16n;
@@ -163,14 +163,14 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			),
 		}));
 		const auditorHandles = limbData.map((d) => mul(auditorPk, d.blinding));
-		const auditorProofs = [
-			DdhNizk.proveBatch(
+		const auditorProofs = limbData.map((d) =>
+			DdhNizk.prove(
 				auditorDst,
-				limbData.map((d) => d.blinding),
+				d.blinding,
 				[receiverPk, auditorPk],
-				limbData.map((d) => [d.receiverHandle, mul(auditorPk, d.blinding)]),
+				[d.receiverHandle, mul(auditorPk, d.blinding)],
 			),
-		];
+		);
 
 		const { batchRangeProver } = await getBulletproofs();
 		const tx = new Transaction();

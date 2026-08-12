@@ -20,18 +20,18 @@ export type DecodedTransferEvent = typeof TransferEvent.$inferType;
 
 /**
  * Per-transfer auditor SDK. Under per-transfer auditing the auditor never learns a user's viewing
- * key; instead every transfer carries one auditor-readable ciphertext set per auditor key. A token
- * can have several auditors, so a `TransferEvent` lists `auditor_pks` and, at matching indices,
- * `auditor_decryption_handles` (two u32-limb handles per key). The event's `encrypted_amount_receiver`
- * already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`), so this pairs each with the matching
- * handle to form a twisted ElGamal ciphertext and recovers the transferred amount with a held key.
+ * key; instead every transfer carries an auditor-readable copy of the amount under the token's auditor
+ * key. A `TransferEvent` names that key in `auditor_pk` and carries its `[lo, hi]` handles in
+ * `auditor_decryption_handle` (both `none` when auditing is disabled). The event's
+ * `encrypted_amount_receiver` already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`), so this pairs
+ * each with the matching handle to form a twisted ElGamal ciphertext and recovers the amount.
  *
- * An auditor holds one or more private keys. A token's auditor keys can be rotated, and a transfer
- * made before a rotation stays encrypted under whichever keys were current then (accepted on chain
- * during the grace window, and readable off-chain forever). To decrypt across rotations, construct
- * the auditor with every key it has ever held — or add rotated-out keys later with `addKey` —
- * and `decryptTransferAmount` selects the private key whose public key (`pk = sk * G`) matches one of
- * the transfer's `auditor_pks`.
+ * A token has at most one auditor key at a time, but it can be rotated, and a transfer made before a
+ * rotation stays encrypted under whichever key was current then (accepted on chain during the grace
+ * window, and readable off-chain forever). An auditor holds one or more private keys so it can read
+ * across rotations: construct it with every key it has ever held — or add rotated-out keys later with
+ * `addKey` — and `decryptTransferAmount` uses the held key whose public key (`pk = sk * G`) matches the
+ * transfer's `auditor_pk`.
  */
 export class ContraAuditor {
 	#tokenType: string;
@@ -67,45 +67,34 @@ export class ContraAuditor {
 	}
 
 	/**
-	 * Recover the transferred amount from a `TransferEvent`, using the held key whose public key matches
-	 * one of the event's `auditor_pks`, and that key's handles (at the same index in
-	 * `auditor_decryption_handles`). Pairs each of the event's two u32-limb commitments
-	 * (`encrypted_amount_receiver`) with the matching handle and BSGS-decrypts.
+	 * Recover the transferred amount from a `TransferEvent`. If a held key matches the event's
+	 * `auditor_pk`, pairs each of the event's two u32-limb commitments (`encrypted_amount_receiver`)
+	 * with the matching `auditor_decryption_handle` and BSGS-decrypts.
 	 *
 	 * @param event a decoded `TransferEvent` (`TransferEventBcs.parse`).
 	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
 	 *   disabled for it).
-	 * @throws {@link AuditorKeyNotHeldError} if this auditor holds no key matching any of the event's
-	 *   `auditor_pks`; {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
+	 * @throws {@link AuditorKeyNotHeldError} if this auditor doesn't hold the event's `auditor_pk`;
+	 *   {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
 	 */
 	decryptTransferAmount(event: DecodedTransferEvent): bigint | null {
-		const auditorPks = event.auditor_pks;
+		const auditorPk = event.auditor_pk;
+		const pair = event.auditor_decryption_handle;
 		// No auditor data attached (auditing was disabled for this transfer).
-		if (auditorPks.length === 0) return null;
-		// Find the auditor key this instance holds; its handle pair sits at the same index in
-		// `auditor_decryption_handles`, so grab it in the same pass.
-		let privateKey: PrivateKey | undefined;
-		let pair: DecodedTransferEvent['auditor_decryption_handles'][number] | undefined;
-		for (const [i, pkBcs] of auditorPks.entries()) {
-			const held = this.#keys.get(bytesToHex(Uint8Array.from(pkBcs.element.bytes)));
-			if (held) {
-				privateKey = held.privateKey;
-				pair = event.auditor_decryption_handles[i];
-				break;
-			}
+		if (auditorPk === null || pair === null) return null;
+		const held = this.#keys.get(bytesToHex(Uint8Array.from(auditorPk.element.bytes)));
+		if (held === undefined) {
+			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPk.element));
 		}
-		if (privateKey === undefined) {
-			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPks[0].element));
-		}
-		if (pair === undefined || pair.length !== 2) return null;
-		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with this
+		if (pair.length !== 2) return null;
+		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with the
 		// auditor's matching handle and BSGS-decrypt.
 		const d0 = pointFromBcs(pair[0]);
 		const d1 = pointFromBcs(pair[1]);
 		const a0 = pointFromBcs(event.encrypted_amount_receiver[0].ciphertext);
 		const a1 = pointFromBcs(event.encrypted_amount_receiver[1].ciphertext);
-		const n0 = new Ciphertext(a0, d0).decrypt(privateKey, this.#table);
-		const n1 = new Ciphertext(a1, d1).decrypt(privateKey, this.#table);
+		const n0 = new Ciphertext(a0, d0).decrypt(held.privateKey, this.#table);
+		const n1 = new Ciphertext(a1, d1).decrypt(held.privateKey, this.#table);
 		return n0 + n1 * SHIFT_32;
 	}
 }

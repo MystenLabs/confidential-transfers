@@ -368,7 +368,7 @@ describe('core user flows (devnet)', () => {
 		{ timeout: 120_000 },
 		async () => {
 			// Per-transfer auditing: the auditor never recovers a user key. It decrypts each transfer's
-			// amount from the `TransferEvent` (`encrypted_amount_receiver` + `auditor_decryption_handles`) with the
+			// amount from the `TransferEvent` (`encrypted_amount_receiver` + `auditor_decryption_handle`) with the
 			// token's auditor private key. The sender still recovers its own outgoing amount from the
 			// commitments via `seed_point`, and the receiver decrypts with its own key.
 			const auditor = new ContraAuditor({
@@ -401,11 +401,9 @@ describe('core user flows (devnet)', () => {
 			const decodedTransfer = TransferEventBcs.parse(transferEvent!.bcs);
 			expect(decodedTransfer.sender).toBe(user1Address);
 			expect(decodedTransfer.receiver).toBe(user2Address);
-			// One entry per auditor key (here a single auditor): its two u32-limb handles, tagged by the
-			// matching `auditor_pks` entry.
-			expect(decodedTransfer.auditor_decryption_handles).toHaveLength(1);
-			expect(decodedTransfer.auditor_decryption_handles[0]).toHaveLength(2);
-			expect(decodedTransfer.auditor_pks).toHaveLength(1);
+			// The auditor's two u32-limb handles, tagged by `auditor_pk` (both set here, one auditor).
+			expect(decodedTransfer.auditor_decryption_handle).toHaveLength(2);
+			expect(decodedTransfer.auditor_pk).not.toBeNull();
 
 			// The event carries the amount as two u32-limb ciphertexts.
 			expect(decodedTransfer.encrypted_amount_receiver).toHaveLength(2);
@@ -413,7 +411,7 @@ describe('core user flows (devnet)', () => {
 				Ciphertext.fromBcs(e),
 			);
 
-			// Auditor recovers the amount straight from the event, selecting its key from `auditor_pks`.
+			// Auditor recovers the amount straight from the event, matching its key to `auditor_pk`.
 			const auditorAmount = auditor.decryptTransferAmount(decodedTransfer);
 			expect(auditorAmount).toBe(transferAmount);
 
@@ -428,7 +426,7 @@ describe('core user flows (devnet)', () => {
 			expect(decryptedSender).toBe(transferAmount);
 			expect(decryptedReceiver).toBe(transferAmount);
 
-			// An auditor without the transfer's key can't decrypt it (no key matches any `auditor_pks`).
+			// An auditor without the transfer's key can't decrypt it (no key matches `auditor_pk`).
 			const wrongAuditor = new ContraAuditor({
 				tokenType: tokenIssuer.tokenType,
 				privateKeys: [randomScalar()],

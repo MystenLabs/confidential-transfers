@@ -417,13 +417,13 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
 }
 
 /**
- * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: the decryption handles
- * for every (auditor, receiver) pair plus one `DdhProof` per (receiver, u32-limb). `option::some`
+ * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: the auditor's two
+ * u32-limb decryption handles per receiver plus one batched `DdhProof` per receiver. `option::some`
  * wrapping `auditors::new_auditor_package(handles, proofs)` when `data` is provided, `option::none`
- * when auditing is disabled. `data.handles` are flattened auditor-major (two u32-limb handles per
- * receiver, receiver order within each auditor), grouped into per-pair `[lo, hi]` handle vectors
- * on-chain by `decode::decryption_handles`. Built entirely through `decode` calls (no `makeMoveVec`),
- * so the nested proof/handle structure round-trips on chain.
+ * when auditing is disabled. `data.handles` are flattened in receiver order (two per receiver),
+ * grouped into per-receiver `[lo, hi]` handle vectors on-chain by `decode::decryption_handles`. Built
+ * entirely through `decode` calls (no `makeMoveVec`), so the nested proof/handle structure round-trips
+ * on chain.
  */
 export function buildAuditorPackageOption(
 	packageId: string,

@@ -24,8 +24,8 @@ export const AuditorPackage = new MoveStruct({
 		proofs: bcs.vector(nizk.DdhProof),
 	},
 });
-export const VerifiedDecryptionHandlesBatch = new MoveStruct({
-	name: `${$moduleName}::VerifiedDecryptionHandlesBatch`,
+export const VerifiedAuditorHandles = new MoveStruct({
+	name: `${$moduleName}::VerifiedAuditorHandles`,
 	fields: {
 		handles: bcs.vector(bcs.vector(group_ops.Element)),
 		pk: twisted_elgamal.PublicKey,

@@ -1181,7 +1181,7 @@ export class ContraClient {
 		// `undefined` (option::none) when auditing is disabled (no current keys).
 		const { currentPks } = await this.getAuditor(tokenType);
 		const auditorData = currentPks.length
-			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), currentPks, prepared)
+			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), currentPks[0], prepared)
 			: undefined;
 
 		return (tx: Transaction): TransactionResult => {
@@ -1398,21 +1398,19 @@ const MAX_BATCH_RECIPIENTS = 255;
 type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb[] };
 
 /**
- * Build the per-transfer auditor data for every auditor key. For each receiver, its four u16 limbs
- * fold into two u32 limbs, limb `l` having blinding `ρ̃_l = ρ_{2l} + 2^16 ρ_{2l+1}` and the receiver's
- * own u32 handle `D̃_l^recv = D_{2l} + 2^16 D_{2l+1}` (already tied to its range/consistency-proven
- * commitment by the receiver's proof). Each auditor key `pk` gets the handle `D̃_{i,l} = ρ̃_l · pk`; and
- * one batched `DdhNizk` per receiver proves those auditor handles re-key both limbs' `ρ̃_l` from
- * `pk_receiver` to the auditor keys — the two limbs share the bases `[pk_receiver, ...auditorPks]` (only
- * the blinding/images differ), so they fold into a single proof (one image vector `[D̃_l^recv, ...D̃_{i,l}]`
- * per limb; see `DdhNizk.proveBatch` / `nizk::verify_ddh_batch`).
+ * Build the per-transfer auditor data for the (single) auditor key. For each receiver, its four u16
+ * limbs fold into two u32 limbs, limb `l` having blinding `ρ̃_l = ρ_{2l} + 2^16 ρ_{2l+1}` and the
+ * receiver's own u32 handle `D̃_l^recv = D_{2l} + 2^16 D_{2l+1}` (already tied to its
+ * range/consistency-proven commitment by the receiver's proof). The auditor gets the handle
+ * `D̃_l = ρ̃_l · pk_auditor`, and one `DdhNizk` per (receiver, u32-limb) proves that handle re-keys `ρ̃_l`
+ * from `pk_receiver` to the auditor key — bases `[pk_receiver, pk_auditor]`, images `[D̃_l^recv, D̃_l]`.
  *
- * Returns the flattened handles auditor-major (per key, two per receiver in `prepared` order — matching
- * `verify_transfer`'s `handles[i*n + r]` indexing) and one proof per receiver (`proofs[r]`).
+ * Returns one `[lo, hi]` handle pair per receiver (flattened in `prepared` order) and one proof per
+ * (receiver, u32-limb) (`proofs[r * 2 + l]`).
  */
 function buildAuditorData(
 	dst: Uint8Array,
-	auditorPks: readonly PublicKey[],
+	auditorPk: PublicKey,
 	prepared: readonly PreparedAmount[],
 ): { handles: PublicKey[]; proofs: DdhNizk[] } {
 	const shift = 1n << 16n;
@@ -1433,19 +1431,20 @@ function buildAuditorData(
 			),
 		})),
 	}));
-	// Flat, auditor-major handles: for each key, `ρ̃_l · pk` over every receiver then limb
-	// (receiver-major, limb-minor) — consecutive pairs form each (auditor, receiver) `[lo, hi]`.
-	const handles = auditorPks.flatMap((pk) =>
-		perReceiver.flatMap((r) => r.limbs.map((limb) => mul(pk, limb.blinding))),
-	);
-	// One batched DDH per receiver folding its two u32 limbs, each anchored to the receiver's own u32
-	// handle: bases `[pk_receiver, ...auditorPks]`, one image vector per limb, witnesses `[ρ̃_0, ρ̃_1]`.
-	const proofs = perReceiver.map(({ receiverPk, limbs }) =>
-		DdhNizk.proveBatch(
-			dst,
-			limbs.map((limb) => limb.blinding),
-			[receiverPk, ...auditorPks],
-			limbs.map((limb) => [limb.receiverHandle, ...auditorPks.map((pk) => mul(pk, limb.blinding))]),
+	// One `[lo, hi]` handle pair per receiver (limb-minor): `ρ̃_l · pk_auditor`.
+	const handles = perReceiver.flatMap((r) => r.limbs.map((limb) => mul(auditorPk, limb.blinding)));
+	// One DDH per (receiver, u32-limb), anchored to the receiver's own u32 handle: bases
+	// `[pk_receiver, pk_auditor]`, images `[D̃_l^recv, D̃_l]`.
+	// TODO: the two per-limb DDHs share the bases and differ only in blinding; they could be folded
+	// into one batched DDH per receiver to halve the proof count.
+	const proofs = perReceiver.flatMap(({ receiverPk, limbs }) =>
+		limbs.map((limb) =>
+			DdhNizk.prove(
+				dst,
+				limb.blinding,
+				[receiverPk, auditorPk],
+				[limb.receiverHandle, mul(auditorPk, limb.blinding)],
+			),
 		),
 	);
 	return { handles, proofs };

@@ -197,7 +197,7 @@ export const TransferBatch = new MoveEnum({
 				coins: bcs.vector(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),
-				auditor_decryption_handles: bcs.vector(auditors.VerifiedDecryptionHandlesBatch),
+				auditor_decryption_handles: bcs.option(auditors.VerifiedAuditorHandles),
 			},
 		}),
 	},

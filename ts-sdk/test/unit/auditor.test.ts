@@ -16,15 +16,15 @@ const bcsLimb = (c: Ciphertext) => ({
 });
 
 /**
- * Build a decoded `TransferEvent` for a single receiver amount under one or more auditor keys,
+ * Build a decoded `TransferEvent` for a single receiver amount under an optional auditor key,
  * mirroring the on-chain event: `encrypted_amount_receiver` is the two u32-limb ciphertexts
  * `(Ǎ_k, Ď_k)` folded from the receiver's four u16 limbs (`Ǎ_k = C_{2k} + 2^16 C_{2k+1}`, and likewise
- * the handle), plus, per auditor key, the two u32-limb handles `D̃_k = ρ̃_k · pk`,
- * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (at matching indices in `auditor_pks` / `auditor_decryption_handles`).
+ * the handle), plus, when `auditorPk` is set, its two u32-limb handles `D̃_k = ρ̃_k · pk`,
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (`auditor_pk` / `auditor_decryption_handle`, both `null` otherwise).
  */
 function buildTransferEvent(
 	receiverPk: RistrettoPoint,
-	auditorPks: RistrettoPoint[],
+	auditorPk: RistrettoPoint | null,
 	amount: bigint,
 ): DecodedTransferEvent {
 	const shift = 1n << 16n;
@@ -51,12 +51,10 @@ function buildTransferEvent(
 			bcsLimb(foldU32(limbs[0], limbs[1])),
 			bcsLimb(foldU32(limbs[2], limbs[3])),
 		],
-		// Per auditor: this receiver's `[lo, hi]` pair, at the same index as `auditor_pks`.
-		auditor_decryption_handles: auditorPks.map((pk) => [
-			bcsPoint(mul(pk, rho0)),
-			bcsPoint(mul(pk, rho1)),
-		]),
-		auditor_pks: auditorPks.map((pk) => ({ element: bcsPoint(pk) })),
+		auditor_decryption_handle: auditorPk
+			? [bcsPoint(mul(auditorPk, rho0)), bcsPoint(mul(auditorPk, rho1))]
+			: null,
+		auditor_pk: auditorPk ? { element: bcsPoint(auditorPk) } : null,
 	};
 }
 
@@ -72,32 +70,24 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 	it('recovers a small amount from the transfer commitments and handles', () => {
 		const amount = 12345n;
 		expect(
-			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, [auditorPk], amount)),
+			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, auditorPk, amount)),
 		).toBe(amount);
 	});
 
 	it('recovers an amount spanning all four limbs (>2^32)', () => {
 		const amount = (7n << 48n) | (3n << 32n) | (9n << 16n) | 42n;
 		expect(
-			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, [auditorPk], amount)),
+			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, auditorPk, amount)),
 		).toBe(amount);
 	});
 
-	it('recovers its own key from a multi-auditor transfer, ignoring the others', () => {
-		const [otherPk1] = generateKeyPair();
-		const [otherPk2] = generateKeyPair();
-		// The held key sits at index 1 of three; its handles must be read from the same index.
-		const event = buildTransferEvent(receiverPk, [otherPk1, auditorPk, otherPk2], 999n);
-		expect(auditorFor().decryptTransferAmount(event)).toBe(999n);
-	});
-
 	it('returns null when the transfer carried no auditor data', () => {
-		const event = buildTransferEvent(receiverPk, [], 1n);
+		const event = buildTransferEvent(receiverPk, null, 1n);
 		expect(auditorFor().decryptTransferAmount(event)).toBeNull();
 	});
 
-	it('throws when it holds no key matching any transfer auditor_pk', () => {
-		const event = buildTransferEvent(receiverPk, [auditorPk], 500n);
+	it('throws when it holds no key matching the transfer auditor_pk', () => {
+		const event = buildTransferEvent(receiverPk, auditorPk, 500n);
 		const [, wrongSk] = generateKeyPair();
 		const wrongAuditor = new ContraAuditor({
 			tokenType: '0x2::sui::SUI',
@@ -116,14 +106,14 @@ describe('ContraAuditor.decryptTransferAmount', () => {
 			table,
 		});
 		// Matches each transfer's auditor_pk to the right held key.
-		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, [oldPk], 111n))).toBe(111n);
-		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, [newPk], 222n))).toBe(222n);
+		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, oldPk, 111n))).toBe(111n);
+		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, newPk, 222n))).toBe(222n);
 	});
 
 	it('addKey extends the set of decryptable keys', () => {
 		const [rotatedPk, rotatedSk] = generateKeyPair();
 		const auditor = auditorFor();
-		const event = buildTransferEvent(receiverPk, [rotatedPk], 777n);
+		const event = buildTransferEvent(receiverPk, rotatedPk, 777n);
 		expect(() => auditor.decryptTransferAmount(event)).toThrow(AuditorKeyNotHeldError);
 		auditor.addKey(rotatedSk);
 		expect(auditor.decryptTransferAmount(event)).toBe(777n);
