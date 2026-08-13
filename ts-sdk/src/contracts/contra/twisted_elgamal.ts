@@ -27,8 +27,7 @@ export interface NewArguments {
 export interface NewOptions {
 	package?: string;
 	arguments:
-		| NewArguments
-		| [ciphertext: TransactionArgument, decryptionHandle: TransactionArgument];
+		NewArguments | [ciphertext: TransactionArgument, decryptionHandle: TransactionArgument];
 }
 /**
  * Create a new Twisted ElGamal encryption from a given `ciphertext` and

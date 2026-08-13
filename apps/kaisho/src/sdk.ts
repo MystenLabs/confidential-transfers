@@ -70,11 +70,7 @@ export interface TokenConfig {
 /** Whether a wallet has registered the per-account and per-token-account
  *  objects. We need both to send/receive private transfers. */
 export type AccountStatus =
-	| 'loading'
-	| 'registered'
-	| 'needs-account'
-	| 'needs-token-account'
-	| 'error';
+	'loading' | 'registered' | 'needs-account' | 'needs-token-account' | 'error';
 
 /** Compiled Move bytecodes produced by `sui move build`, used by the
  *  issuer to publish a fresh deployment. */

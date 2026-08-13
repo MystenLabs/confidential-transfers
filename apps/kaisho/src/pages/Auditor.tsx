@@ -25,8 +25,7 @@ function loadStoredAuditorKey(configId: string, network: Network): string | null
 		if (!raw) return null;
 		const wallets = JSON.parse(raw) as Record<string, unknown>;
 		const entry = wallets[configId] as
-			| { auditorPrivateKey?: unknown; auditorKeys?: Array<{ privateKey?: unknown }> }
-			| undefined;
+			{ auditorPrivateKey?: unknown; auditorKeys?: Array<{ privateKey?: unknown }> } | undefined;
 		if (!entry) return null;
 		if (typeof entry.auditorPrivateKey === 'string') return entry.auditorPrivateKey;
 		const legacy = entry.auditorKeys?.[0]?.privateKey;
