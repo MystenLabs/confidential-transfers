@@ -118,8 +118,7 @@ public(package) fun verify_transfer(
 }
 
 /// Pop the next receiver's auditor data for its `TransferEvent`: its two `[lo, hi]` handles (empty when
-/// auditing is disabled) and the auditor key (`none` when disabled). Called once per receiver; since
-/// `handles` is stored reversed, popping the back yields receivers in submission order.
+/// auditing is disabled) and the auditor key (`none` when disabled). Called once per receiver.
 public(package) fun next(
     auditor_data: &mut Option<VerifiedAuditorHandles>,
 ): (vector<Element<G>>, Option<PublicKey>) {
@@ -128,9 +127,7 @@ public(package) fun next(
     (verified.handles.pop_back(), option::some(verified.pk))
 }
 
-/// Consume the auditor data (it has no `drop`, so this is the only way to discard it). In the normal
-/// flow every receiver's pair has been popped by `next` and only the key is left; on a failed batch
-/// it is discarded unpopped. Either way its contents are dropped.
+/// Consume the auditor data. This also works if not all handles were popped.
 public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
     if (auditor_data.is_none()) {
         auditor_data.destroy_none();

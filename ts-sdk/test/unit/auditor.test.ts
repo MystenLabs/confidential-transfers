@@ -17,9 +17,8 @@ const bcsLimb = (c: Ciphertext) => ({
 
 /**
  * Build a decoded `TransferEvent` for a single receiver amount under an optional auditor key,
- * mirroring the on-chain event: `encrypted_amount_receiver` is the two u32-limb ciphertexts
- * `(Ǎ_k, Ď_k)` folded from the receiver's four u16 limbs (`Ǎ_k = C_{2k} + 2^16 C_{2k+1}`, and likewise
- * the handle), plus, when `auditorPk` is set, its two u32-limb handles `D̃_k = ρ̃_k · pk`,
+ * mirroring the on-chain event: `encrypted_amount_receiver` is the receiver's four u16-limb ciphertexts,
+ * plus, when `auditorPk` is set, its two u32-limb handles `D̃_k = ρ̃_k · pk`,
  * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (`auditor_pk` is the key, `auditor_decryption_handles` its two
  * handles; `null` / empty otherwise).
  */
@@ -39,19 +38,17 @@ function buildTransferEvent(
 	const limbs = limbValues.map(
 		(v, j) => Ciphertext.encryptWithBlinding(receiverPk, v, blindings[j]).ciphertext,
 	);
-	// Fold each pair of u16 limbs into one u32-limb `Encryption` (ciphertext and handle alike).
-	const foldU32 = (lo: Ciphertext, hi: Ciphertext) =>
-		new Ciphertext(
-			lo.ciphertext.add(mul(hi.ciphertext, shift)),
-			lo.decryptionHandle.add(mul(hi.decryptionHandle, shift)),
-		);
+	// The auditor folds the four u16 commitments back into two u32 limbs, so its handles use the folded
+	// blindings `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`.
 	const rho0 = ristretto255.Point.Fn.create(blindings[0] + shift * blindings[1]);
 	const rho1 = ristretto255.Point.Fn.create(blindings[2] + shift * blindings[3]);
 	return {
-		encrypted_amount_receiver: [
-			bcsLimb(foldU32(limbs[0], limbs[1])),
-			bcsLimb(foldU32(limbs[2], limbs[3])),
-		],
+		encrypted_amount_receiver: {
+			l0: bcsLimb(limbs[0]),
+			l1: bcsLimb(limbs[1]),
+			l2: bcsLimb(limbs[2]),
+			l3: bcsLimb(limbs[3]),
+		},
 		auditor_decryption_handles: auditorPk
 			? [bcsPoint(mul(auditorPk, rho0)), bcsPoint(mul(auditorPk, rho1))]
 			: [],

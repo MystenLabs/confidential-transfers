@@ -61,7 +61,7 @@ export const TransferEvent = new MoveStruct({
 		batch_index: bcs.u8(),
 		receiver: bcs.Address,
 		receiver_pk: twisted_elgamal.PublicKey,
-		encrypted_amount_receiver: bcs.vector(twisted_elgamal.Encryption),
+		encrypted_amount_receiver: encrypted_amount.EncryptedAmount,
 		auditor_decryption_handles: bcs.vector(group_ops.Element),
 		auditor_pk: bcs.option(twisted_elgamal.PublicKey),
 		memo: bcs.vector(bcs.u8()),

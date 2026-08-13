@@ -20,7 +20,7 @@ import { ContraAuditor } from '../../src/auditor.js';
 import { TransferEvent as TransferEventBcs } from '../../src/contracts/contra/events.js';
 import { G, pointFromBcs, randomScalar } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
-import { Ciphertext } from '../../src/twisted_elgamal.js';
+import { EncryptedAmount } from '../../src/twisted_elgamal.js';
 import { createHarness, FUNDING_AMOUNT, ONE } from './harness.js';
 import type { ExpectedBalance, Harness } from './harness.js';
 
@@ -405,11 +405,14 @@ describe('core user flows (devnet)', () => {
 			expect(decodedTransfer.auditor_pk).not.toBeNull();
 			expect(decodedTransfer.auditor_decryption_handles).toHaveLength(2);
 
-			// The event carries the amount as two u32-limb ciphertexts.
-			expect(decodedTransfer.encrypted_amount_receiver).toHaveLength(2);
-			const receiverLimbs = decodedTransfer.encrypted_amount_receiver.map((e) =>
-				Ciphertext.fromBcs(e),
-			);
+			// The event carries the amount as the receiver's four u16-limb ciphertexts.
+			const receiverAmount = EncryptedAmount.fromBcs(decodedTransfer.encrypted_amount_receiver);
+			const receiverLimbs = [
+				receiverAmount.l0,
+				receiverAmount.l1,
+				receiverAmount.l2,
+				receiverAmount.l3,
+			];
 
 			// Auditor recovers the amount straight from the event, matching its key to `auditor_pk`.
 			const auditorAmount = auditor.decryptTransferAmount(decodedTransfer);

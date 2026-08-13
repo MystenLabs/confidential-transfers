@@ -23,9 +23,9 @@ export type DecodedTransferEvent = typeof TransferEvent.$inferType;
  * key; instead every transfer carries an auditor-readable copy of the amount under the token's auditor
  * key. A `TransferEvent` names that key in `auditor_pk` (`none` when auditing is disabled) and carries
  * its two `[lo, hi]` handles in `auditor_decryption_handles` (empty when auditing is disabled). The
- * event's `encrypted_amount_receiver` already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`), so
- * this pairs each with the matching handle to form a twisted ElGamal ciphertext and recovers the
- * amount.
+ * event's `encrypted_amount_receiver` carries the receiver's four u16-limb commitments; this folds
+ * them into the two u32-limb commitments (`Ǎ_0, Ǎ_1`), pairs each with the matching handle to form a
+ * twisted ElGamal ciphertext, and recovers the amount.
  *
  * A token has at most one auditor key at a time, but it can be rotated, and a transfer made before a
  * rotation stays encrypted under whichever key was current then (accepted on chain during the grace
@@ -68,9 +68,9 @@ export class ContraAuditor {
 	}
 
 	/**
-	 * Recover the transferred amount from a `TransferEvent`. If a held key matches the event's single
-	 * `auditor_pk` entry, pairs each of the event's two u32-limb commitments
-	 * (`encrypted_amount_receiver`) with the matching `auditor_decryption_handles` entry and BSGS-decrypts.
+	 * Recover the transferred amount from a `TransferEvent`. If a held key matches the event's
+	 * `auditor_pk`, folds the four u16 commitments in `encrypted_amount_receiver` into two u32-limb
+	 * commitments, pairs each with the matching `auditor_decryption_handles` handle, and BSGS-decrypts.
 	 *
 	 * @param event a decoded `TransferEvent` (`TransferEventBcs.parse`).
 	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
@@ -89,12 +89,14 @@ export class ContraAuditor {
 		}
 		const handles = event.auditor_decryption_handles;
 		if (handles.length !== 2) return null;
-		// The event already carries the two u32-limb commitments (`Ǎ_0, Ǎ_1`); pair each with the
-		// auditor's matching handle and BSGS-decrypt.
+		// Fold the receiver's four u16 commitments into the two u32-limb commitments
+		// (`Ǎ_k = C_{2k} + 2^16 C_{2k+1}`), pair each with the auditor's matching handle, and BSGS-decrypt.
+		const ea = event.encrypted_amount_receiver;
+		const shift = 1n << 16n;
+		const a0 = pointFromBcs(ea.l0.ciphertext).add(mul(pointFromBcs(ea.l1.ciphertext), shift));
+		const a1 = pointFromBcs(ea.l2.ciphertext).add(mul(pointFromBcs(ea.l3.ciphertext), shift));
 		const d0 = pointFromBcs(handles[0]);
 		const d1 = pointFromBcs(handles[1]);
-		const a0 = pointFromBcs(event.encrypted_amount_receiver[0].ciphertext);
-		const a1 = pointFromBcs(event.encrypted_amount_receiver[1].ciphertext);
 		const n0 = new Ciphertext(a0, d0).decrypt(held.privateKey, this.#table);
 		const n1 = new Ciphertext(a1, d1).decrypt(held.privateKey, this.#table);
 		return n0 + n1 * SHIFT_32;

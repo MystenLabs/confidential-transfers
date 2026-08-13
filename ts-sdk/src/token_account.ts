@@ -1,8 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { ristretto255 } from '@noble/curves/ed25519.js';
-
 import { dst, newSessionId, PROTOCOL_VERIFIED_DEC } from './helpers.js';
 import type { DdhNizk } from './nizk.js';
 import { assertNonZeroScalar, G, mul, randomScalar, type RistrettoPoint } from './ristretto255.js';
@@ -56,13 +54,14 @@ export class TokenAccount {
 	}
 
 	/**
-	 * Decrypt a transferred amount from a `TransferEvent`'s `encrypted_amount_receiver` — its two
-	 * u32-limb ciphertexts under this account's key — returning the u64 plaintext. Each limb `k` is
-	 * BSGS-decrypted and shifted into place: `n_0 + 2^32 * n_1`.
+	 * Decrypt a transferred amount from a `TransferEvent`'s `encrypted_amount_receiver` — its four
+	 * u16-limb ciphertexts under this account's key — returning the u64 plaintext. Each limb `k` is
+	 * BSGS-decrypted (a single table lookup, since each is `< 2^16`) and shifted into place:
+	 * `Σ_k n_k · 2^{16k}`.
 	 */
 	decryptAmount(limbs: Ciphertext[], table: DiscreteLogTable): bigint {
 		return limbs.reduce(
-			(acc, limb, k) => acc + (limb.decrypt(this.privateKey, table) << BigInt(32 * k)),
+			(acc, limb, k) => acc + (limb.decrypt(this.privateKey, table) << BigInt(16 * k)),
 			0n,
 		);
 	}
@@ -94,9 +93,9 @@ export class TokenAccount {
 
 	/**
 	 * Recover an outgoing batched-transfer amount this account sent, from the `TransferEvent`'s
-	 * `encrypted_amount_receiver` (two u32-limb ciphertexts), without any sender-keyed decryption
-	 * handle. The per-transfer blindings are re-derived from `seedPoint` (`P`) and each u32 limb's
-	 * blinding is the fold `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`; the value reads off the commitment alone.
+	 * `encrypted_amount_receiver` (four u16-limb ciphertexts), without any sender-keyed decryption
+	 * handle. The per-transfer blindings are re-derived from `seedPoint` (`P`) — limb `k` uses blinding
+	 * `ρ_k` — and the value reads off the commitment alone.
 	 */
 	recoverSentAmount(
 		limbs: Ciphertext[],
@@ -106,11 +105,8 @@ export class TokenAccount {
 	): bigint {
 		const randomness = recoverTransferRandomness(this.privateKey, seedPoint);
 		return limbs.reduce((acc, limb, k) => {
-			const blinding = ristretto255.Point.Fn.create(
-				randomness.blinding(batchIndex, 2 * k) +
-					(1n << 16n) * randomness.blinding(batchIndex, 2 * k + 1),
-			);
-			return acc + (limb.decryptWithBlinding(blinding, table) << BigInt(32 * k));
+			const blinding = randomness.blinding(batchIndex, k);
+			return acc + (limb.decryptWithBlinding(blinding, table) << BigInt(16 * k));
 		}, 0n);
 	}
 }
