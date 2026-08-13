@@ -101,9 +101,11 @@ public(package) fun verify_transfer(
     let n = receiver_amounts.length();
     // At most one auditor: exactly one `[lo, hi]` handle pair per receiver.
     assert!(handles.length() == n, EMismatchedAuditorCount);
-    let pk = if (verify_under(&handles, &proof, &auditors.current_pks, receiver_amounts, dst)) {
+    // Build the auditor ciphertexts once; `verify_under` reuses them for both key sets.
+    let encryptions = build_auditor_encryptions(&handles, receiver_amounts);
+    let pk = if (verify_under(&encryptions, &proof, &auditors.current_pks, dst)) {
         auditors.current_pks[0]
-    } else if (verify_under(&handles, &proof, &auditors.previous_pks, receiver_amounts, dst)) {
+    } else if (verify_under(&encryptions, &proof, &auditors.previous_pks, dst)) {
         auditors.previous_pks[0]
     } else {
         abort EAuditorProofFailed
@@ -132,26 +134,31 @@ public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
     let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
 }
 
-/// Whether the batched `ElGamalProof` verifies for the single key in `pks`. Returns false unless `pks`
-/// holds exactly one key and `handles` has one `[lo, hi]` pair per receiver. Pairs each receiver's two
-/// u32 commitments (`Ǎ_{r,l}`, derived homomorphically from its range-proven u16 limbs) with the
-/// sender-supplied auditor handle `D_{r,l}` into `2N` twisted-ElGamal ciphertexts under the auditor
-/// key, and checks that one witness-folded proof re-keys every commitment's blinding to its handle.
+/// Whether the batched `ElGamalProof` verifies for the single key in `pks` over the pre-built `2N`
+/// auditor ciphertexts. Returns false unless `pks` holds exactly one key. Each ciphertext pairs a
+/// receiver's u32 commitment (`Ǎ_{r,l}`, derived homomorphically from its range-proven u16 limbs) with
+/// the sender-supplied auditor handle `D_{r,l}`; one witness-folded proof re-keys every commitment's
+/// blinding to its handle under the auditor key.
 fun verify_under(
-    handles: &vector<vector<Element<G>>>,
+    encryptions: &vector<Encryption>,
     proof: &ElGamalProof,
     pks: &vector<PublicKey>,
-    receiver_amounts: &vector<WellFormedEncryptedAmount>,
     dst: vector<u8>,
 ): bool {
-    let n = receiver_amounts.length();
-    if (pks.length() != 1 || handles.length() != n) return false;
+    if (pks.length() != 1) return false;
+    proof.verify_elgamal(dst, &pks[0], encryptions)
+}
+
+fun build_auditor_encryptions(
+    handles: &vector<vector<Element<G>>>,
+    receiver_amounts: &vector<WellFormedEncryptedAmount>,
+): vector<Encryption> {
     let mut encryptions = vector<Encryption>[];
-    n.do!(|r| {
+    receiver_amounts.length().do!(|r| {
         let commitments = receiver_amounts[r].commitments_u32();
         U32_LIMBS.do!(
             |l| encryptions.push_back(twisted_elgamal::new(commitments[l], handles[r][l])),
         );
     });
-    proof.verify_elgamal(dst, &pks[0], &encryptions)
+    encryptions
 }
