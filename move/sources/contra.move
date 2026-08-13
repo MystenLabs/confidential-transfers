@@ -128,7 +128,7 @@ const DST_DDH: u8 = 0x01;
 const DST_ELGAMAL: u8 = 0x02;
 const DST_RANGE_PROOF_16: u8 = 0x04;
 const DST_BATCH_DDH: u8 = 0x06;
-const DST_AUDITOR_DDH: u8 = 0x07;
+const DST_AUDITOR_ELGAMAL: u8 = 0x07;
 
 // === Registries ===
 
@@ -584,7 +584,7 @@ public fun batched_transfer<T>(
         .verify_transfer(
             &receiver_amounts,
             auditor_package,
-            sender.session_id.dst(DST_AUDITOR_DDH),
+            sender.session_id.dst(DST_AUDITOR_ELGAMAL),
         );
 
     let withdrawn = sender
@@ -1052,7 +1052,7 @@ public fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
 public fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 
 #[test_only]
-public fun protocol_id_auditor_ddh(): u8 { DST_AUDITOR_DDH }
+public fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {

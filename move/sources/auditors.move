@@ -4,9 +4,9 @@
 module contra::auditors;
 
 use contra::{
-    encrypted_amount::{WellFormedEncryptedAmount, handles_u32},
-    nizk::{DdhProof, verify_ddh},
-    twisted_elgamal::PublicKey
+    encrypted_amount::{WellFormedEncryptedAmount, commitments_u32},
+    nizk::{ElGamalProof, verify_elgamal},
+    twisted_elgamal::{Self, PublicKey, Encryption}
 };
 use sui::{group_ops::Element, ristretto255::G};
 
@@ -20,7 +20,6 @@ const ETooManyAuditors: u64 = 4;
 
 // === Constants ===
 
-/// u32 limbs per amount — two `(lo, hi)` handles per receiver, each verified by its own DDH.
 const U32_LIMBS: u64 = 2;
 
 // === Main Type ===
@@ -36,18 +35,15 @@ public struct Auditors has store {
 }
 
 /// The per-transfer auditor data a sender attaches to a `batched_transfer`: for the single auditor
-/// key, one `[lo, hi]` decryption handle pair per receiver (`N` pairs), plus one `DdhProof` per
-/// (receiver, u32-limb) (`2N` proofs, receiver-major).
+/// key, one decryption handle pair per receiver, plus one witness-folded `ElGamalProof` over all
+/// auditor ciphertexts (each receiver's two u32 commitments paired with its two handles).
 public struct AuditorPackage has drop {
     handles: vector<vector<Element<G>>>,
-    proofs: vector<DdhProof>,
+    proof: ElGamalProof,
 }
 
-/// The verified auditor decryption handles for a batch: `handles` holds one `[lo, hi]` pair per
-/// receiver (stored reversed, so `next` pops the back in submission order), tagged with the auditor's
-/// `pk`. Held in `TransferBatch` state (as an `Option`, `none` when auditing is disabled). It has no
-/// `drop`, so it must be consumed explicitly: `next` pops each receiver's pair for its `TransferEvent`,
-/// and `destroy` takes the container when the batch is finalized.
+/// The verified auditor decryption handles for a batch: `handles` holds one pair per receiver (stored
+/// reversed, so `next` pops the back in submission order), tagged with the auditor's `pk`.
 public struct VerifiedAuditorHandles has store {
     handles: vector<vector<Element<G>>>,
     pk: PublicKey,
@@ -57,9 +53,9 @@ public struct VerifiedAuditorHandles has store {
 
 public fun new_auditor_package(
     handles: vector<vector<Element<G>>>,
-    proofs: vector<DdhProof>,
+    proof: ElGamalProof,
 ): AuditorPackage {
-    AuditorPackage { handles, proofs }
+    AuditorPackage { handles, proof }
 }
 
 public(package) fun new(pks: vector<PublicKey>): Auditors {
@@ -84,9 +80,9 @@ public(package) fun update(
 
 /// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
 /// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
-/// carries none). Every receiver's two per-limb DDHs must verify against `current_pks`, else against
-/// `previous_pks`. Returns the verified handles tagged with the auditor key that accepted them, or
-/// `none` when the transfer carries no auditor data.
+/// carries none). The batched `ElGamalProof` over all `2N` auditor ciphertexts must verify against
+/// `current_pks`, else against `previous_pks`. Returns the verified handles tagged with the auditor
+/// key that accepted them, or `none` when the transfer carries no auditor data.
 public(package) fun verify_transfer(
     auditors: &Auditors,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
@@ -101,13 +97,13 @@ public(package) fun verify_transfer(
         !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
         EUnexpectedAuditorData,
     );
-    let AuditorPackage { mut handles, proofs } = auditor_package.destroy_some();
+    let AuditorPackage { mut handles, proof } = auditor_package.destroy_some();
     let n = receiver_amounts.length();
-    // At most one auditor: exactly one `[lo, hi]` pair and one proof per receiver.
+    // At most one auditor: exactly one `[lo, hi]` handle pair per receiver.
     assert!(handles.length() == n, EMismatchedAuditorCount);
-    let pk = if (verify_under(&handles, &proofs, &auditors.current_pks, receiver_amounts, dst)) {
+    let pk = if (verify_under(&handles, &proof, &auditors.current_pks, receiver_amounts, dst)) {
         auditors.current_pks[0]
-    } else if (verify_under(&handles, &proofs, &auditors.previous_pks, receiver_amounts, dst)) {
+    } else if (verify_under(&handles, &proof, &auditors.previous_pks, receiver_amounts, dst)) {
         auditors.previous_pks[0]
     } else {
         abort EAuditorProofFailed
@@ -136,32 +132,26 @@ public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
     let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
 }
 
-/// Whether every receiver's per-limb DDH verifies for the single key in `pks`. Returns false unless
-/// `pks` holds exactly one key, `decryption_handles` has one `[lo, hi]` pair per receiver, and `proofs`
-/// has one per (receiver, u32-limb). For receiver `r`, limb `l`, the DDH proves the witness `ρ̃_{r,l}`
-/// maps the bases `[pk_receiver, pk_auditor]` to the images `[D_receiver, D_auditor]` — the receiver's
-/// own u32 handle (which its consistency proof already ties to the commitment) plus the auditor's
-/// re-keyed handle for that limb.
+/// Whether the batched `ElGamalProof` verifies for the single key in `pks`. Returns false unless `pks`
+/// holds exactly one key and `handles` has one `[lo, hi]` pair per receiver. Pairs each receiver's two
+/// u32 commitments (`Ǎ_{r,l}`, derived homomorphically from its range-proven u16 limbs) with the
+/// sender-supplied auditor handle `D_{r,l}` into `2N` twisted-ElGamal ciphertexts under the auditor
+/// key, and checks that one witness-folded proof re-keys every commitment's blinding to its handle.
 fun verify_under(
-    decryption_handles: &vector<vector<Element<G>>>,
-    proofs: &vector<DdhProof>,
+    handles: &vector<vector<Element<G>>>,
+    proof: &ElGamalProof,
     pks: &vector<PublicKey>,
     receiver_amounts: &vector<WellFormedEncryptedAmount>,
     dst: vector<u8>,
 ): bool {
     let n = receiver_amounts.length();
-    if (pks.length() != 1 || decryption_handles.length() != n || proofs.length() != n * U32_LIMBS) {
-        return false
-    };
-    let auditor_pk = *pks[0].as_element();
-    // TODO: the two per-limb DDHs share the bases `[pk_receiver, pk_auditor]` and differ only in
-    // blinding. They could be folded into one batched DDH per receiver to halve the proof count.
-    vector::tabulate!(n, |r| {
-        let receiver_handles = receiver_amounts[r].handles_u32();
-        let bases = vector[*receiver_amounts[r].pk().as_element(), auditor_pk];
-        vector::tabulate!(U32_LIMBS, |l| {
-            let images = vector[receiver_handles[l], decryption_handles[r][l]];
-            proofs[r * U32_LIMBS + l].verify_ddh(dst, &bases, &images)
-        }).all!(|ok| *ok)
-    }).all!(|ok| *ok)
+    if (pks.length() != 1 || handles.length() != n) return false;
+    let mut encryptions = vector<Encryption>[];
+    n.do!(|r| {
+        let commitments = receiver_amounts[r].commitments_u32();
+        U32_LIMBS.do!(
+            |l| encryptions.push_back(twisted_elgamal::new(commitments[l], handles[r][l])),
+        );
+    });
+    proof.verify_elgamal(dst, &pks[0], &encryptions)
 }

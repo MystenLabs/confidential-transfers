@@ -21,7 +21,7 @@ export const AuditorPackage = new MoveStruct({
 	name: `${$moduleName}::AuditorPackage`,
 	fields: {
 		handles: bcs.vector(bcs.vector(group_ops.Element)),
-		proofs: bcs.vector(nizk.DdhProof),
+		proof: nizk.ElGamalProof,
 	},
 });
 export const VerifiedAuditorHandles = new MoveStruct({
@@ -33,18 +33,18 @@ export const VerifiedAuditorHandles = new MoveStruct({
 });
 export interface NewAuditorPackageArguments {
 	handles: TransactionArgument;
-	proofs: TransactionArgument;
+	proof: TransactionArgument;
 }
 export interface NewAuditorPackageOptions {
 	package?: string;
 	arguments:
 		| NewAuditorPackageArguments
-		| [handles: TransactionArgument, proofs: TransactionArgument];
+		| [handles: TransactionArgument, proof: TransactionArgument];
 }
 export function newAuditorPackage(options: NewAuditorPackageOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<null>>', 'vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['handles', 'proofs'];
+	const argumentsTypes = ['vector<vector<null>>', null] satisfies (string | null)[];
+	const parameterNames = ['handles', 'proof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

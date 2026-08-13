@@ -52,20 +52,6 @@ public fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
     nizk::new_ddh_proof(g_range(&parts, 0, n), scalar_from_bytes(parts.borrow(n)))
 }
 
-/// Build a vector of `DdhProof`s, each with `num_commitments` point-encoded commitments followed by
-/// one scalar `z` (so `num_commitments + 1` `parts` per proof, concatenated). Aborts unless `parts`
-/// divides evenly.
-public fun ddh_proofs(parts: vector<vector<u8>>, num_commitments: u64): vector<DdhProof> {
-    let per = num_commitments + 1;
-    vector::tabulate!(
-        parts.length() / per,
-        |i| nizk::new_ddh_proof(
-            g_range(&parts, i * per, num_commitments),
-            scalar_from_bytes(parts.borrow(i * per + num_commitments)),
-        ),
-    )
-}
-
 public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
     elgamal_proof_at(&parts, 0)
 }

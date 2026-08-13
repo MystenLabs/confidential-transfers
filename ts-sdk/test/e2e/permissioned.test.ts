@@ -30,7 +30,7 @@ import {
 	buildPublicKeyVector,
 	buildWellFormedProof,
 	point,
-	PROTOCOL_AUDITOR_DDH,
+	PROTOCOL_AUDITOR_ELGAMAL,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_RANGE_PROOF_16,
@@ -143,33 +143,36 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		);
 
 		// Per-transfer auditor data for the single receiver: `auditors::verify_transfer` runs before the
-		// balance proof, so valid handles + proofs must be present for the transfer to reach the
+		// balance proof, so valid handles + proof must be present for the transfer to reach the
 		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor):
-		// one DDH per u32 limb, anchored to the receiver's own u32 handle.
+		// pair each u32 commitment with its auditor handle and prove all `2N` with one folded ElGamal.
 		const auditorPk = tokenIssuer.auditorPublicKey!;
-		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_DDH);
+		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL);
 		const shift = 1n << 16n;
 		const limbData = (
 			[
 				[0, 1],
 				[2, 3],
 			] as const
-		).map(([lo, hi]) => ({
-			blinding: ristretto255.Point.Fn.create(
+		).map(([lo, hi]) => {
+			const blinding = ristretto255.Point.Fn.create(
 				encAmountReceiver[lo].blinding + shift * encAmountReceiver[hi].blinding,
-			),
-			receiverHandle: encAmountReceiver[lo].ciphertext.decryptionHandle.add(
-				mul(encAmountReceiver[hi].ciphertext.decryptionHandle, shift),
-			),
-		}));
-		const auditorHandles = limbData.map((d) => mul(auditorPk, d.blinding));
-		const auditorProofs = limbData.map((d) =>
-			DdhNizk.prove(
-				auditorDst,
-				d.blinding,
-				[receiverPk, auditorPk],
-				[d.receiverHandle, mul(auditorPk, d.blinding)],
-			),
+			);
+			const value = encAmountReceiver[lo].value + shift * encAmountReceiver[hi].value;
+			const commitment = encAmountReceiver[lo].ciphertext.ciphertext.add(
+				mul(encAmountReceiver[hi].ciphertext.ciphertext, shift),
+			);
+			const handle = mul(auditorPk, blinding);
+			return {
+				handle,
+				instance: { ciphertext: new Ciphertext(commitment, handle), value, blinding },
+			};
+		});
+		const auditorHandles = limbData.map((d) => d.handle);
+		const auditorProof = ElGamalNizk.prove(
+			auditorDst,
+			auditorPk,
+			limbData.map((d) => d.instance),
 		);
 
 		const { batchRangeProver } = await getBulletproofs();
@@ -220,7 +223,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
 					auditorPackage: buildAuditorPackageOption(pid, {
 						handles: auditorHandles,
-						proofs: auditorProofs,
+						proof: auditorProof,
 					}),
 				},
 			}),
