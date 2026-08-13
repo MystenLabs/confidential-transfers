@@ -16,7 +16,7 @@ export {
 export { TokenAccount } from './token_account.js';
 export { G, randomScalar, scalarToBytes, pointFromBcs } from './ristretto255.js';
 export type { RistrettoPoint } from './ristretto255.js';
-export { point } from './helpers.js';
+export { point, getConfidentialTokenId } from './helpers.js';
 export { DdhNizk, ElGamalNizk } from './nizk.js';
 export type {
 	AccountStatus,
