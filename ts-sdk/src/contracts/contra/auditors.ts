@@ -38,8 +38,7 @@ export interface NewAuditorPackageArguments {
 export interface NewAuditorPackageOptions {
 	package?: string;
 	arguments:
-		| NewAuditorPackageArguments
-		| [handles: TransactionArgument, proof: TransactionArgument];
+		NewAuditorPackageArguments | [handles: TransactionArgument, proof: TransactionArgument];
 }
 export function newAuditorPackage(options: NewAuditorPackageOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

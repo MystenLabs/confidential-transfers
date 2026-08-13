@@ -256,8 +256,7 @@ export function authorizeWithWitness<W extends BcsType<any>>(
 ) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, 'u8', 'address', `${options.typeArguments[1]}`] satisfies (
-		| string
-		| null
+		string | null
 	)[];
 	const parameterNames = ['ct', 'operation', 'owner', 'witness'];
 	return (tx: Transaction) =>
@@ -858,8 +857,7 @@ export interface AddToBatchOptions {
 export function addToBatch(options: AddToBatchOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, 'vector<u8>', '0x2::deny_list::DenyList'] satisfies (
-		| string
-		| null
+		string | null
 	)[];
 	const parameterNames = ['batch', 'receiver', 'memo'];
 	return (tx: Transaction) =>

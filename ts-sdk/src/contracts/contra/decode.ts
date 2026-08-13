@@ -59,8 +59,7 @@ export interface AuditorDecryptionHandlesArguments {
 export interface AuditorDecryptionHandlesOptions {
 	package?: string;
 	arguments:
-		| AuditorDecryptionHandlesArguments
-		| [parts: RawTransactionArgument<Array<Array<number>>>];
+		AuditorDecryptionHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
 /**
  * Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts`
