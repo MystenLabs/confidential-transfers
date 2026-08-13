@@ -14,28 +14,6 @@ use fastcrypto::pedersen::{Blinding, PedersenCommitment};
 use fastcrypto::serde_helpers::ToFromByteArray;
 use wasm_bindgen::prelude::*;
 
-/// Output of a range proof: the serialized proof and the 32-byte compressed
-/// Pedersen commitment `V = value * H + blinding * G` under fastcrypto's
-/// generators.
-#[wasm_bindgen]
-pub struct RangeProofResult {
-    proof_bytes: Vec<u8>,
-    commitment_bytes: Vec<u8>,
-}
-
-#[wasm_bindgen]
-impl RangeProofResult {
-    #[wasm_bindgen(getter)]
-    pub fn proof(&self) -> Vec<u8> {
-        self.proof_bytes.clone()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn commitment(&self) -> Vec<u8> {
-        self.commitment_bytes.clone()
-    }
-}
-
 /// Output of a batched range proof: the single aggregate proof plus the
 /// `32 * values.len()` bytes of concatenated Pedersen commitments, one per
 /// input value, in order.
@@ -57,30 +35,6 @@ impl BatchRangeProofResult {
     pub fn commitments(&self) -> Vec<u8> {
         self.commitments_bytes.clone()
     }
-}
-
-/// Prove `value ∈ [0, 2^bit_size)` using fastcrypto's `RangeProof::prove`.
-///
-/// `bit_size` must be one of 8, 16, 32, 64. `blinding` is a 32-byte canonical
-/// ristretto255 scalar. `dst` is the domain-separation tag bound into the proof
-/// transcript; the verifier must supply the same tag. Returns the serialized
-/// proof and the 32-byte Pedersen commitment.
-#[wasm_bindgen(js_name = rangeProof)]
-pub fn range_proof(
-    value: u64,
-    blinding: &[u8],
-    bit_size: u32,
-    dst: &[u8],
-) -> Result<RangeProofResult, JsError> {
-    let range = range_from_bits(bit_size)?;
-    let blinding = blinding_from_bytes(blinding)?;
-    let proof = RangeProof::prove(value, &blinding, &range, dst, &mut rand::thread_rng())
-        .map_err(|e| JsError::new(&format!("prove failed: {:?}", e)))?;
-    let commitment = PedersenCommitment::new(&RistrettoScalar::from(value), &blinding);
-    Ok(RangeProofResult {
-        proof_bytes: proof.to_bytes(),
-        commitment_bytes: commitment.0.to_byte_array().to_vec(),
-    })
 }
 
 /// Aggregate range proof that `values[i] ∈ [0, 2^bit_size)` for every `i`,
@@ -121,23 +75,6 @@ pub fn batch_range_proof(
         proof_bytes: proof.to_bytes(),
         commitments_bytes,
     })
-}
-
-/// Verify a fastcrypto range proof that the value committed in `commitment`
-/// lies in `[0, 2^bit_size)`. `dst` must match the tag used when proving.
-/// Returns `true` if the proof verifies, `false` otherwise.
-#[wasm_bindgen(js_name = verifyRangeProof)]
-pub fn verify_range_proof(
-    proof: &[u8],
-    commitment: &[u8],
-    bit_size: u32,
-    dst: &[u8],
-) -> Result<bool, JsError> {
-    let range = range_from_bits(bit_size)?;
-    let proof = RangeProof::from_bytes(proof)
-        .map_err(|e| JsError::new(&format!("invalid proof bytes: {:?}", e)))?;
-    let commitment = commitment_from_bytes(commitment)?;
-    Ok(proof.verify(&commitment, &range, dst, &mut rand::thread_rng()).is_ok())
 }
 
 /// Verify an aggregate range proof that every commitment encodes a value in
