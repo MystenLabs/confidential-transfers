@@ -183,7 +183,7 @@ export function Auditor() {
 				</div>
 				<p className="mt-1.5 text-xs text-zinc-500">
 					Holding the token's auditor key. Transfer amounts below are decrypted from on-chain
-					events.
+					events; wraps and unwraps are already public.
 				</p>
 			</div>
 

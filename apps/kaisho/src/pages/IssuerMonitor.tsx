@@ -678,7 +678,7 @@ export function IssuerMonitor() {
 
 			<div className="card p-5">
 				<p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
-					Not yet supported
+					Not yet supported in Kaisho
 				</p>
 				<ul className="list-disc pl-4 text-[11px] text-zinc-500">
 					<li>Seizing / burning a user's confidential balance.</li>
