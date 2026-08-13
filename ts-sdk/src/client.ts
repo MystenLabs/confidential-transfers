@@ -34,7 +34,7 @@ import {
 	getConfidentialTokenId,
 	getTokenAccountId,
 	point,
-	PROTOCOL_AUDITOR_DDH,
+	PROTOCOL_AUDITOR_ELGAMAL,
 	PROTOCOL_BATCH_DDH,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
@@ -1181,7 +1181,7 @@ export class ContraClient {
 		// `undefined` (option::none) when auditing is disabled (no current keys).
 		const { currentPks } = await this.getAuditor(tokenType);
 		const auditorData = currentPks.length
-			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_DDH), currentPks[0], prepared)
+			? buildAuditorData(tokenAccount.dst(PROTOCOL_AUDITOR_ELGAMAL), currentPks[0], prepared)
 			: undefined;
 
 		return (tx: Transaction): TransactionResult => {
@@ -1399,55 +1399,50 @@ type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb
 
 /**
  * Build the per-transfer auditor data for the (single) auditor key. For each receiver, its four u16
- * limbs fold into two u32 limbs, limb `l` having blinding `ρ̃_l = ρ_{2l} + 2^16 ρ_{2l+1}` and the
- * receiver's own u32 handle `D̃_l^recv = D_{2l} + 2^16 D_{2l+1}` (already tied to its
- * range/consistency-proven commitment by the receiver's proof). The auditor gets the handle
- * `D̃_l = ρ̃_l · pk_auditor`, and one `DdhNizk` per (receiver, u32-limb) proves that handle re-keys `ρ̃_l`
- * from `pk_receiver` to the auditor key — bases `[pk_receiver, pk_auditor]`, images `[D̃_l^recv, D̃_l]`.
+ * limbs fold into two u32 limbs, limb `l` having value `n_l = m_{2l} + 2^16 m_{2l+1}`, blinding
+ * `ρ̃_l = ρ_{2l} + 2^16 ρ_{2l+1}`, and key-independent commitment `Ǎ_l = C_{2l} + 2^16 C_{2l+1}` — the
+ * receiver's own range/consistency-proven commitment, which the chain re-derives from the transferred
+ * limbs. The auditor gets the handle `D̃_l = ρ̃_l · pk_auditor`, making `(Ǎ_l, D̃_l)` a twisted-ElGamal
+ * encryption of `n_l` under the auditor key. One witness-folded `ElGamalNizk` over all `2N` such
+ * ciphertexts proves every handle re-keys its commitment's blinding to the auditor key at constant size.
  *
- * Returns one `[lo, hi]` handle pair per receiver (flattened in `prepared` order) and one proof per
- * (receiver, u32-limb) (`proofs[r * 2 + l]`).
+ * Returns one `[lo, hi]` handle pair per receiver (flattened in `prepared` order) and the single proof.
  */
 function buildAuditorData(
 	dst: Uint8Array,
 	auditorPk: PublicKey,
 	prepared: readonly PreparedAmount[],
-): { handles: PublicKey[]; proofs: DdhNizk[] } {
+): { handles: PublicKey[]; proof: ElGamalNizk } {
 	const shift = 1n << 16n;
-	// Per receiver: its two u32 limbs (blinding ρ̃_l + the receiver's own u32 handle D̃_l^recv).
-	const perReceiver = prepared.map((p) => ({
-		receiverPk: p.receiverPk,
-		limbs: (
+	// Per receiver, per u32 limb (limb-minor): the auditor ciphertext `(Ǎ_l, D̃_l)` and its opening.
+	const perLimb = prepared.flatMap((p) =>
+		(
 			[
 				[0, 1],
 				[2, 3],
 			] as const
-		).map(([lo, hi]) => ({
-			blinding: ristretto255.Point.Fn.create(
+		).map(([lo, hi]) => {
+			const blinding = ristretto255.Point.Fn.create(
 				p.encAmountReceiver[lo].blinding + shift * p.encAmountReceiver[hi].blinding,
-			),
-			receiverHandle: p.encAmountReceiver[lo].ciphertext.decryptionHandle.add(
-				mul(p.encAmountReceiver[hi].ciphertext.decryptionHandle, shift),
-			),
-		})),
-	}));
-	// One `[lo, hi]` handle pair per receiver (limb-minor): `ρ̃_l · pk_auditor`.
-	const handles = perReceiver.flatMap((r) => r.limbs.map((limb) => mul(auditorPk, limb.blinding)));
-	// One DDH per (receiver, u32-limb), anchored to the receiver's own u32 handle: bases
-	// `[pk_receiver, pk_auditor]`, images `[D̃_l^recv, D̃_l]`.
-	// TODO: the two per-limb DDHs share the bases and differ only in blinding; they could be folded
-	// into one batched DDH per receiver to halve the proof count.
-	const proofs = perReceiver.flatMap(({ receiverPk, limbs }) =>
-		limbs.map((limb) =>
-			DdhNizk.prove(
-				dst,
-				limb.blinding,
-				[receiverPk, auditorPk],
-				[limb.receiverHandle, mul(auditorPk, limb.blinding)],
-			),
-		),
+			);
+			const value = p.encAmountReceiver[lo].value + shift * p.encAmountReceiver[hi].value;
+			const commitment = p.encAmountReceiver[lo].ciphertext.ciphertext.add(
+				mul(p.encAmountReceiver[hi].ciphertext.ciphertext, shift),
+			);
+			const handle = mul(auditorPk, blinding);
+			return {
+				handle,
+				instance: { ciphertext: new Ciphertext(commitment, handle), value, blinding },
+			};
+		}),
 	);
-	return { handles, proofs };
+	const handles = perLimb.map((l) => l.handle);
+	const proof = ElGamalNizk.prove(
+		dst,
+		auditorPk,
+		perLimb.map((l) => l.instance),
+	);
+	return { handles, proof };
 }
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */

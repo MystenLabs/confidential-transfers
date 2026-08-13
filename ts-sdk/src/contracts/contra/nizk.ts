@@ -8,13 +8,6 @@ import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
 import * as group_ops from './deps/sui/group_ops.js';
 
 const $moduleName = '@local-pkg/contra::nizk';
-export const DdhProof = new MoveStruct({
-	name: `${$moduleName}::DdhProof`,
-	fields: {
-		commitments: bcs.vector(group_ops.Element),
-		z: group_ops.Element,
-	},
-});
 export const ElGamalProof = new MoveStruct({
 	name: `${$moduleName}::ElGamalProof`,
 	fields: {
@@ -22,6 +15,13 @@ export const ElGamalProof = new MoveStruct({
 		b: group_ops.Element,
 		z1: group_ops.Element,
 		z2: group_ops.Element,
+	},
+});
+export const DdhProof = new MoveStruct({
+	name: `${$moduleName}::DdhProof`,
+	fields: {
+		commitments: bcs.vector(group_ops.Element),
+		z: group_ops.Element,
 	},
 });
 export interface NewDdhProofArguments {

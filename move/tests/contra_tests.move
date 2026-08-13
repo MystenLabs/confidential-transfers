@@ -506,19 +506,18 @@ fun test_batched_transfer_with_auditor() {
         &sk_1,
     );
 
-    // The auditor's handles + one batched DDH per receiver, for the two receiver amounts (both
-    // limb-0-only). `verify_transfer` checks every DDH.
+    // The auditor's handles + one witness-folded ElGamal proof over all auditor ciphertexts, for the
+    // two receiver amounts (both limb-0-only). `verify_transfer` checks the single proof.
     let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_auditor_ddh(),
+        contra::protocol_id_auditor_elgamal(),
     );
-    let (handles, proofs) = build_auditor_data(
+    let (handles, proof) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
-        &vector[pk_2, pk_3],
         &auditor_pk,
         auditor_dst,
     );
-    let auditor_package = auditors::new_auditor_package(handles, proofs);
+    let auditor_package = auditors::new_auditor_package(handles, proof);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1
@@ -677,14 +676,13 @@ fun test_batched_transfer_auditor_rotation_grace() {
 
     // Auditor data built under `auditor_pk` — now the previous key. It fails to verify under
     // `current_pks` (the new key) and is accepted under `previous_pks` within the grace.
-    let (auditor_handles, auditor_proofs) = build_auditor_data(
+    let (auditor_handles, auditor_proof) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
-        &vector[pk_2, pk_3],
         &auditor_pk,
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_ddh()),
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
     );
-    let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proofs);
+    let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proof);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     account_1
@@ -763,8 +761,8 @@ fun auditor_enabled_requires_data() {
 fun auditor_disabled_forbids_data() {
     let auditor = auditors::new(vector[]);
     let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
-    // A trivial (empty) package suffices: the presence check aborts before the proofs are inspected.
-    let package = auditors::new_auditor_package(vector[], vector[]);
+    // A trivial (empty) package suffices: the presence check aborts before the proof is inspected.
+    let package = auditors::new_auditor_package(vector[], nizk::default_elgamal_proof());
     auditors::destroy(auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst"));
     unit_test::destroy(auditor);
 }
@@ -912,60 +910,44 @@ fun total_consistency_proof_for_testing(
     )
 }
 
-/// Build the decryption handles and one batched `DdhProof` per receiver for a batch of limb-0-only
-/// receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`, under `receiver_pks[i]`) and
-/// the single `auditor_pk`. Each amount's low u32 limb has blinding `r_i` and receiver handle
-/// `r_i*pk_receiver`; the high u32 limb is zero. The returned handles are one `[lo, hi]` pair per
-/// amount (`[r_i*auditor_pk, identity]`), matching `verify_transfer`, and one DDH per (receiver,
-/// u32-limb): limb 0 witness `r_i` with images `[r_i*pk_receiver, r_i*auditor_pk]`, limb 1 (the zero
-/// high limb) witness 0 with all-identity images.
+/// Build the decryption handles and one witness-folded `ElGamalProof` over all auditor ciphertexts for
+/// a batch of limb-0-only receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`) under
+/// the single `auditor_pk`. Each amount's low u32 limb is the ciphertext `(r_i*g + v_i*h, r_i*auditor_pk)`
+/// — its commitment is key-independent, so it equals the receiver's own u32 commitment — and its high
+/// u32 limb is the zero ciphertext. The returned handles are one `[lo, hi]` pair per amount
+/// (`[r_i*auditor_pk, identity]`), matching `verify_transfer`, and the proof covers the `2N` ciphertexts
+/// in receiver-major, limb-minor order.
 fun build_auditor_data(
     values: vector<u64>,
     blindings: vector<u64>,
-    receiver_pks: &vector<Element<G>>,
     auditor_pk: &Element<G>,
     dst: vector<u8>,
-): (vector<vector<Element<G>>>, vector<nizk::DdhProof>) {
-    // Per amount, the `[lo, hi]` pair `[r_i*auditor_pk, identity]`.
+): (vector<vector<Element<G>>>, nizk::ElGamalProof) {
     let mut handles = vector[];
+    let mut encryptions = vector[];
+    let mut proof_values = vector[];
+    let mut proof_blindings = vector[];
     values.length().do!(|i| {
-        let lo =
-            *encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]).decryption_handle();
-        handles.push_back(vector[lo, ristretto255::g_identity()]);
+        let lo = encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]);
+        let hi = encrypt_trivial_for_testing(0, auditor_pk, 0);
+        handles.push_back(vector[*lo.decryption_handle(), *hi.decryption_handle()]);
+        encryptions.push_back(lo);
+        encryptions.push_back(hi);
+        proof_values.push_back(values[i]);
+        proof_values.push_back(0);
+        proof_blindings.push_back(blindings[i]);
+        proof_blindings.push_back(0);
     });
-    // Two DDHs per receiver over the bases `[pk_receiver, auditor_pk]` (receiver-major, limb-minor).
-    let mut proofs = vector[];
-    values.length().do!(|r| {
-        let pk_recv = receiver_pks[r];
-        let br = blindings[r];
-        let bases = vector[pk_recv, *auditor_pk];
-        // Limb 0: witness `r_i`, images `[r_i*pk_receiver, r_i*auditor_pk]`.
-        let images_lo = vector[
-            *encrypt_trivial_for_testing(values[r], &pk_recv, br).decryption_handle(),
-            *encrypt_trivial_for_testing(values[r], auditor_pk, br).decryption_handle(),
-        ];
-        proofs.push_back(
-            nizk::prove_ddh(
-                dst,
-                &ristretto255::scalar_from_u64(br),
-                &bases,
-                &images_lo,
-                &ristretto255::scalar_from_u64(97531),
-            ),
-        );
-        // Limb 1: the zero high limb, witness 0, all-identity images.
-        let images_hi = vector[ristretto255::g_identity(), ristretto255::g_identity()];
-        proofs.push_back(
-            nizk::prove_ddh(
-                dst,
-                &ristretto255::scalar_from_u64(0),
-                &bases,
-                &images_hi,
-                &ristretto255::scalar_from_u64(86420),
-            ),
-        );
-    });
-    (handles, proofs)
+    let proof = nizk::prove_elgamal(
+        dst,
+        auditor_pk,
+        &encryptions,
+        &proof_values,
+        &proof_blindings,
+        &ristretto255::scalar_from_u64(97531),
+        &ristretto255::scalar_from_u64(86420),
+    );
+    (handles, proof)
 }
 
 /// Build a single-value `EncryptedAmount` (`value` in limb 0, zero elsewhere) under `pk`, with

@@ -53,7 +53,7 @@ export const PROTOCOL_RANGE_PROOF_16 = 0x04;
 /** Domain-separation byte for the batched re-keying DDH proof (Π_rekey). */
 export const PROTOCOL_BATCH_DDH = 0x06;
 /** Domain-separation byte for the per-transfer auditor DDH proofs. */
-export const PROTOCOL_AUDITOR_DDH = 0x07;
+export const PROTOCOL_AUDITOR_ELGAMAL = 0x07;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.
@@ -212,24 +212,6 @@ export function buildDdhProof(packageId: string, proof: DdhNizk) {
 				...proof.commitments.map((c) => c.toBytes()),
 				numberToBytesLE(proof.z, 32),
 			]),
-		},
-	});
-}
-
-/**
- * Serialize a vector of equal-length `DdhNizk`s into an on-chain `vector<DdhProof>` via
- * `decode::ddh_proofs`: each proof's commitments (all `numCommitments` of them) followed by its scalar
- * `z`, concatenated. Every proof must have the same commitment count (here `1 + auditor count`).
- */
-export function buildDdhProofs(packageId: string, proofs: DdhNizk[]) {
-	const numCommitments = proofs.length > 0 ? proofs[0].commitments.length : 0;
-	return decodeContracts.ddhProofs({
-		package: packageId,
-		arguments: {
-			parts: elemParts(
-				proofs.flatMap((p) => [...p.commitments.map((c) => c.toBytes()), numberToBytesLE(p.z, 32)]),
-			),
-			numCommitments,
 		},
 	});
 }
@@ -418,16 +400,16 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
 
 /**
  * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: the auditor's two
- * u32-limb decryption handles per receiver plus one batched `DdhProof` per receiver. `option::some`
- * wrapping `auditors::new_auditor_package(handles, proofs)` when `data` is provided, `option::none`
- * when auditing is disabled. `data.handles` are flattened in receiver order (two per receiver),
- * grouped into per-receiver `[lo, hi]` handle vectors on-chain by `decode::auditor_decryption_handles`. Built
- * entirely through `decode` calls (no `makeMoveVec`), so the nested proof/handle structure round-trips
- * on chain.
+ * u32-limb decryption handles per receiver plus one witness-folded `ElGamalProof` over all `2N` auditor
+ * ciphertexts. `option::some` wrapping `auditors::new_auditor_package(handles, proof)` when `data` is
+ * provided, `option::none` when auditing is disabled. `data.handles` are flattened in receiver order
+ * (two per receiver), grouped into per-receiver `[lo, hi]` handle vectors on-chain by
+ * `decode::auditor_decryption_handles`. Built entirely through `decode` calls (no `makeMoveVec`), so the
+ * nested proof/handle structure round-trips on chain.
  */
 export function buildAuditorPackageOption(
 	packageId: string,
-	data?: { handles: RistrettoPoint[]; proofs: DdhNizk[] },
+	data?: { handles: RistrettoPoint[]; proof: ElGamalNizk },
 ) {
 	const optionType = [`${packageId}::auditors::AuditorPackage`];
 	if (data) {
@@ -443,7 +425,7 @@ export function buildAuditorPackageOption(
 								package: packageId,
 								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
 							}),
-							proofs: buildDdhProofs(packageId, data.proofs),
+							proof: buildElGamalProof(packageId, data.proof),
 						},
 					}),
 				],

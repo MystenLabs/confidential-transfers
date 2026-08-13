@@ -136,36 +136,6 @@ export function ddhProof(options: DdhProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface DdhProofsArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-	numCommitments: RawTransactionArgument<number | bigint>;
-}
-export interface DdhProofsOptions {
-	package?: string;
-	arguments:
-		| DdhProofsArguments
-		| [
-				parts: RawTransactionArgument<Array<Array<number>>>,
-				numCommitments: RawTransactionArgument<number | bigint>,
-		  ];
-}
-/**
- * Build a vector of `DdhProof`s, each with `num_commitments` point-encoded
- * commitments followed by one scalar `z` (so `num_commitments + 1` `parts` per
- * proof, concatenated). Aborts unless `parts` divides evenly.
- */
-export function ddhProofs(options: DdhProofsOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
-	const parameterNames = ['parts', 'numCommitments'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'ddh_proofs',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
 export interface ElgamalProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
