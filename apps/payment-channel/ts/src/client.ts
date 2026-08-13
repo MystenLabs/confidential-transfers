@@ -1,15 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { bcs } from '@mysten/sui/bcs';
 import { type ClientWithCoreApi } from '@mysten/sui/client';
 import {
 	type Transaction,
 	type TransactionObjectArgument,
 	type TransactionResult,
 } from '@mysten/sui/transactions';
-import { deriveObjectID, normalizeStructTag, SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
-import { type ContraPackageConfig } from 'ts-sdk';
+import { SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
+import { getConfidentialTokenId, type ContraPackageConfig } from 'ts-sdk';
 
 export type PaymentChannelPackageConfig = {
 	paymentChannelPackageId: string;
@@ -35,7 +34,6 @@ export class PaymentChannelClient {
 		return `${this.config.paymentChannelPackageId}::payment_channel::Channel<${tokenType}>`;
 	}
 
-	/** payment_channel::new<T>(ctx). Channel + state are shared on chain. */
 	newChannel({ tokenType }: { tokenType: string }) {
 		return (tx: Transaction): TransactionResult =>
 			tx.moveCall({
@@ -44,7 +42,6 @@ export class PaymentChannelClient {
 			});
 	}
 
-	/** payment_channel::get_auth<T>(c, ct, clock, ctx) -> Auth<T>. */
 	getAuth({ channel, tokenType }: { channel: TransactionObjectArgument; tokenType: string }) {
 		return (tx: Transaction): TransactionResult =>
 			tx.moveCall({
@@ -52,13 +49,12 @@ export class PaymentChannelClient {
 				typeArguments: [tokenType],
 				arguments: [
 					channel,
-					tx.object(getConfidentialTokenIdLocal(this.config, tokenType)),
+					tx.object(getConfidentialTokenId(this.config.contra, tokenType)),
 					tx.object(SUI_CLOCK_OBJECT_ID),
 				],
 			});
 	}
 
-	/** payment_channel::activate<T>(c, receiver, end_time_ms, ctx). */
 	activate({
 		channel,
 		receiver,
@@ -77,18 +73,4 @@ export class PaymentChannelClient {
 				arguments: [channel, tx.pure.address(receiver), tx.pure.u64(endTimeMs)],
 			});
 	}
-}
-
-// Local copy of `getConfidentialTokenId` derivation to avoid pulling helpers
-// not re-exported by ts-sdk's public surface.
-function getConfidentialTokenIdLocal(
-	config: PaymentChannelPackageConfig,
-	tokenType: string,
-): string {
-	const normalizedType = normalizeStructTag(tokenType);
-	return deriveObjectID(
-		config.contra.tokenRegistryId,
-		`${config.contra.packageId}::contra::TokenKey<${normalizedType}>`,
-		bcs.byteVector().serialize([]).toBytes(),
-	);
 }

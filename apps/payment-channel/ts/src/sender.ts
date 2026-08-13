@@ -28,14 +28,8 @@ export type SignedTransfer = {
  * flips channel state to `Closed`. The sender then calls `sweep()` to recover
  * the residual.
  *
- * Each settlement is a `get_auth → [merge →] transfer` PTB built by
- * `contraClient.transfer({ ..., auth, merge: true })`: when the channel
- * still has pending deposits (the wrapped amount until the first
- * settlement), `transfer` prepends a merge under the channel auth and
- * computes its proofs against the post-merge balance. The "merge succeeded
- * but transfer failed" race that motivates `merge: false` elsewhere can't
- * fire here — only the channel sender deposits, and they stop after
- * activate.
+ * Each settlement is a `get_auth → transfer` PTB built by
+ * `contraClient.transfer({ ..., auth, merge: false })`.
  */
 export class Sender {
 	private cumulativeAmount = 0n;
@@ -72,8 +66,9 @@ export class Sender {
 			amount: cumulative,
 			recipientAddress: this.opts.receiverAddress,
 			sponsorAddress: this.opts.receiverAddress,
-			sponsorGasCoin,
+			gasCoin: sponsorGasCoin,
 			gasBudget,
+			merge: false,
 		});
 		const { signature: senderSignature } = await this.opts.walletKeypair.signTransaction(txBytes);
 		this.cumulativeAmount = cumulative;
@@ -82,12 +77,12 @@ export class Sender {
 
 	/**
 	 * Sweep the channel's current on-chain residual to `sweepDestAddress`.
-	 * Submits with sender as both `ctx.sender` and gas sponsor.
+	 * A plain (non-sponsored) tx: the sender is `ctx.sender` and pays gas
+	 * from their own coin, with no gas owner set.
 	 *
-	 * Sweeps `active + pending` since the timeout path leaves the wrapped
-	 * funds in pending (no settlement ever ran a merge). The sweep PTB also
-	 * uses `merge: true` so the prepended merge under the channel auth
-	 * flushes pending into active before the transfer.
+	 * Sweeps `active + pending` with `merge: true` — the funding flow merges
+	 * before `activate`, so pending is normally empty, but a merge here
+	 * still folds in any stray deposit made after activation.
 	 *
 	 * Aborts on chain with `EChannelActive` unless the channel state is no
 	 * longer `Active` (receiver settled, or `clock.now >= end_time_ms`).
@@ -101,9 +96,9 @@ export class Sender {
 		const txBytes = await this.#buildTxBytes({
 			amount: total,
 			recipientAddress: this.opts.sweepDestAddress,
-			sponsorAddress: this.opts.walletKeypair.toSuiAddress(),
-			sponsorGasCoin: senderGasCoin,
+			gasCoin: senderGasCoin,
 			gasBudget,
+			merge: true,
 		});
 		const { signature } = await this.opts.walletKeypair.signTransaction(txBytes);
 		return await this.opts.suiClient.core.executeTransaction({
@@ -116,16 +111,13 @@ export class Sender {
 	async #buildTxBytes(opts: {
 		amount: bigint;
 		recipientAddress: string;
-		sponsorAddress: string;
-		sponsorGasCoin: GasCoinRef;
+		/** Gas owner for a sponsored tx; omit for a plain self-paid tx. */
+		sponsorAddress?: string;
+		gasCoin: GasCoinRef;
 		gasBudget: bigint;
+		merge: boolean;
 	}): Promise<Uint8Array> {
 		const tx = new Transaction();
-		// Auth-builder thunk: `contra::transfer` mints one `Auth<T>` and reuses the
-		// reference for every call it makes (the inline merge under the channel auth and
-		// the transfer itself), so this thunk runs once and emits a single
-		// `payment_channel::get_auth`. That call flips channel state Active → Closed and
-		// returns the auth shared by both calls.
 		const authThunk = (innerTx: Transaction) =>
 			innerTx.add(
 				this.opts.paymentChannelClient.getAuth({
@@ -138,13 +130,13 @@ export class Sender {
 			receiverAddress: opts.recipientAddress,
 			amount: opts.amount,
 			auth: authThunk,
-			merge: true,
+			merge: opts.merge,
 		});
 		tx.add(transferThunk);
 
 		tx.setSender(this.opts.walletKeypair.toSuiAddress());
-		tx.setGasOwner(opts.sponsorAddress);
-		tx.setGasPayment([opts.sponsorGasCoin]);
+		if (opts.sponsorAddress) tx.setGasOwner(opts.sponsorAddress);
+		tx.setGasPayment([opts.gasCoin]);
 		tx.setGasBudget(opts.gasBudget);
 		return await tx.build({ client: this.opts.suiClient });
 	}

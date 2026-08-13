@@ -28,7 +28,7 @@
 	},
 	"packageManager": "pnpm@10.10.0",
 	"dependencies": {
-		"@mysten/sui": "^2.22.1",
+		"@mysten/sui": "^2.24.0",
 		"ts-sdk": "file:../../ts-sdk"
 	},
 	"devDependencies": {

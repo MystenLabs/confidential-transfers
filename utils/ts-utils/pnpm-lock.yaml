@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@mysten/sui':
-        specifier: ^2.22.1
-        version: 2.22.1(typescript@5.9.3)
+        specifier: ^2.24.0
+        version: 2.24.0(typescript@5.9.3)
       ts-sdk:
         specifier: file:../../ts-sdk
         version: file:../../ts-sdk(typescript@5.9.3)
@@ -179,8 +179,8 @@ packages:
   '@mysten/bcs@2.1.0':
     resolution: {integrity: sha512-rIR/cDAqDfBDxmYEZXppN/on8gmh1OW0dYi/Bk2kMBZcYMTaBaEtEX1VR6g7HicVxuMbFAIP0/SQkdH7J9Y5dQ==}
 
-  '@mysten/sui@2.22.1':
-    resolution: {integrity: sha512-X0Uu88l4uH77DD/yej9lqNtdW1qnWoTel2HIKx0B7kFPW0Z9EhTB4Uu4wzZgCY9vvg3aPnaeMLqGSjwPTq/mzA==}
+  '@mysten/sui@2.24.0':
+    resolution: {integrity: sha512-VmIkgnMulRVeA0mnBgHiTFTci5XKJH5/UB8Kr2M9+1nZnKC1RKsNGRXWBtox+2HYtwHNdUjHxYchfWnfZ9yHkQ==}
     engines: {node: '>=22'}
 
   '@mysten/utils@0.3.3':
@@ -538,8 +538,8 @@ packages:
       synckit:
         optional: true
 
-  valibot@1.4.1:
-    resolution: {integrity: sha512-klCmFTz2jeDluy9RwX+F884TCiogtdBJ/YaxSx1EOBYXa3NXNWj8kR1jjN8rzluwojJVWWaHJ4r1U5LfICnM3g==}
+  valibot@1.4.2:
+    resolution: {integrity: sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==}
     peerDependencies:
       typescript: '>=5'
     peerDependenciesMeta:
@@ -697,7 +697,7 @@ snapshots:
       '@mysten/utils': 0.4.0
       '@scure/base': 2.2.0
 
-  '@mysten/sui@2.22.1(typescript@5.9.3)':
+  '@mysten/sui@2.24.0(typescript@5.9.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.14.2)
       '@mysten/bcs': 2.1.0
@@ -713,7 +713,7 @@ snapshots:
       gql.tada: 1.11.2(graphql@16.14.2)(typescript@5.9.3)
       graphql: 16.14.2
       poseidon-lite: 0.2.1
-      valibot: 1.4.1(typescript@5.9.3)
+      valibot: 1.4.2(typescript@5.9.3)
     transitivePeerDependencies:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'
@@ -962,7 +962,7 @@ snapshots:
     dependencies:
       '@contra/bulletproofs-wasm': file:../bulletproofs-wasm
       '@mysten/bcs': 2.0.5
-      '@mysten/sui': 2.22.1(typescript@5.9.3)
+      '@mysten/sui': 2.24.0(typescript@5.9.3)
       '@noble/curves': 2.2.0
       '@noble/hashes': 2.2.0
     transitivePeerDependencies:
@@ -1013,6 +1013,6 @@ snapshots:
     dependencies:
       rolldown: 1.0.0-rc.17
 
-  valibot@1.4.1(typescript@5.9.3):
+  valibot@1.4.2(typescript@5.9.3):
     optionalDependencies:
       typescript: 5.9.3
