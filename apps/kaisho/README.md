@@ -10,6 +10,10 @@ Example wallet app. See the [top-level README](../../README.md) for what it does
 
 ## Setup
 
+On a fresh checkout, build the WASM bindings first — see
+[`utils/bulletproofs-wasm`](../../utils/bulletproofs-wasm/README.md) — since
+`ts-sdk` packs them at install time.
+
 ```bash
 # From the repo root, build the ts-sdk first
 cd ts-sdk

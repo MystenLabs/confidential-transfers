@@ -4,7 +4,7 @@ Confidential transfer protocols can let designated **auditors** decrypt user act
 
 This document covers two options for implementing that.
 
-## Option 1: Per-transfer
+## Option 1: Per-transfer (implemented)
 
 ### On-chain logic
 The token issuer registers one or more auditor public keys on-chain. **Every** confidential transfer then carries an additional ciphertext of the transfer amount, encrypted under each auditor public key. A zero-knowledge proof attests that the auditor ciphertext encrypts the same amount as the sender and recipient ciphertexts, so the auditor's view cannot diverge from what actually moved on-chain.
@@ -33,6 +33,7 @@ Auditors do not read balances directly; they reconstruct each account's running 
 ## Option 2: Per-account
 
 ### On-chain logic
+
 The token issuer registers one or more auditor public keys on-chain. When a user registers a token account, they encrypt their own viewing key under each auditor public key, and the resulting ciphertext is stored alongside the account on-chain. A zero-knowledge proof attests that the encrypted key matches the public key the user just registered for their account, so auditors cannot be handed a key that decrypts something else.
 
 Per-transfer ciphertexts and proofs are unchanged from the non-audited case: transfers carry no auditor-specific overhead regardless of the number of auditors, and the auditor's visibility comes entirely from the registration-time key escrow. To read an account, the auditor decrypts the user's viewing key once and then reads the user's encrypted balances and transfer events directly off-chain.
@@ -116,7 +117,3 @@ The two options trade cost against operational complexity. The table below summa
 | Auditor offboarding | The offboarded key is removed and users stop encrypting under it; the offboarded auditor cannot decrypt future transactions | The offboarded auditor still holds existing user viewing keys and continues to decrypt new activity on those accounts until each user rotates their viewing key under an updated auditor set |
 | Retroactive privacy | New auditors see only transfers made after their key was registered; older transfers stay private | A new auditor gains full historical visibility once the user re-escrows their existing viewing key under the new set; preserving history privacy requires the user to generate a new viewing key |
 | User viewing-key recovery | Not supported — auditors never see the user's viewing key, so a user who loses it cannot access their account | Possible — an auditor can decrypt the user's escrowed viewing key on-chain and hand it back to the user, providing a built-in backup for an otherwise inaccessible account |
-
-## Selected approach
-
-We implement **Option 1 (per-transfer)** with a **single auditor key per token**. Each transfer attaches an auditor-readable copy of the amount under that key; the auditor never learns a user's viewing key, so balances stay encrypted only under the user's own key and users may reuse one account public key across tokens.
