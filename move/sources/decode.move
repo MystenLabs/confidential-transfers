@@ -12,18 +12,18 @@ use contra::{
 };
 use sui::{group_ops::Element, ristretto255::{G, g_from_bytes, scalar_from_bytes}};
 
-public fun g_vector(parts: vector<vector<u8>>): vector<Element<G>> {
+entry fun g_vector(parts: vector<vector<u8>>): vector<Element<G>> {
     parts.map!(|b| g_from_bytes(&b))
 }
 
 /// Build one `PublicKey` per point-encoded part; each is validated non-identity by `public_key`.
-public fun public_keys(parts: vector<vector<u8>>): vector<PublicKey> {
+entry fun public_keys(parts: vector<vector<u8>>): vector<PublicKey> {
     parts.map!(|b| public_key(g_from_bytes(&b)))
 }
 
 /// Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts` (two u32-limb
 /// handles per transferred amount, flattened in amount order). Aborts if `parts` has an odd length.
-public fun auditor_decryption_handles(parts: vector<vector<u8>>): vector<vector<Element<G>>> {
+entry fun auditor_decryption_handles(parts: vector<vector<u8>>): vector<vector<Element<G>>> {
     let elements = g_vector(parts);
     let mut out = vector[];
     let mut i = 0;
@@ -34,11 +34,11 @@ public fun auditor_decryption_handles(parts: vector<vector<u8>>): vector<vector<
     out
 }
 
-public fun encryption(parts: vector<vector<u8>>): Encryption {
+entry fun encryption(parts: vector<vector<u8>>): Encryption {
     encryption_at(&parts, 0)
 }
 
-public fun encrypted_amount(parts: vector<vector<u8>>): EncryptedAmount {
+entry fun encrypted_amount(parts: vector<vector<u8>>): EncryptedAmount {
     new_encrypted_amount(
         encryption_at(&parts, 0),
         encryption_at(&parts, 2),
@@ -47,12 +47,12 @@ public fun encrypted_amount(parts: vector<vector<u8>>): EncryptedAmount {
     )
 }
 
-public fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
+entry fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
     let n = parts.length() - 1;
     nizk::new_ddh_proof(g_range(&parts, 0, n), scalar_from_bytes(parts.borrow(n)))
 }
 
-public fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
+entry fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
     elgamal_proof_at(&parts, 0)
 }
 

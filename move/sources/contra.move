@@ -20,7 +20,7 @@
 /// 6. Rotate, enable, or disable the auditor keys via `update_auditors` (using the ManagementCap),
 ///    which sets the parallel `current_pks` / `previous_pks` key vectors. A transfer is accepted
 ///    under either set, so pointing `current_pks` at new keys while `previous_pks` still holds the
-///    outgoing keys gives a grace window for in-flight transfers; passing empty vectors disables
+///    outgoing keys gives a grace window for in-flight transfers; passing empty `current_pks` disables
 ///    auditing. Auditing is per-transfer and each transfer carries auditor-readable ciphertexts of
 ///    the amount, one set per auditor key.
 /// 7. [Advanced] Set the policy for the confidential token (using the TreasuryCap). Policies define
@@ -979,8 +979,8 @@ public fun set_policy<T, W>(
 // === Auditor flows ===
 
 /// Replace this confidential token's auditor keys. `current_pks` is tried first when verifying a
-/// transfer, then `previous_pks`. The two does not have to be the same length. The caller can drive a grace
-/// policy: rotate with `update_auditors(new, old_current)` and end the grace with `update_auditors(new, new)`.
+/// transfer, then `previous_pks`. The two do not have to be the same length. The caller can drive a grace
+/// policy: rotate with `update_auditors(new, old_current)` and end the grace with `update_auditors(new, [])`.
 public fun update_auditors<T>(
     ct: &mut ConfidentialToken<T>,
     _cap: &ManagementCap<T>,
