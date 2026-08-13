@@ -15,24 +15,28 @@
 import { bcs } from '@mysten/sui/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { deriveObjectID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
+import { deriveObjectID } from '@mysten/sui/utils';
+import { ristretto255 } from '@noble/curves/ed25519.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { getBulletproofs } from '../../src/bp.js';
 import * as contraContracts from '../../src/contracts/contra/contra.js';
 import {
+	buildAuditorPackageOption,
 	buildDdhProof,
 	buildElGamalProof,
 	buildEncryptedAmount,
 	buildEncryptedAmountAndProof,
+	buildPublicKeyVector,
 	buildWellFormedProof,
 	point,
+	PROTOCOL_AUDITOR_DDH,
 	PROTOCOL_DDH,
 	PROTOCOL_ELGAMAL,
 	PROTOCOL_RANGE_PROOF_16,
 } from '../../src/helpers.js';
 import { DdhNizk, ElGamalNizk } from '../../src/nizk.js';
-import { G, randomScalar } from '../../src/ristretto255.js';
+import { G, mul, randomScalar } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
 import { Ciphertext, collapseBlindings, EncryptedAmount } from '../../src/twisted_elgamal.js';
 import { Admin } from './admin.js';
@@ -138,6 +142,36 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			randomScalar(),
 		);
 
+		// Per-transfer auditor data for the single receiver: `auditors::verify_transfer` runs before the
+		// balance proof, so valid handles + proofs must be present for the transfer to reach the
+		// `BalanceProofFailed` branch under test. Mirrors the SDK's `buildAuditorData` (single auditor):
+		// one DDH per u32 limb, anchored to the receiver's own u32 handle.
+		const auditorPk = tokenIssuer.auditorPublicKey!;
+		const auditorDst = sender.tokenAccount.dst(PROTOCOL_AUDITOR_DDH);
+		const shift = 1n << 16n;
+		const limbData = (
+			[
+				[0, 1],
+				[2, 3],
+			] as const
+		).map(([lo, hi]) => ({
+			blinding: ristretto255.Point.Fn.create(
+				encAmountReceiver[lo].blinding + shift * encAmountReceiver[hi].blinding,
+			),
+			receiverHandle: encAmountReceiver[lo].ciphertext.decryptionHandle.add(
+				mul(encAmountReceiver[hi].ciphertext.decryptionHandle, shift),
+			),
+		}));
+		const auditorHandles = limbData.map((d) => mul(auditorPk, d.blinding));
+		const auditorProofs = limbData.map((d) =>
+			DdhNizk.prove(
+				auditorDst,
+				d.blinding,
+				[receiverPk, auditorPk],
+				[d.receiverHandle, mul(auditorPk, d.blinding)],
+			),
+		);
+
 		const { batchRangeProver } = await getBulletproofs();
 		const tx = new Transaction();
 		const senderAccountId = client.contra.getAccountId(sender.address);
@@ -156,10 +190,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					sender: senderAccountId,
 					auth,
 					ct: tokenIssuer.confidentialTokenId,
-					receiverPks: tx.makeMoveVec({
-						type: `${SUI_FRAMEWORK_ADDRESS}::group_ops::Element<${SUI_FRAMEWORK_ADDRESS}::ristretto255::G>`,
-						elements: [point(receiverPk.toBytes())],
-					}),
+					receiverPks: buildPublicKeyVector(pid, [receiverPk]),
 					receiverAmounts: tx.makeMoveVec({
 						type: `${pid}::encrypted_amount::EncryptedAmount`,
 						elements: [
@@ -187,6 +218,10 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						newBalanceLimbs.map((l) => l.ciphertext),
 					),
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
+					auditorPackage: buildAuditorPackageOption(pid, {
+						handles: auditorHandles,
+						proofs: auditorProofs,
+					}),
 				},
 			}),
 		);
@@ -216,7 +251,6 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		async () => {
 			// Two fresh users with funded Accounts (but no TokenAccount yet).
 			const [sdkUser, gatedUser] = await setupFreshAccounts(2);
-			const auditorPks = tokenIssuer.getAuditorKeys(tokenIssuer.auditorVersion).publicKeys;
 
 			// Gate REGISTER behind `GatedWitness`. After this, `as_sender`
 			// produces an Auth without the REGISTER bit set, so the SDK's
@@ -224,12 +258,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			await gated.setPolicy([0]);
 
 			const sdkRegTx = new Transaction();
-			sdkRegTx.add(
-				await client.contra.register({
-					tokenAccount: sdkUser.tokenAccount,
-					auditorPublicKeys: auditorPks,
-				}),
-			);
+			sdkRegTx.add(await client.contra.register({ tokenAccount: sdkUser.tokenAccount }));
 			sdkRegTx.setSender(sdkUser.address);
 			await expect(exec(sdkRegTx, sdkUser.keypair)).rejects.toThrow();
 
@@ -244,12 +273,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			await gated.setPolicy([]);
 			const afterClear = await setupFreshAccount();
 			const afterClearRegTx = new Transaction();
-			afterClearRegTx.add(
-				await client.contra.register({
-					tokenAccount: afterClear.tokenAccount,
-					auditorPublicKeys: auditorPks,
-				}),
-			);
+			afterClearRegTx.add(await client.contra.register({ tokenAccount: afterClear.tokenAccount }));
 			afterClearRegTx.setSender(afterClear.address);
 			await exec(afterClearRegTx, afterClear.keypair);
 		},

@@ -1,144 +1,104 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as contraContracts from './contracts/contra/contra.js';
-import { Field as DynamicField } from './contracts/sui/dynamic_field.js';
-import { InvalidArgumentError } from './error.js';
-import { getTokenAccountId } from './helpers.js';
-import { limbsToScalar } from './nizk.js';
-import { G, GROUP_ORDER, mul, pointFromBcs } from './ristretto255.js';
-import { TokenAccount } from './token_account.js';
-import {
-	MultiRecipientEncryption,
-	type DiscreteLogTable,
-	type PrivateKey,
-	type PublicKey,
-} from './twisted_elgamal.js';
-import type {
-	AuditorVersionEntry,
-	ContraAuditorOptions,
-	ContraCompatibleClient,
-	ContraPackageConfig,
-	VerifiedKeyEncryption,
-} from './types.js';
+import { bytesToHex } from '@noble/curves/utils.js';
+
+import { TransferEvent } from './contracts/contra/events.js';
+import { AuditorKeyNotHeldError } from './error.js';
+import { G, mul, pointFromBcs, type RistrettoPoint } from './ristretto255.js';
+import { Ciphertext, type DiscreteLogTable, type PrivateKey } from './twisted_elgamal.js';
+import type { ContraAuditorOptions } from './types.js';
+
+const SHIFT_32 = 1n << 32n;
 
 /**
- * Auditor SDK. Recovers a user's private key from the on-chain `verified_key_encryption` field
- * of their `TokenAccount<T>`, returning a fully-keyed `TokenAccount` that
- * can decrypt the user's balances and any event amounts encrypted to them.
+ * A decoded `TransferEvent` an auditor reads (`TransferEventBcs.parse`). This is the inferred type of
+ * the generated `events::TransferEvent` BCS schema, so it tracks the Move struct automatically — but
+ * only after `pnpm codegen` is re-run when that struct changes.
+ */
+export type DecodedTransferEvent = typeof TransferEvent.$inferType;
+
+/**
+ * Per-transfer auditor SDK. Under per-transfer auditing the auditor never learns a user's viewing
+ * key; instead every transfer carries an auditor-readable copy of the amount under the token's auditor
+ * key. A `TransferEvent` names that key in `auditor_pk` (`none` when auditing is disabled) and carries
+ * its two `[lo, hi]` handles in `auditor_decryption_handles` (empty when auditing is disabled). The
+ * event's `encrypted_amount_receiver` carries the receiver's four u16-limb commitments; this folds
+ * them into the two u32-limb commitments (`Ǎ_0, Ǎ_1`), pairs each with the matching handle to form a
+ * twisted ElGamal ciphertext, and recovers the amount.
  *
- * A set of auditor keys is versioned. The auditor needs to know one secret key for each version
- * in order to decrypt all accounts.
- *
- * Previously registered user private keys can be recovered from NewRegistrationEvent and
- * UpdatedPublicKeyEvent events.
+ * A token has at most one auditor key at a time, but it can be rotated, and a transfer made before a
+ * rotation stays encrypted under whichever key was current then (accepted on chain during the grace
+ * window, and readable off-chain forever). An auditor holds one or more private keys so it can read
+ * across rotations: construct it with every key it has ever held — or add rotated-out keys later with
+ * `addKey` — and `decryptTransferAmount` uses the held key whose public key (`pk = sk * G`) matches the
+ * transfer's `auditor_pk`.
  */
 export class ContraAuditor {
-	#suiClient: ContraCompatibleClient;
-	#packageConfig: ContraPackageConfig; // Will be static per network in the future.
 	#tokenType: string;
+	// Keyed by the hex of the public key's compressed bytes, so a transfer's `auditor_pk` (the same
+	// canonical encoding) is a direct lookup rather than a scan over every held key.
+	#keys: Map<string, { publicKey: RistrettoPoint; privateKey: PrivateKey }>;
 	#table: DiscreteLogTable;
-	#auditorKeyForVersion: Map<number, AuditorVersionEntry>;
 
 	constructor(options: ContraAuditorOptions) {
-		this.#suiClient = options.suiClient;
-		this.#packageConfig = options.packageConfig;
 		this.#tokenType = options.tokenType;
 		this.#table = options.table;
-		this.#auditorKeyForVersion = options.auditorKeyForVersion;
+		this.#keys = new Map();
+		for (const privateKey of options.privateKeys) this.addKey(privateKey);
 	}
 
 	get tokenType(): string {
 		return this.#tokenType;
 	}
 
-	/**
-	 * Decrypt the user's private key from a parsed `VerifiedKeyEncryption`.
-	 *
-	 * The input shape — `{ ciphertext: MultiRecipientEncryption[]; version: number }` —
-	 * matches the `verified_key_encryption` field on `TokenAccount<T>` (the current state)
-	 * **and** on `NewRegistrationEvent<T>` and `UpdatedPublicKeyEvent<T>`. Pass an event's
-	 * `verified_key_encryption` here to recover the user's private key as of the version
-	 * that was active at registration / key-rotation time — useful when tracking historical
-	 * state across `set_public_key` calls.
-	 *
-	 * `expectedPk` should be the account/event public key from the same object or event.
-	 *
-	 * @throws if `ciphertext` is empty (the user registered when no auditors were configured),
-	 * if this auditor has no record for `version`, if the recorded `index` is out of range for any per-limb
-	 * ciphertext, or if the recovered key does not match `expectedPk`.
-	 */
-	recoverPrivateKey(
-		{ ciphertext, version }: VerifiedKeyEncryption,
-		expectedPk: PublicKey,
-	): PrivateKey {
-		if (ciphertext.length === 0) {
-			throw new InvalidArgumentError(
-				`Cannot recover private key: account was registered with no auditors (version ${version}).`,
-			);
-		}
-		const entry = this.#auditorKeyForVersion.get(version);
-		if (entry === undefined) {
-			const known = Array.from(this.#auditorKeyForVersion.keys())
-				.sort((a, b) => a - b)
-				.join(', ');
-			throw new InvalidArgumentError(
-				`Auditor has no record for version ${version}. Known versions: [${known}].`,
-			);
-		}
-		const limbs = ciphertext.map((mrc, i) => {
-			if (entry.index >= mrc.decryptionHandles.length) {
-				throw new InvalidArgumentError(
-					`Auditor index ${entry.index} out of range for limb ${i} (have ${mrc.decryptionHandles.length} recipients) at version ${version}.`,
-				);
-			}
-			return mrc.decrypt(entry.index, entry.privateKey, this.#table);
-		});
-		// The on-chain key-consistency proof only binds the reconstructed limbs to the account
-		// public key modulo the group order, so reduce to the canonical representation.
-		// TODO: Maybe log when a recovered key is not canonical?
-		const recoveredKey = limbsToScalar(limbs) % GROUP_ORDER;
-
-		if (!mul(G, recoveredKey).equals(expectedPk)) {
-			throw new InvalidArgumentError(
-				`Recovered key does not match the account public key (version ${version}); ` +
-					`the key-encryption payload is forged or corrupted.`,
-			);
-		}
-		return recoveredKey;
+	/** The auditor public keys this instance can decrypt transfers for (`pk = sk * G`). */
+	get publicKeys(): RistrettoPoint[] {
+		return [...this.#keys.values()].map((k) => k.publicKey);
 	}
 
 	/**
-	 * Fetch the on-chain `TokenAccount<tokenType>` belonging to `address`, decrypt the user's
-	 * private key from `verified_key_encryption`, and return a fully-keyed `TokenAccount`.
-	 *
-	 * The returned `TokenAccount` can be used with `ContraClient.getBalance` to read the user's
-	 * balance, or with `TokenAccount.decryptAmount` / `EncryptedAmount.decrypt` to read amounts
-	 * from event payloads.
-	 *
-	 * @throws on the same conditions as `recoverPrivateKey`.
+	 * Register an auditor private key so transfers naming its public key (`pk = sk * G`) in `auditor_pk`
+	 * become decryptable — e.g. adding a rotated-out key to keep reading transfers made before the
+	 * rotation. A no-op if the key is already held.
 	 */
-	async getTokenAccount(address: string): Promise<TokenAccount> {
-		const tokenAccountId = getTokenAccountId(this.#packageConfig, address, this.#tokenType);
+	addKey(privateKey: PrivateKey): void {
+		const publicKey = mul(G, privateKey);
+		this.#keys.set(bytesToHex(publicKey.toBytes()), { publicKey, privateKey });
+	}
 
-		const { object } = await this.#suiClient.core.getObject({
-			objectId: tokenAccountId,
-			include: { content: true },
-		});
-
-		const parsed = TokenAccountField.parse(object.content).value;
-		const verified = {
-			ciphertext: parsed.verified_key_encryption.ciphertext.map((raw) =>
-				MultiRecipientEncryption.fromBcs(raw),
-			),
-			version: parsed.verified_key_encryption.version,
-		};
-		const privateKey = this.recoverPrivateKey(verified, pointFromBcs(parsed.pk));
-		return new TokenAccount(address, this.#tokenType, this.#packageConfig, privateKey);
+	/**
+	 * Recover the transferred amount from a `TransferEvent`. If a held key matches the event's
+	 * `auditor_pk`, folds the four u16 commitments in `encrypted_amount_receiver` into two u32-limb
+	 * commitments, pairs each with the matching `auditor_decryption_handles` handle, and BSGS-decrypts.
+	 *
+	 * @param event a decoded `TransferEvent` (`TransferEventBcs.parse`).
+	 * @returns the transferred amount, or `null` if the transfer carried no auditor data (auditing was
+	 *   disabled for it — empty `auditor_pk`).
+	 * @throws {@link AuditorKeyNotHeldError} if this auditor doesn't hold the event's `auditor_pk` key;
+	 *   {@link DecryptionFailedError} if a u32 limb is outside the decryption table's range.
+	 */
+	decryptTransferAmount(event: DecodedTransferEvent): bigint | null {
+		// `auditor_pk` is `none` (auditing disabled) or the single auditor key; `auditor_decryption_handles`
+		// is empty or that auditor's two `[lo, hi]` u32-limb handles.
+		const auditorPk = event.auditor_pk;
+		if (auditorPk === null) return null;
+		const held = this.#keys.get(bytesToHex(Uint8Array.from(auditorPk.element.bytes)));
+		if (held === undefined) {
+			throw new AuditorKeyNotHeldError(pointFromBcs(auditorPk.element));
+		}
+		const handles = event.auditor_decryption_handles;
+		if (handles.length !== 2) return null;
+		// Fold the receiver's four u16 commitments into the two u32-limb commitments
+		// (`Ǎ_k = C_{2k} + 2^16 C_{2k+1}`), pair each with the auditor's matching handle, and BSGS-decrypt.
+		const ea = event.encrypted_amount_receiver;
+		const shift = 1n << 16n;
+		const a0 = pointFromBcs(ea.l0.ciphertext).add(mul(pointFromBcs(ea.l1.ciphertext), shift));
+		const a1 = pointFromBcs(ea.l2.ciphertext).add(mul(pointFromBcs(ea.l3.ciphertext), shift));
+		const d0 = pointFromBcs(handles[0]);
+		const d1 = pointFromBcs(handles[1]);
+		const n0 = new Ciphertext(a0, d0).decrypt(held.privateKey, this.#table);
+		const n1 = new Ciphertext(a1, d1).decrypt(held.privateKey, this.#table);
+		return n0 + n1 * SHIFT_32;
 	}
 }
-
-const TokenAccountField = DynamicField(
-	contraContracts.TokenAccountKey,
-	contraContracts.TokenAccount,
-);

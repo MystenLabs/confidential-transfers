@@ -5,7 +5,6 @@ import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments, type RawTransactionArgument } from '../utils/index.js';
-import * as group_ops from './deps/sui/group_ops.js';
 import * as nizk from './nizk.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
@@ -23,20 +22,14 @@ export const WellFormedEncryptedAmount = new MoveStruct({
 	name: `${$moduleName}::WellFormedEncryptedAmount`,
 	fields: {
 		amount: EncryptedAmount,
-		pk: group_ops.Element,
-	},
-});
-export const ConsistencyProof = new MoveStruct({
-	name: `${$moduleName}::ConsistencyProof`,
-	fields: {
-		proof: nizk.ElGamalProof,
+		pk: twisted_elgamal.PublicKey,
 	},
 });
 export const WellFormedProof = new MoveStruct({
 	name: `${$moduleName}::WellFormedProof`,
 	fields: {
 		range_proofs: bcs.vector(bcs.vector(bcs.u8())),
-		consistency_proofs: bcs.vector(ConsistencyProof),
+		consistency_proofs: bcs.vector(nizk.ElGamalProof),
 	},
 });
 export interface NewEncryptedAmountArguments {
@@ -65,25 +58,6 @@ export function newEncryptedAmount(options: NewEncryptedAmountOptions) {
 			package: packageAddress,
 			module: 'encrypted_amount',
 			function: 'new_encrypted_amount',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewConsistencyProofArguments {
-	proof: TransactionArgument;
-}
-export interface NewConsistencyProofOptions {
-	package?: string;
-	arguments: NewConsistencyProofArguments | [proof: TransactionArgument];
-}
-export function newConsistencyProof(options: NewConsistencyProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null] satisfies (string | null)[];
-	const parameterNames = ['proof'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'encrypted_amount',
-			function: 'new_consistency_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

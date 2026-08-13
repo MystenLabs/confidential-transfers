@@ -30,6 +30,55 @@ export function gVector(options: GVectorOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface PublicKeysArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface PublicKeysOptions {
+	package?: string;
+	arguments: PublicKeysArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+/**
+ * Build one `PublicKey` per point-encoded part; each is validated non-identity by
+ * `public_key`.
+ */
+export function publicKeys(options: PublicKeysOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'public_keys',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface AuditorDecryptionHandlesArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface AuditorDecryptionHandlesOptions {
+	package?: string;
+	arguments:
+		| AuditorDecryptionHandlesArguments
+		| [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+/**
+ * Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts`
+ * (two u32-limb handles per transferred amount, flattened in amount order). Aborts
+ * if `parts` has an odd length.
+ */
+export function auditorDecryptionHandles(options: AuditorDecryptionHandlesOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'auditor_decryption_handles',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface EncryptionArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -68,31 +117,6 @@ export function encryptedAmount(options: EncryptedAmountOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface MultiRecipientEncryptionArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-	m: RawTransactionArgument<number | bigint>;
-}
-export interface MultiRecipientEncryptionOptions {
-	package?: string;
-	arguments:
-		| MultiRecipientEncryptionArguments
-		| [
-				parts: RawTransactionArgument<Array<Array<number>>>,
-				m: RawTransactionArgument<number | bigint>,
-		  ];
-}
-export function multiRecipientEncryption(options: MultiRecipientEncryptionOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
-	const parameterNames = ['parts', 'm'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'multi_recipient_encryption',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
 export interface DdhProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -112,6 +136,36 @@ export function ddhProof(options: DdhProofOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface DdhProofsArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+	numCommitments: RawTransactionArgument<number | bigint>;
+}
+export interface DdhProofsOptions {
+	package?: string;
+	arguments:
+		| DdhProofsArguments
+		| [
+				parts: RawTransactionArgument<Array<Array<number>>>,
+				numCommitments: RawTransactionArgument<number | bigint>,
+		  ];
+}
+/**
+ * Build a vector of `DdhProof`s, each with `num_commitments` point-encoded
+ * commitments followed by one scalar `z` (so `num_commitments + 1` `parts` per
+ * proof, concatenated). Aborts unless `parts` divides evenly.
+ */
+export function ddhProofs(options: DdhProofsOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
+	const parameterNames = ['parts', 'numCommitments'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'ddh_proofs',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface ElgamalProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -128,50 +182,6 @@ export function elgamalProof(options: ElgamalProofOptions) {
 			package: packageAddress,
 			module: 'decode',
 			function: 'elgamal_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface ConsistencyProofArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-}
-export interface ConsistencyProofOptions {
-	package?: string;
-	arguments: ConsistencyProofArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
-}
-export function consistencyProof(options: ConsistencyProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
-	const parameterNames = ['parts'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'consistency_proof',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface KeyConsistencyProofArguments {
-	parts: RawTransactionArgument<Array<Array<number>>>;
-	m: RawTransactionArgument<number | bigint>;
-}
-export interface KeyConsistencyProofOptions {
-	package?: string;
-	arguments:
-		| KeyConsistencyProofArguments
-		| [
-				parts: RawTransactionArgument<Array<Array<number>>>,
-				m: RawTransactionArgument<number | bigint>,
-		  ];
-}
-export function keyConsistencyProof(options: KeyConsistencyProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>', 'u64'] satisfies (string | null)[];
-	const parameterNames = ['parts', 'm'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'decode',
-			function: 'key_consistency_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

@@ -5,24 +5,21 @@ export { contra, ContraClient } from './client.js';
 export * as contraContracts from './contracts/contra/contra.js';
 export * as eventsContracts from './contracts/contra/events.js';
 export { TransferEvent as TransferEventBcs } from './contracts/contra/events.js';
-export { ContraAuditor } from './auditor.js';
+export { ContraAuditor, type DecodedTransferEvent } from './auditor.js';
 export * from './error.js';
 export {
 	Ciphertext,
 	DiscreteLogTable,
 	EncryptedAmount,
-	MultiRecipientEncryption,
 	computeTableEntries,
 } from './twisted_elgamal.js';
 export { TokenAccount } from './token_account.js';
 export { G, randomScalar, scalarToBytes, pointFromBcs } from './ristretto255.js';
 export type { RistrettoPoint } from './ristretto255.js';
 export { point } from './helpers.js';
-export { KeyEncryption } from './key_encryption.js';
-export { DdhNizk, ElGamalNizk, KeyConsistencyProof, limbsToScalar, scalarToLimbs } from './nizk.js';
+export { DdhNizk, ElGamalNizk } from './nizk.js';
 export type {
 	AccountStatus,
-	AuditorVersionEntry,
 	BalanceEntry,
 	BatchedTransferOptions,
 	BatchedTransferRecipient,
@@ -34,14 +31,15 @@ export type {
 	NewAccountOptions,
 	PauseAccountOptions,
 	RegisterOptions,
-	RotateKeyAndTransferBatchOptions,
-	RotateKeyOptions,
+	RegisterWithDefaultPkOptions,
+	RekeyTokenAccountOptions,
+	SetDefaultPkAsSenderOptions,
 	ShareAccountOptions,
-	TokenAuditors,
+	TokenAuditor,
 	TokenBalance,
+	TokenKeyStatus,
 	TransferOptions,
 	UnpauseAccountOptions,
 	UnwrapOptions,
-	VerifiedKeyEncryption,
 	WrapOptions,
 } from './types.js';

@@ -1,18 +1,16 @@
 /**************************************************************
  * THIS FILE IS GENERATED AND SHOULD NOT BE MANUALLY MODIFIED *
  **************************************************************/
-import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
 import * as group_ops from './deps/sui/group_ops.js';
 
 const $moduleName = '@local-pkg/contra::twisted_elgamal';
-export const MultiRecipientEncryption = new MoveStruct({
-	name: `${$moduleName}::MultiRecipientEncryption`,
+export const PublicKey = new MoveStruct({
+	name: `${$moduleName}::PublicKey`,
 	fields: {
-		ciphertext: group_ops.Element,
-		decryption_handles: bcs.vector(group_ops.Element),
+		element: group_ops.Element,
 	},
 });
 export const Encryption = new MoveStruct({
@@ -48,76 +46,46 @@ export function _new(options: NewOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface NewMultiRecipientEncryptionArguments {
-	ciphertext: TransactionArgument;
-	decryptionHandles: TransactionArgument;
+export interface PublicKeyArguments {
+	element: TransactionArgument;
 }
-export interface NewMultiRecipientEncryptionOptions {
+export interface PublicKeyOptions {
 	package?: string;
-	arguments:
-		| NewMultiRecipientEncryptionArguments
-		| [ciphertext: TransactionArgument, decryptionHandles: TransactionArgument];
+	arguments: PublicKeyArguments | [element: TransactionArgument];
 }
 /**
- * Construct a Twisted ElGamal `MultiRecipientEncryption` consisting of a shared
- * ciphertext `c = r * g + m * h` and one decryption handle `d_i = r * pk_i` per
- * recipient identified by their public key `pk_i`.
+ * Wrap `element` as a `PublicKey`, aborting with `EIdentityPublicKey` if it is the
+ * group identity.
  */
-export function newMultiRecipientEncryption(options: NewMultiRecipientEncryptionOptions) {
+export function publicKey(options: PublicKeyOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, 'vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['ciphertext', 'decryptionHandles'];
+	const argumentsTypes = [null] satisfies (string | null)[];
+	const parameterNames = ['element'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'twisted_elgamal',
-			function: 'new_multi_recipient_encryption',
+			function: 'public_key',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
-export interface MultiRecipientCiphertextArguments {
-	e: TransactionArgument;
+export interface AsElementArguments {
+	pk: TransactionArgument;
 }
-export interface MultiRecipientCiphertextOptions {
+export interface AsElementOptions {
 	package?: string;
-	arguments: MultiRecipientCiphertextArguments | [e: TransactionArgument];
+	arguments: AsElementArguments | [pk: TransactionArgument];
 }
-/**
- * Returns the shared ciphertext component `c = r * g + m * h` of a Twisted ElGamal
- * `MultiRecipientEncryption`.
- */
-export function multiRecipientCiphertext(options: MultiRecipientCiphertextOptions) {
+/** The underlying group element. */
+export function asElement(options: AsElementOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null] satisfies (string | null)[];
-	const parameterNames = ['e'];
+	const parameterNames = ['pk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'twisted_elgamal',
-			function: 'multi_recipient_ciphertext',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface MultiRecipientDecryptionHandlesArguments {
-	e: TransactionArgument;
-}
-export interface MultiRecipientDecryptionHandlesOptions {
-	package?: string;
-	arguments: MultiRecipientDecryptionHandlesArguments | [e: TransactionArgument];
-}
-/**
- * Returns the per-recipient decryption handles `d_i = r * pk_i` for recipient
- * public key `pk_i` of a Twisted ElGamal `MultiRecipientEncryption`.
- */
-export function multiRecipientDecryptionHandles(options: MultiRecipientDecryptionHandlesOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null] satisfies (string | null)[];
-	const parameterNames = ['e'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'twisted_elgamal',
-			function: 'multi_recipient_decryption_handles',
+			function: 'as_element',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

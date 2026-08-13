@@ -3,7 +3,7 @@
 
 module contra::events;
 
-use contra::{auditors::VerifiedKeyEncryption, encrypted_amount::EncryptedAmount};
+use contra::{encrypted_amount::EncryptedAmount, twisted_elgamal::PublicKey};
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -17,15 +17,27 @@ public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop
 /// A new token account is registered for an account for a token type `T` with a public key `pk`.
 public struct NewRegistrationEvent<phantom T> has copy, drop {
     owner: address,
-    pk: Element<G>,
-    verified_key_encryption: VerifiedKeyEncryption,
+    pk: PublicKey,
 }
 
-/// An account has updated the public key for a token type `T`.
-public struct UpdatedPublicKeyEvent<phantom T> has copy, drop {
+/// An account set its optional default key (used by `register_with_default_pk`) to `new_pk`, or
+/// cleared it (`new_pk == none`). Per-token keys are independent of this, so it is not parameterized
+/// by a token type.
+public struct DefaultPkRotatedEvent has copy, drop {
     owner: address,
-    new_pk: Element<G>,
-    verified_key_encryption: VerifiedKeyEncryption,
+    new_pk: Option<PublicKey>,
+}
+
+/// Token `T`'s balance was re-keyed to `new_pk` (an explicit new key, independent of other tokens).
+public struct TokenRekeyedEvent<phantom T> has copy, drop {
+    owner: address,
+    new_pk: PublicKey,
+}
+
+/// Emitted when `try_rekey_token_account_and_unpause` soft-fails (its re-key proof did not verify, e.g. a deposit raced).
+/// Token `T` is left stale (unchanged) for a retry.
+public struct TryTokenRekeyFailedEvent<phantom T> has copy, drop {
+    owner: address,
 }
 
 /// A public coin is wrapped into a confidential token, adding to the pending encrypted balance of
@@ -37,20 +49,28 @@ public struct WrapEvent<phantom T> has copy, drop {
 }
 
 /// A confidential transfer is made from a sender to a receiver. The transferred amount is the
-/// well-formed four-limb encryption `encrypted_amount_receiver` under `receiver_pk`. The sender
-/// does not send a separate sender-keyed amount: it recovers its own outgoing value from the
-/// commitments in `encrypted_amount_receiver` (the sender and receiver commitments are identical)
-/// by re-deriving the per-transfer blinding from `seed = HKDF(sk * seed_point)` and
-/// the receiver's `batch_index` within this transfer. `memo` is an opaque caller-supplied blob,
-/// empty if none was provided.
+/// well-formed four-limb encryption `encrypted_amount_receiver` (four range-proven u16 limbs) under
+/// `receiver_pk`; the full amount is `Σ_k n_k · 2^{16k}`. The sender does not send a separate
+/// sender-keyed amount: it recovers its own outgoing value from these commitments (the sender and
+/// receiver commitments are identical) by re-deriving the per-transfer blinding from
+/// `seed = HKDF(sk * seed_point)` and the receiver's `batch_index` within this transfer.
+///
+/// `auditor_pk` is the verifying auditor key — `none` when auditing is disabled, else the current key
+/// (or, during a rotation grace window, the previous one) — and `auditor_decryption_handles` holds
+/// that auditor's two u32-limb `[lo, hi]` handles (empty when auditing is disabled). An auditor whose
+/// key equals `auditor_pk` folds the four u16 commitments into the two u32-limb commitments
+/// (`C_0 + 2^16 C_1`, `C_2 + 2^16 C_3`) and pairs each with the matching handle off-chain. `memo` is an
+/// opaque caller-supplied blob, empty if none was provided.
 public struct TransferEvent<phantom T> has copy, drop {
     sender: address,
-    sender_pk: Element<G>,
+    sender_pk: PublicKey,
     seed_point: Element<G>,
     batch_index: u8,
     receiver: address,
-    receiver_pk: Element<G>,
+    receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
+    auditor_decryption_handles: vector<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 }
 
@@ -65,9 +85,6 @@ public struct TryTransferFailedEvent() has copy, drop;
 
 /// Emitted when a `try_unwrap` fails due to an invalid balance proof.
 public struct TryUnwrapFailedEvent() has copy, drop;
-
-/// Emitted when a `try_set_public_key_and_unpause` fails its optimistic restate.
-public struct TrySetPublicKeyFailedEvent() has copy, drop;
 
 /// An amount is taken from the balance of an account and converted to public coins.
 public struct UnwrapEvent<phantom T> has copy, drop {
@@ -105,11 +122,12 @@ public struct AccountUnfreezeEvent<phantom T> has copy, drop {
     account: address,
 }
 
-/// Emitted when the auditors for a confidential token of type `T` are updated.
+/// Emitted when the auditor keys for a confidential token of type `T` are updated. `current_pks` is
+/// the new key set tried first on a transfer (empty if auditing is disabled); `previous_pks` is the
+/// set also accepted during a rotation grace window (need not be the same length as `current_pks`).
 public struct UpdateAuditorsEvent<phantom T> has copy, drop {
-    public_keys: vector<Element<G>>,
-    version: u32,
-    recommended_min_version: u32,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 }
 
 // === Emit functions ===
@@ -122,20 +140,20 @@ public(package) fun emit_policy_update<T, W>(permissioned_operations: vector<u8>
     event::emit(PolicyUpdateEvent<T, W>(permissioned_operations));
 }
 
-public(package) fun emit_new_registration<T>(
-    owner: address,
-    pk: Element<G>,
-    verified_key_encryption: VerifiedKeyEncryption,
-) {
-    event::emit(NewRegistrationEvent<T> { owner, pk, verified_key_encryption });
+public(package) fun emit_new_registration<T>(owner: address, pk: PublicKey) {
+    event::emit(NewRegistrationEvent<T> { owner, pk });
 }
 
-public(package) fun emit_updated_public_key<T>(
-    owner: address,
-    new_pk: Element<G>,
-    verified_key_encryption: VerifiedKeyEncryption,
-) {
-    event::emit(UpdatedPublicKeyEvent<T> { owner, new_pk, verified_key_encryption });
+public(package) fun emit_default_pk_rotated(owner: address, new_pk: Option<PublicKey>) {
+    event::emit(DefaultPkRotatedEvent { owner, new_pk });
+}
+
+public(package) fun emit_token_rekeyed<T>(owner: address, new_pk: PublicKey) {
+    event::emit(TokenRekeyedEvent<T> { owner, new_pk });
+}
+
+public(package) fun emit_try_token_rekey_failed<T>(owner: address) {
+    event::emit(TryTokenRekeyFailedEvent<T> { owner });
 }
 
 public(package) fun emit_wrap<T>(receiver: address, amount: u64, memo: vector<u8>) {
@@ -144,12 +162,14 @@ public(package) fun emit_wrap<T>(receiver: address, amount: u64, memo: vector<u8
 
 public(package) fun emit_transfer<T>(
     sender: address,
-    sender_pk: Element<G>,
+    sender_pk: PublicKey,
     seed_point: Element<G>,
     batch_index: u8,
     receiver: address,
-    receiver_pk: Element<G>,
+    receiver_pk: PublicKey,
     encrypted_amount_receiver: EncryptedAmount,
+    auditor_decryption_handles: vector<Element<G>>,
+    auditor_pk: Option<PublicKey>,
     memo: vector<u8>,
 ) {
     event::emit(TransferEvent<T> {
@@ -160,6 +180,8 @@ public(package) fun emit_transfer<T>(
         receiver,
         receiver_pk,
         encrypted_amount_receiver,
+        auditor_decryption_handles,
+        auditor_pk,
         memo,
     });
 }
@@ -174,10 +196,6 @@ public(package) fun emit_try_transfer_failed() {
 
 public(package) fun emit_try_unwrap_failed() {
     event::emit(TryUnwrapFailedEvent());
-}
-
-public(package) fun emit_try_set_public_key_failed() {
-    event::emit(TrySetPublicKeyFailedEvent());
 }
 
 public(package) fun emit_unwrap<T>(sender: address, amount: u64) {
@@ -209,9 +227,8 @@ public(package) fun emit_account_unfreeze<T>(account: address) {
 }
 
 public(package) fun emit_update_auditors<T>(
-    public_keys: vector<Element<G>>,
-    version: u32,
-    recommended_min_version: u32,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 ) {
-    event::emit(UpdateAuditorsEvent<T> { public_keys, version, recommended_min_version });
+    event::emit(UpdateAuditorsEvent<T> { current_pks, previous_pks });
 }

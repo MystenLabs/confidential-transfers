@@ -82,17 +82,17 @@ export async function setupChannelContraAccount(opts: {
 			tokenType: deployment.buType,
 		}),
 	);
-	const account = tx.add(
-		contraContracts.newAccount({
-			package: deployment.contra.packageId,
-			arguments: { registry: deployment.contra.accountRegistryId, owner: channelObjectId },
-		}),
-	);
+	// Account creation is owner-only; the channel self-authenticates via its `&mut UID` inside
+	// `payment_channel::new_account`, so the account is created there rather than via `newAccount`.
+	const account = tx.moveCall({
+		target: `${deployment.packageId}::payment_channel::new_account`,
+		typeArguments: [deployment.buType],
+		arguments: [channelArg, tx.object(deployment.contra.accountRegistryId)],
+	});
 	tx.add(
 		await contraClient.register({
 			tokenAccount: channelTokenAccount,
 			account,
-			auditorPublicKeys: [],
 			auth: () => auth,
 		}),
 	);
@@ -165,7 +165,7 @@ export async function fundAndActivateChannel(opts: {
 	const tx = new Transaction();
 	const [split] = tx.splitCoins(tx.object(objects[0].objectId), [tx.pure.u64(fundAmount)]);
 	tx.add(
-		contraClient.wrap({
+		await contraClient.wrap({
 			coin: split,
 			receiver: channelObjectId,
 			tokenType: deployment.buType,

@@ -23,15 +23,8 @@ import {
 	publishBytecodes,
 } from 'contra-utils/node';
 
-import { getBulletproofs } from '../../src/bp.js';
 import * as contraContracts from '../../src/contracts/contra/contra.js';
-import {
-	buildKeyEncryptionOption,
-	point,
-	PROTOCOL_KEY_CONSISTENCY,
-	PROTOCOL_RANGE_PROOF_32,
-} from '../../src/helpers.js';
-import { KeyEncryption } from '../../src/key_encryption.js';
+import { point } from '../../src/helpers.js';
 import type { TokenAccount } from '../../src/token_account.js';
 import type { ContraTestClient, FreshUser, Harness, Signer } from './harness.js';
 import type { TokenIssuer } from './token_issuer.js';
@@ -108,7 +101,6 @@ export class Gated {
 	 * created and shared. Signed by `user`.
 	 */
 	async register(user: FreshUser): Promise<void> {
-		const keyEncryption = await this.#keyEncryption(user.tokenAccount);
 		const tx = new Transaction();
 		tx.moveCall({
 			target: `${this.packageId}::gated::gated_register`,
@@ -117,7 +109,6 @@ export class Gated {
 				tx.object(this.tokenIssuer.confidentialTokenId),
 				tx.object(this.client.contra.getAccountId(user.address)),
 				point(user.tokenAccount.publicKey.toBytes()),
-				buildKeyEncryptionOption(this.tokenIssuer.contraPackageId, keyEncryption),
 			],
 		});
 		tx.setSender(user.address);
@@ -145,9 +136,13 @@ export class Gated {
 	 * (object-bound auth). Signed by `signer`.
 	 */
 	async vaultRegister(vault: string, tokenAccount: TokenAccount, signer: Signer): Promise<void> {
-		const keyEncryption = await this.#keyEncryption(tokenAccount);
 		const tx = new Transaction();
-		const account = tx.add(this.client.contra.newAccount({ owner: vault }));
+		// `new_account` is permissionless, but the account is created inside `gated::vault_new_account`
+		// (from the vault's address) rather than via `newAccount` to mirror the object-bound flow.
+		const account = tx.moveCall({
+			target: `${this.packageId}::gated::vault_new_account`,
+			arguments: [tx.object(vault), tx.object(this.client.contra.accountRegistryId)],
+		});
 		tx.moveCall({
 			target: `${this.packageId}::gated::vault_register`,
 			typeArguments: [this.tokenIssuer.tokenType],
@@ -156,7 +151,6 @@ export class Gated {
 				tx.object(this.tokenIssuer.confidentialTokenId),
 				account,
 				point(tokenAccount.publicKey.toBytes()),
-				buildKeyEncryptionOption(this.tokenIssuer.contraPackageId, keyEncryption),
 			],
 		});
 		tx.add(this.client.contra.shareAccount({ account }));
@@ -237,20 +231,5 @@ export class Gated {
 		});
 		tx.setSender(receiver.address);
 		await this.exec(tx, receiver.keypair);
-	}
-
-	/** Build the `KeyEncryption` for `tokenAccount` against the current auditor set, if any. */
-	async #keyEncryption(tokenAccount: TokenAccount): Promise<KeyEncryption | undefined> {
-		const auditorPks = this.tokenIssuer.getAuditorKeys(this.tokenIssuer.auditorVersion).publicKeys;
-		if (auditorPks.length === 0) return undefined;
-		const { batchRangeProver } = await getBulletproofs();
-		return KeyEncryption.prove(
-			batchRangeProver,
-			tokenAccount.dst(PROTOCOL_KEY_CONSISTENCY),
-			tokenAccount.dst(PROTOCOL_RANGE_PROOF_32),
-			tokenAccount.privateKey,
-			tokenAccount.publicKey,
-			auditorPks,
-		);
 	}
 }

@@ -55,11 +55,11 @@ fun closed_loop_roundtrip() {
     confidential_pbu::add_to_whitelist(&whitelist_cap, &mut whitelist, bob);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
+    let mut alice_account = account_registry.new(scenario.ctx().sender());
     confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk_alice, scenario.ctx());
 
     scenario.next_tx(bob);
-    let mut bob_account = account_registry.new(bob);
+    let mut bob_account = account_registry.new(scenario.ctx().sender());
     confidential_pbu::register(&ct, &whitelist, &mut bob_account, pk_bob, scenario.ctx());
 
     // Alice: mint BU, swap to pBU, wrap into her confidential balance.
@@ -129,7 +129,7 @@ fun closed_loop_roundtrip() {
             &auth,
             &ct,
             &deny_list,
-            vector[pk_bob],
+            vector[twisted_elgamal::public_key(pk_bob)],
             vector[taken_amount],
             well_formed_proofs,
             total_sender_handle,
@@ -137,6 +137,7 @@ fun closed_loop_roundtrip() {
             ristretto255::g_identity(),
             new_balance,
             sum_proof,
+            option::none(),
         )
         .add<PBU>(&mut bob_account, vector[], &deny_list)
         .finalize();
@@ -238,7 +239,7 @@ fun register_requires_whitelist() {
 
     // `mallory` is not on the whitelist -> this aborts.
     scenario.next_tx(mallory);
-    let mut mallory_account = account_registry.new(mallory);
+    let mut mallory_account = account_registry.new(scenario.ctx().sender());
     confidential_pbu::register(&ct, &whitelist, &mut mallory_account, pk, scenario.ctx());
 
     unit_test::destroy(mallory_account);
@@ -292,7 +293,7 @@ fun set_public_key_requires_whitelist() {
     confidential_pbu::add_to_whitelist(&whitelist_cap, &mut whitelist, alice);
 
     scenario.next_tx(alice);
-    let mut alice_account = account_registry.new(alice);
+    let mut alice_account = account_registry.new(scenario.ctx().sender());
     confidential_pbu::register(&ct, &whitelist, &mut alice_account, pk, scenario.ctx());
 
     // Dummy re-key args so the call type-checks; the whitelist abort fires before any proof

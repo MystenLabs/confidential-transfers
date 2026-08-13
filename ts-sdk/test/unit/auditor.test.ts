@@ -1,78 +1,119 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ristretto255 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
 
-import { ContraAuditor } from '../../src/auditor.js';
-import { limbsToScalar, scalarToLimbs } from '../../src/nizk.js';
-import { G, GROUP_ORDER, mul } from '../../src/ristretto255.js';
-import {
-	DiscreteLogTable,
-	generateKeyPair,
-	MultiRecipientEncryption,
-	type PrivateKey,
-} from '../../src/twisted_elgamal.js';
-import type {
-	ContraAuditorOptions,
-	ContraPackageConfig,
-	VerifiedKeyEncryption,
-} from '../../src/types.js';
+import { ContraAuditor, type DecodedTransferEvent } from '../../src/auditor.js';
+import { AuditorKeyNotHeldError } from '../../src/error.js';
+import { mul, randomScalar, type RistrettoPoint } from '../../src/ristretto255.js';
+import { Ciphertext, DiscreteLogTable, generateKeyPair } from '../../src/twisted_elgamal.js';
 
-const ZERO_ADDR = '0x0000000000000000000000000000000000000000000000000000000000000000';
-const DUMMY_CONFIG: ContraPackageConfig = {
-	packageId: ZERO_ADDR,
-	accountRegistryId: ZERO_ADDR,
-	tokenRegistryId: ZERO_ADDR,
-};
+const bcsPoint = (p: RistrettoPoint) => ({ bytes: Array.from(p.toBytes()) });
+const bcsLimb = (c: Ciphertext) => ({
+	ciphertext: bcsPoint(c.ciphertext),
+	decryption_handle: bcsPoint(c.decryptionHandle),
+});
 
-describe('ContraAuditor.recoverPrivateKey', () => {
-	const table = DiscreteLogTable.create(20);
+/**
+ * Build a decoded `TransferEvent` for a single receiver amount under an optional auditor key,
+ * mirroring the on-chain event: `encrypted_amount_receiver` is the receiver's four u16-limb ciphertexts,
+ * plus, when `auditorPk` is set, its two u32-limb handles `D̃_k = ρ̃_k · pk`,
+ * `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}` (`auditor_pk` is the key, `auditor_decryption_handles` its two
+ * handles; `null` / empty otherwise).
+ */
+function buildTransferEvent(
+	receiverPk: RistrettoPoint,
+	auditorPk: RistrettoPoint | null,
+	amount: bigint,
+): DecodedTransferEvent {
+	const shift = 1n << 16n;
+	const limbValues = [
+		amount & 0xffffn,
+		(amount >> 16n) & 0xffffn,
+		(amount >> 32n) & 0xffffn,
+		(amount >> 48n) & 0xffffn,
+	];
+	const blindings = limbValues.map(() => randomScalar());
+	const limbs = limbValues.map(
+		(v, j) => Ciphertext.encryptWithBlinding(receiverPk, v, blindings[j]).ciphertext,
+	);
+	// The auditor folds the four u16 commitments back into two u32 limbs, so its handles use the folded
+	// blindings `ρ̃_k = ρ_{2k} + 2^16 ρ_{2k+1}`.
+	const rho0 = ristretto255.Point.Fn.create(blindings[0] + shift * blindings[1]);
+	const rho1 = ristretto255.Point.Fn.create(blindings[2] + shift * blindings[3]);
+	return {
+		encrypted_amount_receiver: {
+			l0: bcsLimb(limbs[0]),
+			l1: bcsLimb(limbs[1]),
+			l2: bcsLimb(limbs[2]),
+			l3: bcsLimb(limbs[3]),
+		},
+		auditor_decryption_handles: auditorPk
+			? [bcsPoint(mul(auditorPk, rho0)), bcsPoint(mul(auditorPk, rho1))]
+			: [],
+		auditor_pk: auditorPk ? { element: bcsPoint(auditorPk) } : null,
+	};
+}
+
+describe('ContraAuditor.decryptTransferAmount', () => {
+	const table = DiscreteLogTable.create(16);
 	const [auditorPk, auditorSk] = generateKeyPair();
-
-	function escrow(keyValue: bigint): VerifiedKeyEncryption {
-		const ciphertext = scalarToLimbs(keyValue).map((limb, i) =>
-			MultiRecipientEncryption.encrypt([auditorPk], limb, BigInt((i + 1) * 7)),
-		);
-		return { ciphertext, version: 0 };
-	}
+	const [receiverPk] = generateKeyPair();
 
 	function auditorFor(): ContraAuditor {
-		const options: ContraAuditorOptions = {
-			suiClient: {} as ContraAuditorOptions['suiClient'],
-			packageConfig: DUMMY_CONFIG,
-			tokenType: `${ZERO_ADDR}::test::T`,
-			table,
-			auditorKeyForVersion: new Map<number, { index: number; privateKey: PrivateKey }>([
-				[0, { index: 0, privateKey: auditorSk }],
-			]),
-		};
-		return new ContraAuditor(options);
+		return new ContraAuditor({ tokenType: '0x2::sui::SUI', privateKeys: [auditorSk], table });
 	}
 
-	it('recovers a canonical escrowed key unchanged', () => {
-		const sk = 1234567890n;
-		expect(auditorFor().recoverPrivateKey(escrow(sk), mul(G, sk))).toBe(sk);
+	it('recovers a small amount from the transfer commitments and handles', () => {
+		const amount = 12345n;
+		expect(
+			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, auditorPk, amount)),
+		).toBe(amount);
 	});
 
-	it('recovers the canonical key from a non-canonical alias X = sk + q', () => {
-		const sk = 1234567890n;
-		const alias = sk + GROUP_ORDER;
+	it('recovers an amount spanning all four limbs (>2^32)', () => {
+		const amount = (7n << 48n) | (3n << 32n) | (9n << 16n) | 42n;
+		expect(
+			auditorFor().decryptTransferAmount(buildTransferEvent(receiverPk, auditorPk, amount)),
+		).toBe(amount);
+	});
 
-		// Sanity: the alias is a distinct, non-canonical 256-bit value whose limbs are all valid u32.
-		expect(alias).toBeGreaterThanOrEqual(GROUP_ORDER);
-		const limbs = scalarToLimbs(alias);
-		expect(limbs.every((l) => l < 1n << 32n)).toBe(true);
-		expect(limbsToScalar(limbs)).toBe(alias);
+	it('returns null when the transfer carried no auditor data', () => {
+		const event = buildTransferEvent(receiverPk, null, 1n);
+		expect(auditorFor().decryptTransferAmount(event)).toBeNull();
+	});
 
-		// The escrowed value is the alias, but the account public key is the canonical `sk * G`.
-		expect(auditorFor().recoverPrivateKey(escrow(alias), mul(G, sk))).toBe(sk);
-	}, 30000);
+	it('throws when it holds no key matching the transfer auditor_pk', () => {
+		const event = buildTransferEvent(receiverPk, auditorPk, 500n);
+		const [, wrongSk] = generateKeyPair();
+		const wrongAuditor = new ContraAuditor({
+			tokenType: '0x2::sui::SUI',
+			privateKeys: [wrongSk],
+			table,
+		});
+		expect(() => wrongAuditor.decryptTransferAmount(event)).toThrow(AuditorKeyNotHeldError);
+	});
 
-	it('rejects a key encryption that does not match the account public key', () => {
-		const donorSk = 1234567890n;
-		const victimSk = 9876543210n;
-		expect(() => auditorFor().recoverPrivateKey(escrow(donorSk), mul(G, victimSk))).toThrow(
-			/does not match the account public key/,
-		);
+	it('decrypts transfers under either key across a rotation', () => {
+		const [oldPk, oldSk] = generateKeyPair();
+		const [newPk, newSk] = generateKeyPair();
+		const auditor = new ContraAuditor({
+			tokenType: '0x2::sui::SUI',
+			privateKeys: [oldSk, newSk],
+			table,
+		});
+		// Matches each transfer's auditor_pk to the right held key.
+		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, oldPk, 111n))).toBe(111n);
+		expect(auditor.decryptTransferAmount(buildTransferEvent(receiverPk, newPk, 222n))).toBe(222n);
+	});
+
+	it('addKey extends the set of decryptable keys', () => {
+		const [rotatedPk, rotatedSk] = generateKeyPair();
+		const auditor = auditorFor();
+		const event = buildTransferEvent(receiverPk, rotatedPk, 777n);
+		expect(() => auditor.decryptTransferAmount(event)).toThrow(AuditorKeyNotHeldError);
+		auditor.addKey(rotatedSk);
+		expect(auditor.decryptTransferAmount(event)).toBe(777n);
 	});
 });

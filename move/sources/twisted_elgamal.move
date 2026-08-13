@@ -39,6 +39,26 @@ public fun new(ciphertext: Element<G>, decryption_handle: Element<G>): Encryptio
     }
 }
 
+// === Public key ===
+
+const EIdentityPublicKey: u64 = 0;
+
+/// A twisted ElGamal public key `pk = x * g`, guaranteed non-identity by construction.
+public struct PublicKey has copy, drop, store {
+    element: Element<G>,
+}
+
+/// Wrap `element` as a `PublicKey`, aborting with `EIdentityPublicKey` if it is the group identity.
+public fun public_key(element: Element<G>): PublicKey {
+    assert!(element != g_identity(), EIdentityPublicKey);
+    PublicKey { element }
+}
+
+/// The underlying group element.
+public fun as_element(pk: &PublicKey): &Element<G> {
+    &pk.element
+}
+
 /// The standard Ristretto255 generator `g`, used for randomness blinding in ciphertexts.
 public(package) fun g(): Element<G> {
     ristretto255::g_generator()
@@ -80,12 +100,6 @@ public(package) fun sub(e1: &Encryption, e2: &Encryption): Encryption {
     }
 }
 
-/// In-place version of `add`: `e1` becomes the homomorphic sum `e1 + e2`.
-public(package) fun add_assign(e1: &mut Encryption, e2: &Encryption) {
-    e1.ciphertext = g_add(&e1.ciphertext, &e2.ciphertext);
-    e1.decryption_handle = g_add(&e1.decryption_handle, &e2.decryption_handle);
-}
-
 /// In-place version of `sub`: `e1` becomes the homomorphic difference `e1 - e2`.
 /// Beware of plaintext-side overflow in the scalar field.
 public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
@@ -103,16 +117,6 @@ public(package) fun add_assign_u64(e: &mut Encryption, amount: u64) {
 public(package) fun sub_assign_u64(e: &mut Encryption, amount: u64) {
     if (amount == 0) return;
     e.ciphertext = g_sub(&e.ciphertext, &g_mul(&scalar_from_u64(amount), &h()));
-}
-
-/// Return an encryption of the same plaintext as the input but where the plaintext is multiplied by 2^bits.
-/// The result is an encryption of the plaintext in the scalar field.
-public(package) fun shift_left(e: &Encryption, bits: u8): Encryption {
-    let factor = scalar_from_u64(1 << bits);
-    Encryption {
-        ciphertext: g_mul(&factor, &e.ciphertext),
-        decryption_handle: g_mul(&factor, &e.decryption_handle),
-    }
 }
 
 /// Trivial encryption of zero without randomness.
@@ -137,47 +141,9 @@ public(package) fun encrypt_trivial(amount: u64): Encryption {
     }
 }
 
-/// A single-ciphertext encryption readable by multiple recipients. Shares one `ciphertext`
-/// component across all recipients, with a separate `decryption_handle` per recipient public key.
-public struct MultiRecipientEncryption has copy, drop, store {
-    ciphertext: Element<G>,
-    decryption_handles: vector<Element<G>>,
-}
-
-/// Construct a Twisted ElGamal `MultiRecipientEncryption` consisting of a shared ciphertext `c = r * g + m * h` and
-/// one decryption handle `d_i = r * pk_i` per recipient identified by their public key `pk_i`.
-public fun new_multi_recipient_encryption(
-    ciphertext: Element<G>,
-    decryption_handles: vector<Element<G>>,
-): MultiRecipientEncryption {
-    MultiRecipientEncryption {
-        ciphertext,
-        decryption_handles,
-    }
-}
-
-/// Returns the shared ciphertext component `c = r * g + m * h` of a Twisted ElGamal `MultiRecipientEncryption`.
-public fun multi_recipient_ciphertext(e: &MultiRecipientEncryption): &Element<G> {
-    &e.ciphertext
-}
-
-/// Returns the per-recipient decryption handles `d_i = r * pk_i` for recipient public key `pk_i` of a
-/// Twisted ElGamal `MultiRecipientEncryption`.
-public fun multi_recipient_decryption_handles(e: &MultiRecipientEncryption): &vector<Element<G>> {
-    &e.decryption_handles
-}
-
-public use fun multi_recipient_ciphertext as MultiRecipientEncryption.ciphertext;
-public use fun multi_recipient_decryption_handles as MultiRecipientEncryption.decryption_handles;
-
 #[test_only]
 public fun encrypt_zero_for_testing(): Encryption {
     encrypt_zero()
-}
-
-#[test_only]
-public fun ciphertext_for_testing(e: &Encryption): Element<G> {
-    *e.ciphertext()
 }
 
 #[test_only]

@@ -16,7 +16,8 @@ module closed_loop::confidential_pbu;
 use closed_loop::pbu::{Self, PbuAdminCap, Pool, PBU};
 use contra::{
     contra::{Self, Account, ConfidentialToken, ManagementCap, TokenRegistry},
-    nizk::DdhProof
+    nizk::DdhProof,
+    twisted_elgamal::public_key
 };
 use sui::{group_ops::Element, ristretto255::G, vec_set::{Self, VecSet}};
 
@@ -97,9 +98,8 @@ public fun is_whitelisted(whitelist: &Whitelist, addr: address): bool {
 
 // === Gated register ===
 
-/// Register a confidential pBU `TokenAccount` on `account` with public key
-/// `pk`. Callable only by addresses on the `Whitelist`; the caller does not
-/// need to own `account`.
+/// Register a confidential pBU `TokenAccount` on `account`, keyed under the explicit `pk`. Callable
+/// only by addresses on the `Whitelist`; the caller does not need to own `account`.
 public fun register(
     ct: &ConfidentialToken<PBU>,
     whitelist: &Whitelist,
@@ -110,10 +110,10 @@ public fun register(
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     // Auth is only used internally.
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::register(account, &auth, ct, pk, option::none());
+    contra::register(account, &auth, public_key(pk));
 }
 
-/// Update the public key of a confidential pBU `TokenAccount` on `account`.
+/// Rotate `account`'s key to `new_pk` and re-key its confidential pBU balance.
 /// Callable only by addresses on the `Whitelist`; like `register`, the caller
 /// does not need to own `account` (key rotation reuses the `REGISTER`
 /// operation slot in the policy, so it is gated by the same whitelist).
@@ -128,13 +128,5 @@ public fun set_public_key(
 ) {
     assert!(whitelist.addresses.contains(&ctx.sender()), ENotWhitelisted);
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), PbuWitness {});
-    contra::set_public_key(
-        account,
-        &auth,
-        ct,
-        new_pk,
-        new_handles,
-        rekey_proof,
-        option::none(),
-    );
+    contra::rekey_token_account(account, &auth, public_key(new_pk), new_handles, rekey_proof);
 }

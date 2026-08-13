@@ -1,99 +1,46 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { AuditorVersionEntry } from 'ts-sdk';
 
-import { AuditAccountCard } from '../components/AuditAccountCard';
+import { AuditedTransfers } from '../components/AuditedTransfers';
 import { useActiveNetwork } from '../hooks/useActiveNetwork';
 import { useContraAuditor } from '../hooks/useContraAuditor';
 import { useContraClient } from '../hooks/useContraClient';
 import { useTokenConfig } from '../hooks/useTokenConfig';
 import { nsKey, type Network } from '../network';
-import { auditorPrivateKeyMatchesPublic, fetchAuditors } from '../sdk';
+import { auditorPrivateKeyMatchesPublic, fetchAuditor } from '../sdk';
 
 type VerifyState = 'input' | 'verifying' | 'verified' | 'error';
 
-interface KeyRow {
-	version: string;
-	index: string;
-	privateKey: string;
-}
-
 /**
- * Load the issuer's local cache for `configId`. Accepts both the current
- * shape ({ auditorPrivateKey, auditorIndex }) and the legacy shape
- * ({ auditorKeys: [{ privateKey, publicKey }, …] }) so users with prior
- * deployments don't have to re-enter their key. The kaisho deploy flow
- * only writes the initial auditor set, so the stored entry maps to
- * version 0.
+ * Load the issuer's locally-cached auditor private key for `configId`. Accepts the current shape
+ * ({ auditorPrivateKey }) and the legacy shape ({ auditorKeys: [{ privateKey }, …] }) so users with
+ * prior deployments don't have to re-enter their key.
  */
-function loadStoredAuditorKey(
-	configId: string,
-	network: Network,
-): { version: number; index: number; privateKey: string } | null {
+function loadStoredAuditorKey(configId: string, network: Network): string | null {
 	try {
 		const raw = localStorage.getItem(nsKey('kaisho_issuer_wallets', network));
 		if (!raw) return null;
 		const wallets = JSON.parse(raw) as Record<string, unknown>;
 		const entry = wallets[configId] as
-			| {
-					auditorPrivateKey?: unknown;
-					auditorIndex?: unknown;
-					auditorKeys?: Array<{ privateKey?: unknown }>;
-			  }
+			| { auditorPrivateKey?: unknown; auditorKeys?: Array<{ privateKey?: unknown }> }
 			| undefined;
 		if (!entry) return null;
-		if (typeof entry.auditorPrivateKey === 'string' && typeof entry.auditorIndex === 'number') {
-			return { version: 0, index: entry.auditorIndex, privateKey: entry.auditorPrivateKey };
-		}
+		if (typeof entry.auditorPrivateKey === 'string') return entry.auditorPrivateKey;
 		const legacy = entry.auditorKeys?.[0]?.privateKey;
-		if (typeof legacy === 'string') {
-			return { version: 0, index: 0, privateKey: legacy };
-		}
-		return null;
+		return typeof legacy === 'string' ? legacy : null;
 	} catch {
 		return null;
 	}
 }
 
-function emptyRow(): KeyRow {
-	return { version: '', index: '', privateKey: '' };
-}
-
-interface ParsedRow {
-	version: number;
-	index: number;
-	privateKey: bigint;
-}
-
-function parseRows(rows: KeyRow[]): { parsed?: ParsedRow[]; error?: string } {
-	const parsed: ParsedRow[] = [];
-	for (let i = 0; i < rows.length; i++) {
-		const r = rows[i];
-		const versionNum = Number(r.version.trim());
-		const indexNum = Number(r.index.trim());
-		const hex = r.privateKey.trim().replace(/^0x/, '');
-		if (!Number.isInteger(versionNum) || versionNum < 0) {
-			return { error: `Row ${i + 1}: version must be a non-negative integer.` };
-		}
-		if (!Number.isInteger(indexNum) || indexNum < 0) {
-			return { error: `Row ${i + 1}: index must be a non-negative integer.` };
-		}
-		if (!hex || !/^[0-9a-fA-F]+$/.test(hex)) {
-			return { error: `Row ${i + 1}: private key must be a hex string.` };
-		}
-		parsed.push({ version: versionNum, index: indexNum, privateKey: BigInt('0x' + hex) });
-	}
-	const seen = new Set<number>();
-	for (const p of parsed) {
-		if (seen.has(p.version)) {
-			return { error: `Duplicate entry for version ${p.version}.` };
-		}
-		seen.add(p.version);
-	}
-	return { parsed };
+/** Parse a hex private key (with or without `0x`) into a scalar, or return an error message. */
+function parseKey(input: string): { key?: bigint; error?: string } {
+	const hex = input.trim().replace(/^0x/, '');
+	if (!hex || !/^[0-9a-fA-F]+$/.test(hex)) return { error: 'Private key must be a hex string.' };
+	return { key: BigInt('0x' + hex) };
 }
 
 export function Auditor() {
@@ -103,36 +50,35 @@ export function Auditor() {
 	const contraClient = useContraClient(config);
 	const buTokenType = config ? `${config.buPackage}::bu::BU` : undefined;
 
-	const [keyRows, setKeyRows] = useState<KeyRow[]>([emptyRow()]);
+	const [keyInput, setKeyInput] = useState('');
 	const [verifyState, setVerifyState] = useState<VerifyState>('input');
 	const [verifyError, setVerifyError] = useState('');
-	const [unverifiedVersions, setUnverifiedVersions] = useState<number[]>([]);
-	const [auditorEntries, setAuditorEntries] = useState<Map<number, AuditorVersionEntry> | null>(
-		null,
-	);
+	const [auditorKey, setAuditorKey] = useState<bigint | null>(null);
 
-	// On mount / configId change: skip the prompt entirely if we already have
-	// this deployment's keys in localStorage (the issuer's own browser).
+	// On mount / configId change: skip the prompt entirely if we already have this deployment's key
+	// in localStorage (the issuer's own browser).
 	useEffect(() => {
 		if (!configId) return;
 		const stored = loadStoredAuditorKey(configId, network);
 		if (!stored) return;
-		const map = new Map<number, AuditorVersionEntry>();
-		map.set(stored.version, {
-			index: stored.index,
-			privateKey: BigInt('0x' + stored.privateKey),
-		});
-		setAuditorEntries(map);
+		const { key } = parseKey(stored);
+		if (key === undefined) return;
+		setAuditorKey(key);
 		setVerifyState('verified');
 	}, [configId, network]);
+
+	const auditor = useContraAuditor(
+		config,
+		buTokenType,
+		verifyState === 'verified' ? auditorKey : null,
+	);
 
 	const handleVerify = async () => {
 		setVerifyState('verifying');
 		setVerifyError('');
-		setUnverifiedVersions([]);
 		try {
-			const { parsed, error } = parseRows(keyRows);
-			if (error || !parsed) {
+			const { key, error } = parseKey(keyInput);
+			if (error || key === undefined) {
 				setVerifyError(error ?? 'Invalid input.');
 				setVerifyState('error');
 				return;
@@ -142,51 +88,24 @@ export function Auditor() {
 				setVerifyState('error');
 				return;
 			}
-			// We can only verify entries whose version matches the current
-			// on-chain auditor set. Older versions are accepted on trust — the
-			// chain doesn't expose historical auditor pubkeys, and the auditor
-			// still needs them to decrypt accounts that haven't rotated.
-			const tokenType = `${config.buPackage}::bu::BU`;
-			const onChain = await fetchAuditors(contraClient, tokenType);
-			const unverified: number[] = [];
-			for (const entry of parsed) {
-				if (entry.version !== onChain.version) {
-					unverified.push(entry.version);
-					continue;
-				}
-				if (entry.index >= onChain.pks.length) {
-					setVerifyError(
-						`Auditor index ${entry.index} is out of range; the on-chain auditor set has ${onChain.pks.length} key(s) at version ${onChain.version}.`,
-					);
-					setVerifyState('error');
-					return;
-				}
-				if (!auditorPrivateKeyMatchesPublic(entry.privateKey, onChain.pks[entry.index].toBytes())) {
-					setVerifyError(
-						`The private key at row for version ${entry.version}, index ${entry.index} does not match the on-chain auditor public key.`,
-					);
-					setVerifyState('error');
-					return;
-				}
+			const onChain = await fetchAuditor(contraClient, `${config.buPackage}::bu::BU`);
+			if (onChain.currentPks.length === 0) {
+				setVerifyError('Auditing is disabled for this token (no current auditor keys on chain).');
+				setVerifyState('error');
+				return;
 			}
-			const map = new Map<number, AuditorVersionEntry>();
-			for (const entry of parsed) {
-				map.set(entry.version, { index: entry.index, privateKey: entry.privateKey });
+			if (!onChain.currentPks.some((pk) => auditorPrivateKeyMatchesPublic(key, pk.toBytes()))) {
+				setVerifyError('This private key does not match any current on-chain auditor public key.');
+				setVerifyState('error');
+				return;
 			}
-			setAuditorEntries(map);
-			setUnverifiedVersions(unverified);
+			setAuditorKey(key);
 			setVerifyState('verified');
 		} catch (e) {
 			setVerifyError(String(e));
 			setVerifyState('error');
 		}
 	};
-
-	const auditorKeyForVersion = useMemo(
-		() => auditorEntries ?? new Map<number, AuditorVersionEntry>(),
-		[auditorEntries],
-	);
-	const auditor = useContraAuditor(config, buTokenType, auditorKeyForVersion);
 
 	if (isLoading) {
 		return (
@@ -211,93 +130,34 @@ export function Auditor() {
 		);
 	}
 
-	if (verifyState === 'input' || verifyState === 'verifying' || verifyState === 'error') {
-		const canSubmit =
-			keyRows.length > 0 &&
-			keyRows.every((r) => r.version.trim() && r.index.trim() && r.privateKey.trim()) &&
-			verifyState !== 'verifying';
-		const updateRow = (i: number, patch: Partial<KeyRow>) => {
-			setKeyRows((prev) => prev.map((r, j) => (i === j ? { ...r, ...patch } : r)));
-		};
+	if (verifyState !== 'verified') {
+		const canSubmit = keyInput.trim().length > 0 && verifyState !== 'verifying';
 		return (
 			<div className="card flex flex-col gap-4 p-6">
 				<div className="flex flex-col gap-2">
 					<p className="text-sm font-semibold text-white">Auditor View</p>
 					<p className="text-xs text-zinc-500 leading-relaxed">
-						Auditors hold a special decryption key the issuer set when the token was created. With
-						it you can recover any account's viewing key and read its otherwise-confidential balance
-						and history — balances are hidden from third parties, but never from an auditor.
+						Auditing is per-transfer: every confidential transfer carries auditor-readable
+						ciphertexts of its amount. With the token's auditor key you can decrypt each transfer's
+						amount from its on-chain event — but never a user's viewing key or standing balance.
 					</p>
 					<p className="text-xs text-zinc-500 leading-relaxed">
-						Provide one auditor key per version you hold. Entries whose version matches the current
-						on-chain auditor set are verified against the chain; older versions are accepted on
-						trust so you can still decrypt accounts that haven't rotated.
+						Enter the auditor private key. It is verified against the current on-chain auditor
+						public key.
 					</p>
 				</div>
-				<p className="text-[11px] text-zinc-600 leading-relaxed">
-					<span className="font-medium text-zinc-500">Version</span> is the auditor-set rotation;{' '}
-					<span className="font-medium text-zinc-500">index</span> is the key's position within that
-					set. Most deployments have a single key at version 0, index 0.
-				</p>
-				<div className="flex flex-col gap-3">
-					{keyRows.map((row, i) => (
-						<div
-							key={i}
-							className="flex flex-col gap-1.5 rounded-lg border border-white/[0.04] p-3"
-						>
-							<div className="flex items-center justify-between">
-								<p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
-									Auditor Key #{i + 1}
-								</p>
-								{keyRows.length > 1 && (
-									<button
-										className="text-[10px] text-zinc-500 hover:text-red-400"
-										onClick={() => setKeyRows((prev) => prev.filter((_, j) => j !== i))}
-										title="Remove this entry"
-									>
-										Remove
-									</button>
-								)}
-							</div>
-							<div className="flex gap-2">
-								<div className="flex w-20 flex-col gap-1">
-									<label className="text-[10px] font-medium text-zinc-600">Version</label>
-									<input
-										className="input-field font-mono text-xs"
-										placeholder="0"
-										value={row.version}
-										onChange={(e) => updateRow(i, { version: e.target.value })}
-									/>
-								</div>
-								<div className="flex w-20 flex-col gap-1">
-									<label className="text-[10px] font-medium text-zinc-600">Index</label>
-									<input
-										className="input-field font-mono text-xs"
-										placeholder="0"
-										value={row.index}
-										onChange={(e) => updateRow(i, { index: e.target.value })}
-									/>
-								</div>
-								<div className="flex flex-1 flex-col gap-1">
-									<label className="text-[10px] font-medium text-zinc-600">Private key (hex)</label>
-									<input
-										className="input-field font-mono text-xs"
-										placeholder="lowercase hex, no 0x"
-										value={row.privateKey}
-										onChange={(e) => updateRow(i, { privateKey: e.target.value })}
-									/>
-								</div>
-							</div>
-						</div>
-					))}
+				<div className="flex flex-col gap-1">
+					<label className="text-[10px] font-medium text-zinc-600">Auditor private key (hex)</label>
+					<input
+						className="input-field font-mono text-xs"
+						placeholder="lowercase hex, no 0x"
+						value={keyInput}
+						onChange={(e) => setKeyInput(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' && canSubmit) handleVerify();
+						}}
+					/>
 				</div>
-				<button
-					className="text-xs text-zinc-500 hover:text-zinc-300"
-					onClick={() => setKeyRows((prev) => [...prev, emptyRow()])}
-					title="Add another (version, index, key) row"
-				>
-					+ Add another version
-				</button>
 				{verifyState === 'error' && (
 					<p className="text-[11px] text-red-400/80 break-all">{verifyError}</p>
 				)}
@@ -305,7 +165,7 @@ export function Auditor() {
 					className="btn-primary"
 					disabled={!canSubmit}
 					onClick={handleVerify}
-					title="Verify each key against the on-chain auditor set where possible"
+					title="Verify the key against the current on-chain auditor public key"
 				>
 					{verifyState === 'verifying' ? 'Verifying...' : 'Verify'}
 				</button>
@@ -322,43 +182,13 @@ export function Auditor() {
 					<p className="text-sm font-semibold text-white">Auditor View</p>
 				</div>
 				<p className="mt-1.5 text-xs text-zinc-500">
-					Holding {auditorKeyForVersion.size} auditor key
-					{auditorKeyForVersion.size === 1 ? '' : 's'}.
+					Holding the token's auditor key. Transfer amounts below are decrypted from on-chain
+					events.
 				</p>
-				<div className="mt-3 overflow-hidden rounded-lg border border-white/[0.04]">
-					<table className="w-full font-mono text-[11px]">
-						<thead className="bg-white/[0.03] text-[10px] uppercase tracking-[0.15em] text-zinc-500">
-							<tr>
-								<th className="px-2.5 py-1.5 text-left font-semibold">Version</th>
-								<th className="px-2.5 py-1.5 text-left font-semibold">Index</th>
-								<th className="px-2.5 py-1.5 text-left font-semibold">Private Key</th>
-							</tr>
-						</thead>
-						<tbody>
-							{Array.from(auditorKeyForVersion.entries())
-								.sort(([a], [b]) => a - b)
-								.map(([version, entry]) => (
-									<tr key={version} className="border-t border-white/[0.04]">
-										<td className="px-2.5 py-1.5 text-zinc-400">{version}</td>
-										<td className="px-2.5 py-1.5 text-zinc-400">{entry.index}</td>
-										<td className="px-2.5 py-1.5 text-zinc-300 break-all">
-											{entry.privateKey.toString(16)}
-										</td>
-									</tr>
-								))}
-						</tbody>
-					</table>
-				</div>
-				{unverifiedVersions.length > 0 && (
-					<p className="mt-3 text-[11px] text-amber-400/80">
-						Versions {unverifiedVersions.join(', ')} could not be verified on chain (older than the
-						current auditor set) — accepted on trust.
-					</p>
-				)}
 			</div>
 
 			{contraClient && auditor ? (
-				<AuditAccountCard config={config} contraClient={contraClient} auditor={auditor} />
+				<AuditedTransfers config={config} auditor={auditor} />
 			) : (
 				<div className="card p-5">
 					<p className="text-xs text-zinc-500">Loading auditor SDK…</p>

@@ -89,7 +89,7 @@ To rotate the auditor set:
 1. Increment `i`.
 2. Derive `msk_i` by hashing from `msk_N` down to index `i`.
 3. Share `msk_i` with the next auditor set off-chain.
-4. After a setup period (e.g., two days, to give the auditors time to bring their infrastructure online), call `update_auditors` with `pk_i` to switch the on-chain auditor set.
+4. After a setup period (e.g., two days, to give the auditors time to bring their infrastructure online), call `update_auditor` with `pk_i` to switch the on-chain auditor key.
 
 Given `msk_i`, an auditor can derive `msk_j` and `sk_j` for every `j < i`, and therefore decrypt anything encrypted under any earlier auditor public key. They cannot derive `msk_j` for `j > i`, so future rotations remain confidential to them.
 
@@ -119,12 +119,4 @@ The two options trade cost against operational complexity. The table below summa
 
 ## Selected approach
 
-We adopt **Option 2 (per-account)** together with the issuer key derivation scheme above. Auditor-key leakage is assumed to be a rare event, and the offboarding asymmetry — where an offboarded or compromised auditor still holds user viewing keys recovered while active — can be handled by a wallet-driven viewing-key rotation policy:
-
-- **Routine rotation.** Wallets rotate user viewing keys roughly every month.
-- **Triggered rotation.** When the issuer signals on-chain that rotation is recommended (expected only in response to key leakage), wallets rotate immediately.
-- **Inactive accounts.** Inactive users may not rotate until they are next active, and would still receive deposits encrypted under the old key in the meantime. To limit exposure, wallets are encouraged not to send to accounts that haven't rotated within a month after an issuer-signaled rotation.
-
-We believe this is a reasonable tradeoff: per-transfer overhead stays constant in the number of auditors, reads are stateless, and the residual exposure from rare key-leakage events is bounded by the rotation policy above.
-
-> **Disclaimer:** This selection is preliminary. The design may change based on feedback from the community and partners as we gather more input on auditor requirements and operational constraints.
+We implement **Option 1 (per-transfer)** with a **single auditor key per token**. Each transfer attaches an auditor-readable copy of the amount under that key; the auditor never learns a user's viewing key, so balances stay encrypted only under the user's own key and users may reuse one account public key across tokens.

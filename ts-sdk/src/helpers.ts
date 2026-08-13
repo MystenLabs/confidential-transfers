@@ -18,26 +18,13 @@ import type { BatchRangeProver } from './bp.js';
 import * as auditorsContracts from './contracts/contra/auditors.js';
 import * as decodeContracts from './contracts/contra/decode.js';
 import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
+import * as twistedElgamalContracts from './contracts/contra/twisted_elgamal.js';
 import { InvalidArgumentError } from './error.js';
-import type { KeyEncryption } from './key_encryption.js';
-import type { DdhNizk, KeyConsistencyProof } from './nizk.js';
+import type { DdhNizk } from './nizk.js';
 import { ElGamalNizk } from './nizk.js';
 import { type RistrettoPoint } from './ristretto255.js';
-import type { Ciphertext, MultiRecipientEncryption } from './twisted_elgamal.js';
+import type { Ciphertext } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
-
-/** Concatenate one or more byte arrays into a single `Uint8Array`. */
-export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-	let total = 0;
-	for (const a of arrays) total += a.length;
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const a of arrays) {
-		out.set(a, offset);
-		offset += a.length;
-	}
-	return out;
-}
 
 /** BCS layout of the Fiat-Shamir transcript: an ordered list of length-prefixed byte chunks. */
 const FIAT_SHAMIR_TRANSCRIPT = bcs.vector(bcs.vector(bcs.u8()));
@@ -61,14 +48,12 @@ export function fiatShamirChallenge(randomOracleInputs: Uint8Array[]): bigint {
 export const PROTOCOL_DDH = 0x01;
 /** Domain-separation byte for ElGamal proofs in Fiat-Shamir transcripts. */
 export const PROTOCOL_ELGAMAL = 0x02;
-/** Domain-separation byte for key-consistency proofs in Fiat-Shamir transcripts. */
-export const PROTOCOL_KEY_CONSISTENCY = 0x03;
 /** Domain-separation byte for 16-bit (amount well-formedness) Bulletproof range proofs. */
 export const PROTOCOL_RANGE_PROOF_16 = 0x04;
-/** Domain-separation byte for 32-bit (auditor key-encryption) Bulletproof range proofs. */
-export const PROTOCOL_RANGE_PROOF_32 = 0x05;
 /** Domain-separation byte for the batched re-keying DDH proof (Π_rekey). */
 export const PROTOCOL_BATCH_DDH = 0x06;
+/** Domain-separation byte for the per-transfer auditor DDH proofs. */
+export const PROTOCOL_AUDITOR_DDH = 0x07;
 /**
  * Domain-separation byte for the client-only verified-decryption DDH proof
  * produced by `TokenAccount.decryptWithProof`.
@@ -193,6 +178,20 @@ export function buildGVector(packageId: string, points: RistrettoPoint[]) {
 	});
 }
 
+/**
+ * Build an on-chain `vector<twisted_elgamal::PublicKey>` from ristretto points in a single
+ * `decode::public_keys` call (each point is validated non-identity by `public_key`). Used for
+ * `batched_transfer`'s receiver keys and the `update_auditors` / `new_confidential_token` auditor
+ * keys — the elements need a nested `public_key(g_from_bytes(..))`, so a `makeMoveVec` of per-element
+ * calls does not round-trip; the single decode call does.
+ */
+export function buildPublicKeyVector(packageId: string, points: RistrettoPoint[]) {
+	return decodeContracts.publicKeys({
+		package: packageId,
+		arguments: { parts: elemParts(points.map((p) => p.toBytes())) },
+	});
+}
+
 /** Serialize a `Ciphertext` into an on-chain `Encryption`. */
 export function buildEncryption(packageId: string, ct: Ciphertext) {
 	return decodeContracts.encryption({
@@ -213,6 +212,24 @@ export function buildDdhProof(packageId: string, proof: DdhNizk) {
 				...proof.commitments.map((c) => c.toBytes()),
 				numberToBytesLE(proof.z, 32),
 			]),
+		},
+	});
+}
+
+/**
+ * Serialize a vector of equal-length `DdhNizk`s into an on-chain `vector<DdhProof>` via
+ * `decode::ddh_proofs`: each proof's commitments (all `numCommitments` of them) followed by its scalar
+ * `z`, concatenated. Every proof must have the same commitment count (here `1 + auditor count`).
+ */
+export function buildDdhProofs(packageId: string, proofs: DdhNizk[]) {
+	const numCommitments = proofs.length > 0 ? proofs[0].commitments.length : 0;
+	return decodeContracts.ddhProofs({
+		package: packageId,
+		arguments: {
+			parts: elemParts(
+				proofs.flatMap((p) => [...p.commitments.map((c) => c.toBytes()), numberToBytesLE(p.z, 32)]),
+			),
+			numCommitments,
 		},
 	});
 }
@@ -319,9 +336,9 @@ export function buildWellFormedProof(
 			arguments: {
 				rangeProofs,
 				consistencyProofs: tx.makeMoveVec({
-					type: `${packageId}::encrypted_amount::ConsistencyProof`,
+					type: `${packageId}::nizk::ElGamalProof`,
 					elements: consistencyProofs.map((proof) =>
-						decodeContracts.consistencyProof({
+						decodeContracts.elgamalProof({
 							package: packageId,
 							arguments: {
 								parts: elemParts([
@@ -368,35 +385,31 @@ export function buildEncryptedAmountAndProof(
 }
 
 /**
- * Build a `MultiRecipientEncryption` on-chain from a TypeScript
- * `MultiRecipientEncryption`. Calls `twisted_elgamal::new_multi_recipient_encryption`
- * with the shared commitment and per-recipient decryption handles.
+ * Wrap a ristretto255 point into an on-chain `twisted_elgamal::PublicKey` via `public_key`, which
+ * asserts the point is non-identity. Every contra entry that keys a balance or installs an auditor
+ * key takes a `PublicKey`, so callers build one through this helper.
  */
-export function buildMultiRecipientEncryption(packageId: string, mrc: MultiRecipientEncryption) {
-	return decodeContracts.multiRecipientEncryption({
+export function buildPublicKey(packageId: string, pk: RistrettoPoint) {
+	return twistedElgamalContracts.publicKey({
 		package: packageId,
-		arguments: {
-			parts: elemParts([
-				mrc.commitment.toBytes(),
-				...mrc.decryptionHandles.map((dh) => dh.toBytes()),
-			]),
-			m: mrc.decryptionHandles.length,
-		},
+		arguments: { element: point(pk.toBytes()) },
 	});
 }
 
 /**
- * Build an `Option<KeyEncryption>` Move value. Returns `option::some` wrapping the
- * `KeyEncryption` when provided, `option::none` otherwise.
+ * Build an `Option<twisted_elgamal::PublicKey>` for an optional public key (e.g. the account's
+ * optional default key passed to `set_default_pk_as_sender`, or an auditor key passed to
+ * `update_auditor` / `new_confidential_token`). `option::some(public_key(pk))` when a point is
+ * given, `option::none` otherwise.
  */
-export function buildKeyEncryptionOption(packageId: string, keyEncryption?: KeyEncryption) {
-	const optionType = [`${packageId}::auditors::KeyEncryption`];
-	if (keyEncryption) {
+export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
+	const optionType = [`${packageId}::twisted_elgamal::PublicKey`];
+	if (pk) {
 		return (tx: Transaction) =>
 			tx.moveCall({
 				target: '0x1::option::some',
 				typeArguments: optionType,
-				arguments: [buildKeyEncryption(packageId, keyEncryption)],
+				arguments: [buildPublicKey(packageId, pk)],
 			});
 	}
 	return (tx: Transaction) =>
@@ -404,47 +417,38 @@ export function buildKeyEncryptionOption(packageId: string, keyEncryption?: KeyE
 }
 
 /**
- * Build a `KeyEncryption` on-chain from a TypeScript `KeyEncryption` by calling
- * `auditors::new_key_encryption` with the per-limb ciphertexts, the
- * `KeyConsistencyProof`, and the serialized aggregate Bulletproof.
+ * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: the auditor's two
+ * u32-limb decryption handles per receiver plus one batched `DdhProof` per receiver. `option::some`
+ * wrapping `auditors::new_auditor_package(handles, proofs)` when `data` is provided, `option::none`
+ * when auditing is disabled. `data.handles` are flattened in receiver order (two per receiver),
+ * grouped into per-receiver `[lo, hi]` handle vectors on-chain by `decode::auditor_decryption_handles`. Built
+ * entirely through `decode` calls (no `makeMoveVec`), so the nested proof/handle structure round-trips
+ * on chain.
  */
-export function buildKeyEncryption(packageId: string, keyEncryption: KeyEncryption) {
+export function buildAuditorPackageOption(
+	packageId: string,
+	data?: { handles: RistrettoPoint[]; proofs: DdhNizk[] },
+) {
+	const optionType = [`${packageId}::auditors::AuditorPackage`];
+	if (data) {
+		return (tx: Transaction) =>
+			tx.moveCall({
+				target: '0x1::option::some',
+				typeArguments: optionType,
+				arguments: [
+					auditorsContracts.newAuditorPackage({
+						package: packageId,
+						arguments: {
+							handles: decodeContracts.auditorDecryptionHandles({
+								package: packageId,
+								arguments: { parts: elemParts(data.handles.map((h) => h.toBytes())) },
+							}),
+							proofs: buildDdhProofs(packageId, data.proofs),
+						},
+					}),
+				],
+			});
+	}
 	return (tx: Transaction) =>
-		auditorsContracts.newKeyEncryption({
-			package: packageId,
-			arguments: {
-				ciphertext: tx.makeMoveVec({
-					type: `${packageId}::twisted_elgamal::MultiRecipientEncryption`,
-					elements: keyEncryption.ciphertexts.map((mrc) =>
-						buildMultiRecipientEncryption(packageId, mrc),
-					),
-				}),
-				proof: buildKeyConsistencyProof(packageId, keyEncryption.proof),
-				rangeProof: Array.from(keyEncryption.rangeProof),
-			},
-		})(tx);
-}
-
-/**
- * Build a `KeyConsistencyProof` on-chain via `decode::key_consistency_proof`, passing the
- * sigma-protocol fields as one flat list `[a1(8m) ‖ a2(8) ‖ a3(1) ‖ z1(8) ‖ z2(8)]` plus the
- * recipient count `m` so the on-chain side can slice the variable-length `a1`.
- */
-export function buildKeyConsistencyProof(packageId: string, proof: KeyConsistencyProof) {
-	// 8 limbs per key (matches `nizk::scalar_to_limbs`); `a1` holds `8 * m`, so `m = a1.length / 8`.
-	const KEY_LIMBS = 8;
-	const m = proof.a1.length / KEY_LIMBS;
-	return decodeContracts.keyConsistencyProof({
-		package: packageId,
-		arguments: {
-			parts: elemParts([
-				...proof.a1.map((p) => p.toBytes()),
-				...proof.a2.map((p) => p.toBytes()),
-				proof.a3.toBytes(),
-				...proof.z1.map((s) => numberToBytesLE(s, 32)),
-				...proof.z2.map((s) => numberToBytesLE(s, 32)),
-			]),
-			m,
-		},
-	});
+		tx.moveCall({ target: '0x1::option::none', typeArguments: optionType });
 }

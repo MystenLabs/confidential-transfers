@@ -4,215 +4,164 @@
 module contra::auditors;
 
 use contra::{
-    nizk::{KeyConsistencyProof, verify_key_consistency},
-    twisted_elgamal::MultiRecipientEncryption
+    encrypted_amount::{WellFormedEncryptedAmount, handles_u32},
+    nizk::{DdhProof, verify_ddh},
+    twisted_elgamal::PublicKey
 };
-use sui::{group_ops::Element, rangeproofs, ristretto255::{G, g_identity}};
-
-/// Bulletproof construction version (Bünz et al., 2018).
-const BULLETPROOFS_VERSION: u8 = 0;
-
-/// Bit-length of each private-key limb committed in the viewing-key encryption.
-const LIMB_BITS: u8 = 32;
+use sui::{group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
-const EInvalidEncryptedViewingKey: u64 = 0;
-const EMissingEncryptedViewingKeyArguments: u64 = 1;
-const ETooManyEncryptedViewingKeyArguments: u64 = 2;
-const EIdentityAuditorPublicKey: u64 = 3;
+const EAuditorProofFailed: u64 = 0;
+const EMissingAuditorData: u64 = 1;
+const EUnexpectedAuditorData: u64 = 2;
+const EMismatchedAuditorCount: u64 = 3;
+const ETooManyAuditors: u64 = 4;
 
-// === Main Type(s) ===
+// === Constants ===
 
-/// Holds the set of auditor `public_keys` registered for a token. Auditors can decrypt the
-/// viewing-key ciphertexts attached to each transfer, giving them read access to transaction
-/// amounts without being able to move funds.
-///
-/// The `version` number is incremented on every `update` so that `VerifiedKeyEncryption` values
-/// stored on user accounts can be checked for staleness. `recommended_min_version` is the issuer's
-/// advertised minimum `VerifiedKeyEncryption.version`; it is not enforced on chain. Wallets and
-/// other clients should treat any account whose `VerifiedKeyEncryption.version` is below it as
-/// stale and prompt the user to rotate before transferring.
+/// u32 limbs per amount — two `(lo, hi)` handles per receiver, each verified by its own DDH.
+const U32_LIMBS: u64 = 2;
+
+// === Main Type ===
+
+/// The auditor configuration for a confidential token: the `current_pks` key set (tried first on a
+/// transfer) and the `previous_pks` set (also accepted), allowing a grace period. Each holds **at most
+/// one** key (asserted by `new` / `update`). Auditing is per-transfer — every transfer carries an
+/// auditor-readable copy of the amount under the auditor key. Empty `current_pks` disables auditing
+/// going forward.
 public struct Auditors has store {
-    pks: vector<Element<G>>,
-    version: u32,
-    recommended_min_version: u32,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 }
 
-/// A user's viewing key encrypted to each auditor's public key, stored on their account after
-/// passing a `KeyConsistencyProof` check. The `version` records which auditor key set it was
-/// produced against, so callers can compare it against `Auditors.recommended_min_version` to
-/// detect encryptions that the issuer considers stale.
-///
-/// An empty `ciphertext` means the user's account was registered while the token had no
-/// auditors set.
-public struct VerifiedKeyEncryption has copy, drop, store {
-    ciphertext: vector<MultiRecipientEncryption>,
-    version: u32,
+/// The per-transfer auditor data a sender attaches to a `batched_transfer`: for the single auditor
+/// key, one `[lo, hi]` decryption handle pair per receiver (`N` pairs), plus one `DdhProof` per
+/// (receiver, u32-limb) (`2N` proofs, receiver-major).
+public struct AuditorPackage has drop {
+    handles: vector<vector<Element<G>>>,
+    proofs: vector<DdhProof>,
 }
 
-/// A user's viewing key encrypted to each auditor's public key, bundled with the
-/// proofs needed to register it on-chain:
-/// - `proof` is the `KeyConsistencyProof` showing each limb of `ciphertext` correctly
-///   encrypts the matching 32-bit limb of the user's private key under every auditor's
-///   public key, and that the limbs sum to `sender_public_key`'s discrete log.
-/// - `range_proof` is an aggregate Bulletproof showing every limb's plaintext lies
-///   in `[0, 2^32)` so that auditors can recover each limb via baby-step giant-step.
-public struct KeyEncryption has drop {
-    ciphertext: vector<MultiRecipientEncryption>,
-    proof: KeyConsistencyProof,
-    range_proof: vector<u8>,
+/// The verified auditor decryption handles for a batch: `handles` holds one `[lo, hi]` pair per
+/// receiver (stored reversed, so `next` pops the back in submission order), tagged with the auditor's
+/// `pk`. Held in `TransferBatch` state (as an `Option`, `none` when auditing is disabled). It has no
+/// `drop`, so it must be consumed explicitly: `next` pops each receiver's pair for its `TransferEvent`,
+/// and `destroy` takes the container when the batch is finalized.
+public struct VerifiedAuditorHandles has store {
+    handles: vector<vector<Element<G>>>,
+    pk: PublicKey,
 }
 
 // === Functions ===
 
-public(package) fun new(pks: vector<Element<G>>): Auditors {
-    assert_no_identity_pk(&pks);
-    let auditors = Auditors {
-        pks,
-        version: 0,
-        recommended_min_version: 0,
-    };
-    auditors
+public fun new_auditor_package(
+    handles: vector<vector<Element<G>>>,
+    proofs: vector<DdhProof>,
+): AuditorPackage {
+    AuditorPackage { handles, proofs }
 }
 
-/// Rotate the auditor key set. The `version` is bumped on every call. When
-/// `bump_recommended_min` is true, `recommended_min_version` is raised to the new `version`,
-/// signalling that the issuer would like every user to refresh keys.
+public(package) fun new(pks: vector<PublicKey>): Auditors {
+    assert!(pks.length() <= 1, ETooManyAuditors);
+    // Seed `previous_pks` equal to `current_pks`: no grace (and no old key) before the first `update`.
+    Auditors { current_pks: pks, previous_pks: pks }
+}
+
+/// Replace both auditor key vectors (each at most one key). `current_pks` is tried first on a transfer,
+/// then `previous_pks`. The caller drives the grace policy: rotate with `update(new, old_current)`, end
+/// the grace with `update(new, new)`, enable with `update(pk, pk)`, disable with grace via
+/// `update([], old)`, or disable immediately with `update([], [])`.
 public(package) fun update(
     auditors: &mut Auditors,
-    new_pks: vector<Element<G>>,
-    bump_recommended_min: bool,
+    current_pks: vector<PublicKey>,
+    previous_pks: vector<PublicKey>,
 ) {
-    assert_no_identity_pk(&new_pks);
-    auditors.pks = new_pks;
-    auditors.version = auditors.version + 1;
-    if (bump_recommended_min) {
-        auditors.recommended_min_version = auditors.version;
-    };
+    assert!(current_pks.length() <= 1 && previous_pks.length() <= 1, ETooManyAuditors);
+    auditors.current_pks = current_pks;
+    auditors.previous_pks = previous_pks;
 }
 
-/// Abort with `EIdentityAuditorPublicKey` if any entry of `pks` is the group identity.
-fun assert_no_identity_pk(pks: &vector<Element<G>>) {
-    let identity = g_identity();
-    pks.do_ref!(|pk| assert!(*pk != identity, EIdentityAuditorPublicKey));
-}
-
-public(package) fun pks(auditors: &Auditors): &vector<Element<G>> {
-    &auditors.pks
-}
-
-public(package) fun is_empty(auditors: &Auditors): bool {
-    auditors.pks.is_empty()
-}
-
-public(package) fun version(auditors: &Auditors): u32 {
-    auditors.version
-}
-
-public(package) fun recommended_min_version(auditors: &Auditors): u32 {
-    auditors.recommended_min_version
-}
-
-public(package) fun ciphertext(
-    verified_key_encryption: &VerifiedKeyEncryption,
-): &vector<MultiRecipientEncryption> {
-    &verified_key_encryption.ciphertext
-}
-
-public(package) fun key_version(verified_key_encryption: &VerifiedKeyEncryption): u32 {
-    verified_key_encryption.version
-}
-
-/// True iff this `VerifiedKeyEncryption` was produced from a non-empty `Auditors` set.
-public(package) fun is_set(verified_key_encryption: &VerifiedKeyEncryption): bool {
-    !verified_key_encryption.ciphertext.is_empty()
-}
-
-public fun new_key_encryption(
-    ciphertext: vector<MultiRecipientEncryption>,
-    proof: KeyConsistencyProof,
-    range_proof: vector<u8>,
-): KeyEncryption {
-    KeyEncryption { ciphertext, proof, range_proof }
-}
-
-/// Placeholder `VerifiedKeyEncryption` for accounts registered while the token has no
-/// auditors configured. The `ciphertext` is empty.
-fun new_empty_verified_key_encryption(auditors: &Auditors): VerifiedKeyEncryption {
-    VerifiedKeyEncryption { ciphertext: vector[], version: auditors.version }
-}
-
-/// Resolve an `Option<KeyEncryption>` against the configured `auditors` and produce a
-/// `VerifiedKeyEncryption`. When auditors are set, a `KeyEncryption` must be provided; the
-/// sigma proof (bound to `key_consistency_dst`) and the aggregate Bulletproof over the limb
-/// commitments (bound to the distinct `range_dst`) are both checked before returning. When
-/// auditors are not set, no
-/// `KeyEncryption` may be provided and an empty placeholder is returned. Aborts with
-/// `EMissingEncryptedViewingKeyArguments` / `ETooManyEncryptedViewingKeyArguments` on mismatch.
-public(package) fun verify_key_encryption(
+/// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
+/// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
+/// carries none). Every receiver's two per-limb DDHs must verify against `current_pks`, else against
+/// `previous_pks`. Returns the verified handles tagged with the auditor key that accepted them, or
+/// `none` when the transfer carries no auditor data.
+public(package) fun verify_transfer(
     auditors: &Auditors,
-    sender_public_key: &Element<G>,
-    key_encryption: Option<KeyEncryption>,
-    key_consistency_dst: vector<u8>,
-    range_dst: vector<u8>,
-): VerifiedKeyEncryption {
-    if (auditors.is_empty()) {
-        assert!(key_encryption.is_none(), ETooManyEncryptedViewingKeyArguments);
-        auditors.new_empty_verified_key_encryption()
-    } else {
-        assert!(key_encryption.is_some(), EMissingEncryptedViewingKeyArguments);
-        let KeyEncryption { ciphertext, proof, range_proof } = key_encryption.destroy_some();
-        assert!(
-            proof.verify_key_consistency(
-                key_consistency_dst,
-                sender_public_key,
-                auditors.pks(),
-                &ciphertext,
-            ) &&
-                rangeproofs::verify_bulletproofs_with_dst_ristretto255(
-                    &range_proof,
-                    LIMB_BITS,
-                    &vector::tabulate!(
-                        ciphertext.length(),
-                        |i| *ciphertext[i].multi_recipient_ciphertext(),
-                    ),
-                    &range_dst,
-                    BULLETPROOFS_VERSION,
-                ),
-            EInvalidEncryptedViewingKey,
-        );
-        VerifiedKeyEncryption { ciphertext, version: auditors.version }
-    }
-}
-
-// === Test-only ===
-
-/// Test-only version of `verify_key_encryption` that skips the Bulletproof range check on
-/// the limb commitments. Move tests cannot generate real Bulletproof bytes, so they assert
-/// each limb is a u32 out of band and only verify the sigma protocol on-chain.
-#[test_only]
-public(package) fun verify_key_encryption_for_testing(
-    auditors: &Auditors,
-    sender_public_key: &Element<G>,
-    key_encryption: Option<KeyEncryption>,
+    receiver_amounts: &vector<WellFormedEncryptedAmount>,
+    auditor_package: Option<AuditorPackage>,
     dst: vector<u8>,
-): VerifiedKeyEncryption {
-    if (auditors.is_empty()) {
-        assert!(key_encryption.is_none(), ETooManyEncryptedViewingKeyArguments);
-        auditors.new_empty_verified_key_encryption()
+): Option<VerifiedAuditorHandles> {
+    if (auditor_package.is_none()) {
+        assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
+        return option::none()
+    };
+    assert!(
+        !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
+        EUnexpectedAuditorData,
+    );
+    let AuditorPackage { mut handles, proofs } = auditor_package.destroy_some();
+    let n = receiver_amounts.length();
+    // At most one auditor: exactly one `[lo, hi]` pair and one proof per receiver.
+    assert!(handles.length() == n, EMismatchedAuditorCount);
+    let pk = if (verify_under(&handles, &proofs, &auditors.current_pks, receiver_amounts, dst)) {
+        auditors.current_pks[0]
+    } else if (verify_under(&handles, &proofs, &auditors.previous_pks, receiver_amounts, dst)) {
+        auditors.previous_pks[0]
     } else {
-        assert!(key_encryption.is_some(), EMissingEncryptedViewingKeyArguments);
-        let KeyEncryption { ciphertext, proof, range_proof: _ } = key_encryption.destroy_some();
-        assert!(
-            proof.verify_key_consistency(
-                dst,
-                sender_public_key,
-                auditors.pks(),
-                &ciphertext,
-            ),
-            EInvalidEncryptedViewingKey,
-        );
-        VerifiedKeyEncryption { ciphertext, version: auditors.version }
-    }
+        abort EAuditorProofFailed
+    };
+    // Store reversed so `next` pops the back (O(1)) yet yields receivers in submission order.
+    handles.reverse();
+    option::some(VerifiedAuditorHandles { handles, pk })
+}
+
+/// Pop the next receiver's auditor data for its `TransferEvent`: its two `[lo, hi]` handles (empty when
+/// auditing is disabled) and the auditor key (`none` when disabled). Called once per receiver.
+public(package) fun next(
+    auditor_data: &mut Option<VerifiedAuditorHandles>,
+): (vector<Element<G>>, Option<PublicKey>) {
+    if (auditor_data.is_none()) return (vector[], option::none());
+    let verified = auditor_data.borrow_mut();
+    (verified.handles.pop_back(), option::some(verified.pk))
+}
+
+/// Consume the auditor data. This also works if not all handles were popped.
+public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
+    if (auditor_data.is_none()) {
+        auditor_data.destroy_none();
+        return
+    };
+    let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
+}
+
+/// Whether every receiver's per-limb DDH verifies for the single key in `pks`. Returns false unless
+/// `pks` holds exactly one key, `decryption_handles` has one `[lo, hi]` pair per receiver, and `proofs`
+/// has one per (receiver, u32-limb). For receiver `r`, limb `l`, the DDH proves the witness `ρ̃_{r,l}`
+/// maps the bases `[pk_receiver, pk_auditor]` to the images `[D_receiver, D_auditor]` — the receiver's
+/// own u32 handle (which its consistency proof already ties to the commitment) plus the auditor's
+/// re-keyed handle for that limb.
+fun verify_under(
+    decryption_handles: &vector<vector<Element<G>>>,
+    proofs: &vector<DdhProof>,
+    pks: &vector<PublicKey>,
+    receiver_amounts: &vector<WellFormedEncryptedAmount>,
+    dst: vector<u8>,
+): bool {
+    let n = receiver_amounts.length();
+    if (pks.length() != 1 || decryption_handles.length() != n || proofs.length() != n * U32_LIMBS) {
+        return false
+    };
+    let auditor_pk = *pks[0].as_element();
+    // TODO: the two per-limb DDHs share the bases `[pk_receiver, pk_auditor]` and differ only in
+    // blinding. They could be folded into one batched DDH per receiver to halve the proof count.
+    vector::tabulate!(n, |r| {
+        let receiver_handles = receiver_amounts[r].handles_u32();
+        let bases = vector[*receiver_amounts[r].pk().as_element(), auditor_pk];
+        vector::tabulate!(U32_LIMBS, |l| {
+            let images = vector[receiver_handles[l], decryption_handles[r][l]];
+            proofs[r * U32_LIMBS + l].verify_ddh(dst, &bases, &images)
+        }).all!(|ok| *ok)
+    }).all!(|ok| *ok)
 }

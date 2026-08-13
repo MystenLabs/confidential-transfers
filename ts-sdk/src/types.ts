@@ -6,12 +6,7 @@ import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transac
 
 import type { RistrettoPoint } from './ristretto255.js';
 import type { TokenAccount } from './token_account.js';
-import type {
-	DiscreteLogTable,
-	EncryptedAmount,
-	MultiRecipientEncryption,
-	PrivateKey,
-} from './twisted_elgamal.js';
+import type { DiscreteLogTable, EncryptedAmount, PrivateKey } from './twisted_elgamal.js';
 
 /** Arguments to `ContraClient.wrap`. */
 export interface WrapOptions {
@@ -110,46 +105,22 @@ export interface ContraClientOptions {
 	wasmUrl?: string | URL | Request | BufferSource;
 }
 
-/**
- * Parsed form of the on-chain `auditors::VerifiedKeyEncryption` Move struct: the per-limb
- * `MultiRecipientEncryption` ciphertexts of the user's private key under the auditor pks of
- * `version`. Shape shared by `TokenAccount<T>.verified_key_encryption` and the
- * `verified_key_encryption` field on `NewRegistrationEvent<T>` / `UpdatedPublicKeyEvent<T>`.
- */
-export interface VerifiedKeyEncryption {
-	ciphertext: MultiRecipientEncryption[];
-	version: number;
-}
-
-/** This auditor's index in, and secret key for, one on-chain auditor key version. */
-export type AuditorVersionEntry = {
-	/** This auditor's index in the auditor `pks` list of the given version. */
-	index: number;
-	/** This auditor's twisted ElGamal private key for that version. */
-	privateKey: PrivateKey;
-};
-
 /** Options for constructing a `ContraAuditor`. */
 export interface ContraAuditorOptions {
-	suiClient: ContraCompatibleClient;
-	/** Addresses of the contra Move package and its shared registries. */
-	packageConfig: ContraPackageConfig;
 	/** The fully-qualified Move type of the token this auditor is scoped to, e.g. `0x2::sui::SUI`. */
 	tokenType: string;
 	/**
-	 * Precomputed discrete-log table used for decryption. The auditor
-	 * encryption is over u32 limbs, so the standard `numBits = 16` table
-	 * (which covers 2^32) is sufficient; a larger table speeds up the
-	 * key-recovery path at the cost of more memory.
+	 * The auditor's twisted ElGamal private key(s). Provide every key the auditor has held — the
+	 * current one plus any rotated-out keys — so transfers made before a rotation, which stay
+	 * encrypted under an old key, still decrypt; `decryptTransferAmount` matches the transfer's
+	 * `auditor_pk` to the right key. More can be added later with `ContraAuditor.addKey`.
+	 */
+	privateKeys: PrivateKey[];
+	/**
+	 * Precomputed discrete-log table used for decryption. The per-transfer auditor encryption is
+	 * over u32 limbs, so the standard `numBits = 16` table (which covers 2^32) is sufficient.
 	 */
 	table: DiscreteLogTable;
-	/**
-	 * Map version → (index, sk). Versions where this auditor was not in
-	 * the auditor set should be omitted (no record). Expected to cover
-	 * every on-chain version this auditor was part of, up to the
-	 * current one.
-	 */
-	auditorKeyForVersion: Map<number, AuditorVersionEntry>;
 }
 
 export interface ContraOptions {
@@ -269,8 +240,26 @@ export interface UpdateBalanceOptions {
 
 /** Arguments to `ContraClient.newAccount`. */
 export interface NewAccountOptions {
-	/** The address that will own the newly created account. */
+	/**
+	 * The owner address the account is created for. Creation is permissionless — anyone can create
+	 * the account for any owner; it only reserves the owner's derived slot and sets no key. Set a
+	 * default key afterwards with `setDefaultPkAsSender` if others should be able to auto-register
+	 * tokens for it via `register_with_default_pk`.
+	 */
 	owner: string;
+}
+
+/**
+ * One token's key status, as reported by `ContraClient.getTokenKeys` (one per queried token type, in
+ * the same order).
+ */
+export interface TokenKeyStatus {
+	/** The fully-qualified Move token type. */
+	tokenType: string;
+	/** Whether a `TokenAccount<T>` is registered for this token under the account. */
+	registered: boolean;
+	/** The key this token's balances are currently under, or `undefined` when not registered. */
+	publicKey?: RistrettoPoint;
 }
 
 /** Arguments to `ContraClient.register`. */
@@ -284,17 +273,18 @@ export interface RegisterOptions {
 	 */
 	account?: TransactionObjectArgument;
 	/**
-	 * When the confidential token has auditors configured, pass their
-	 * public keys here. The client will encrypt the token account's
-	 * private key to each auditor key and generate a `KeyConsistencyProof`,
-	 * which are required by `contra::register` when auditors are set.
-	 */
-	auditorPublicKeys?: RistrettoPoint[];
-	/**
 	 * Optional `Auth<T>` builder. When omitted, the client builds an
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
+}
+
+/** Arguments to `ContraClient.tryRegisterWithDefaultPk`. */
+export interface RegisterWithDefaultPkOptions {
+	/** The owner address of the account to register a token account for. Must already have an `Account`. */
+	receiver: string;
+	/** The fully-qualified Move type of the token to register, e.g. `0x2::sui::SUI`. */
+	tokenType: string;
 }
 
 /** Return value of `ContraClient.getAccountStatus`. */
@@ -306,18 +296,14 @@ export interface AccountStatus {
 	isFrozen: boolean;
 }
 
-/** Return value of `ContraClient.getAuditors`. */
-export interface TokenAuditors {
-	/** The auditor public keys registered for this token. Empty when no auditors are configured. */
-	pks: RistrettoPoint[];
-	/** Incremented each time `update_auditors` is called. */
-	version: number;
+/** Return value of `ContraClient.getAuditor`: the token's per-transfer auditor configuration. */
+export interface TokenAuditor {
 	/**
-	 * Issuer-advertised minimum viewing-key encryption `version`. Not enforced on chain;
-	 * wallets should treat accounts whose `keyEncryptionVersion` is below this as stale
-	 * and prompt the user to rotate before transferring.
+	 * The current auditor public keys (one per auditor); empty when auditing is disabled. When
+	 * non-empty, transfers must attach one per-transfer auditor-readable ciphertext set per key. (The
+	 * rotation grace window — the `previous_pks` set — is enforced on chain, so it is not surfaced here.)
 	 */
-	recommendedMinVersion: number;
+	currentPks: RistrettoPoint[];
 }
 
 /** Arguments to `ContraClient.pauseAccount`. */
@@ -344,48 +330,38 @@ export interface UnpauseAccountOptions {
 	auth?: AuthThunk;
 }
 
-/** Arguments to `ContraClient.rotateKeyAndUnpauseAccount`. */
-export interface RotateKeyOptions {
-	/** The token account whose encryption key is being rotated. */
-	tokenAccount: TokenAccount;
+/** Arguments to `ContraClient.setDefaultPkAsSender`. */
+export interface SetDefaultPkAsSenderOptions {
 	/**
-	 * The post-rotation token account, carrying the new private key. Must have the
-	 * same `address` and `tokenType` as `tokenAccount`. The caller persists this so
-	 * it can decrypt the post-rotation balance and authorize future operations.
+	 * The owner address of the account whose default key is being set. The transaction must be signed
+	 * by this address (only the owner can set it).
 	 */
-	newTokenAccount: TokenAccount;
+	account: string;
 	/**
-	 * When `true` (the default), the rotation PTB pauses encrypted deposits and merges
-	 * pending deposits before the optimistic rekey, so the whole flow is self-contained.
-	 * Set to `false` when the account is already paused and merged (e.g. paused in a prior
-	 * transaction): the client asserts the account is paused and skips the pause + merge,
-	 * issuing only the rekey.
+	 * The new default key for the account (used by `register_with_default_pk`). Pass `null` (or omit)
+	 * to clear it, disabling permissionless auto-registration. Per-token keys are unaffected.
 	 */
-	pauseAndMerge?: boolean;
-	/**
-	 * Optional `Auth<T>` builder. When omitted, the client builds an `as_sender` auth.
-	 * The thunk is invoked once per consumed `Auth<T>` site within the same PTB.
-	 * The resulting `Auth<T>` must cover the `REGISTER` operation.
-	 */
-	auth?: AuthThunk;
+	defaultPk?: RistrettoPoint | null;
 }
 
-/** Arguments to `ContraClient.rotateKeyAndTransferBatch`. */
-export interface RotateKeyAndTransferBatchOptions {
-	/** The sender's token account, whose encryption key is being rotated. */
+/** Arguments to `ContraClient.rekeyTokenAccount` / `tryRekeyTokenAccount`. */
+export interface RekeyTokenAccountOptions {
+	/** The token account carrying the token's current (old) key — its balance is re-keyed from here. */
 	tokenAccount: TokenAccount;
 	/**
-	 * The post-rotation token account, carrying the new private key. Must have the same
-	 * `address` and `tokenType` as `tokenAccount`. The caller persists it; the transfer is
-	 * built against the post-rotation balance under its key.
+	 * The post-rotation token account, carrying the new key. Must have the same `address` and
+	 * `tokenType` as `tokenAccount`; its public key is chosen independently of the account's default
+	 * key. The caller persists it to decrypt the re-keyed balance.
 	 */
 	newTokenAccount: TokenAccount;
-	/** The recipients of the batch, same shape and `[1, 7]` limit as `transferBatch`. */
-	recipients: readonly BatchedTransferRecipient[];
 	/**
-	 * Optional `Auth<T>` builder. When omitted, the client builds an `as_sender` auth. Invoked
-	 * once per consumed `Auth<T>` site; the result must cover both the `REGISTER` operation (for
-	 * the rotation) and the sender's transfer.
+	 * When `true` (the default) and the token has pending deposits, a `merge` is prepended so the
+	 * re-key (which requires an empty pending balance) can proceed against the merged active balance.
+	 */
+	merge?: boolean;
+	/**
+	 * Optional `Auth<T>` builder. When omitted, the client builds an `as_sender` auth. The resulting
+	 * `Auth<T>` must cover the `REGISTER` operation.
 	 */
 	auth?: AuthThunk;
 }

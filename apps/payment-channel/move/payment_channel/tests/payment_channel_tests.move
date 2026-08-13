@@ -4,15 +4,13 @@
 #[test_only]
 module payment_channel::payment_channel_tests;
 
-use contra::{contra, policy::Auth};
+use contra::{contra, policy::Auth, twisted_elgamal::PublicKey};
 use payment_channel::payment_channel::{Self, Channel};
 use std::unit_test::{Self, assert_eq};
 use sui::{
     clock,
     coin::TreasuryCap,
     coin_registry::{Self, CoinRegistry, CurrencyInitializer},
-    group_ops::Element,
-    ristretto255::G,
     test_scenario::{Self, Scenario}
 };
 
@@ -286,7 +284,7 @@ fun setup_with_channel(s: &mut Scenario, _keypair_seed: u64): Env {
     );
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector<PublicKey>[],
         s.ctx(),
     );
 

@@ -93,8 +93,9 @@ export class Receiver {
 		if (parsed.receiver !== myAddress) {
 			throw new Error(`TransferEvent receiver ${parsed.receiver} != ${myAddress}`);
 		}
+		const receiverAmount = EncryptedAmount.fromBcs(parsed.encrypted_amount_receiver);
 		const foundAmount = this.opts.contraTokenAccount.decryptAmount(
-			EncryptedAmount.fromBcs(parsed.encrypted_amount_receiver),
+			[receiverAmount.l0, receiverAmount.l1, receiverAmount.l2, receiverAmount.l3],
 			this.opts.table,
 		);
 		if (foundAmount !== expected) {

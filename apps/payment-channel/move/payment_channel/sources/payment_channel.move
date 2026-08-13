@@ -103,7 +103,7 @@
 /// 5. From `Closed`, the sender uses `get_auth` to sweep / withdraw.
 module payment_channel::payment_channel;
 
-use contra::{contra::{Self, ConfidentialToken}, policy::Auth};
+use contra::{contra::{Self, Account, AccountRegistry, ConfidentialToken}, policy::Auth};
 use sui::clock::Clock;
 
 // === Errors ===
@@ -130,8 +130,8 @@ public struct Channel<phantom T> has key {
 
 /// Create and share an empty `Channel<T>`. The channel's `sender` is set to
 /// `ctx.sender()` and state starts as `Initialized`. The contra account that
-/// will back the channel is *not* created here — the sender creates and
-/// registers it themselves via `get_auth` + `contra::new_account` +
+/// will back the channel is *not* created here — the sender creates it via
+/// `new_account` (object-bound) and registers it via `get_auth` +
 /// `contra::register` (passing the channel auth).
 public fun new<T>(ctx: &mut TxContext) {
     let c = Channel<T> {
@@ -140,6 +140,17 @@ public fun new<T>(ctx: &mut TxContext) {
         state: State::Initialized,
     };
     transfer::share_object(c);
+}
+
+/// Create the contra `Account` owned by the channel's address (no default key — the channel registers
+/// its token account explicitly). Restricted to the channel `sender`.
+public fun new_account<T>(
+    c: &Channel<T>,
+    registry: &mut AccountRegistry,
+    ctx: &TxContext,
+): Account {
+    assert!(ctx.sender() == c.sender, EUnauthorized);
+    contra::new_account(registry, c.id.to_inner().to_address())
 }
 
 // === Operations ===

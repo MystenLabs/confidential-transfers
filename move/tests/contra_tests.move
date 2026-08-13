@@ -10,7 +10,7 @@ use contra::{
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
     policy,
-    twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero}
+    twisted_elgamal::{encrypt_trivial_for_testing, encrypt_zero, public_key, PublicKey}
 };
 use std::unit_test::{Self, assert_eq};
 use sui::{
@@ -18,7 +18,7 @@ use sui::{
     coin_registry,
     deny_list,
     group_ops::Element,
-    ristretto255::{Self, G, Scalar},
+    ristretto255::{Self, G},
     test_scenario::ctx
 };
 
@@ -29,10 +29,11 @@ public struct Witness has drop {}
 
 #[test]
 fun create_account() {
-    let owner = @0x100;
+    let pk = ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator());
     let ctx = &mut tx_context::dummy();
+    let owner = ctx.sender();
     let mut acc_reg = contra::new_account_registry_for_testing(ctx);
-    let account = acc_reg.new(owner);
+    let account = acc_reg.new(ctx.sender());
 
     assert_eq!(account.owner(), owner);
 
@@ -48,12 +49,11 @@ fun create_confidential_token() {
     let mut ct_registry = contra::new_token_registry_for_testing(ctx);
     let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(ctx);
     let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(8, "_", "_", "_", "_", ctx);
-    let auditor_public_keys = vector<Element<G>>[];
 
-    // Confidential token object.
+    // Confidential token object (auditing disabled).
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        auditor_public_keys,
+        vector[],
         scenario.ctx(),
     );
 
@@ -99,36 +99,25 @@ fun test_simple_flow() {
         scenario.ctx(),
     );
     let _deny_cap = builder.make_regulated(true, scenario.ctx());
-    let auditor_public_keys = vector<Element<G>>[];
 
     scenario.next_tx(addr1);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        auditor_public_keys,
+        vector[],
         scenario.ctx(),
     );
     ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_with_witness<TestCurrency, Witness>(0u8, addr1, Witness {});
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
 
     // Register second account and deposit
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_with_witness<TestCurrency, Witness>(0u8, addr2, Witness {});
-    account_2.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_2,
-        option::none(),
-    );
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
 
     // Mint some coins and add them to the accounts' encrypted balances.
     scenario.next_tx(addr1);
@@ -286,45 +275,29 @@ fun test_batched_transfer() {
         "_",
         scenario.ctx(),
     );
-    let auditor_public_keys = vector<Element<G>>[];
 
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        auditor_public_keys,
+        vector[],
         scenario.ctx(),
     );
 
     // Register all three accounts.
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
 
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_2.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_2,
-        option::none(),
-    );
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
 
     scenario.next_tx(addr3);
-    let mut account_3 = acc_reg.new(addr3);
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_3.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_3,
-        option::none(),
-    );
+    account_3.register<TestCurrency>(&auth, public_key(pk_3));
 
     // Mint 100 coins to addr1 and merge into the active balance.
     scenario.next_tx(addr1);
@@ -390,7 +363,7 @@ fun test_batched_transfer() {
             &auth,
             &ct,
             &deny_list,
-            vector[pk_2, pk_3],
+            vector[public_key(pk_2), public_key(pk_3)],
             vector[taken_a_ea, taken_b_ea],
             well_formed_proofs,
             total_sender_handle,
@@ -398,6 +371,7 @@ fun test_batched_transfer() {
             ristretto255::g_identity(),
             new_balance_ea,
             balance_proof,
+            option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -429,6 +403,386 @@ fun test_batched_transfer() {
     scenario.end();
 }
 
+/// Per-transfer auditing: the token has an auditor key, so the batched transfer must attach the two
+/// u32-limb auditor handles per receiver and a batched auditor `ElGamalProof`. The proof is built
+/// from the derived auditor encryptions and verified on chain against the current auditor key.
+#[test]
+fun test_batched_transfer_with_auditor() {
+    let setup_addr = @0x0;
+
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+    let addr3 = @0x102;
+    let pk_3 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(11111),
+        &ristretto255::g_generator(),
+    );
+
+    let auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xA1),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    // Token created with the auditor key enabled: every transfer carries a handle set for it.
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[public_key(auditor_pk)],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
+    scenario.next_tx(addr3);
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_3.register<TestCurrency>(&auth, public_key(pk_3));
+
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+    scenario.next_tx(addr1);
+
+    let r_a = 32533;
+    let r_b = 17000;
+    let new_balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
+    let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
+    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
+        consistency_proof_for_testing(elgamal_dst, 30, &taken_a_ea, r_a, &pk_2),
+        consistency_proof_for_testing(elgamal_dst, 20, &taken_b_ea, r_b, &pk_3),
+        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
+    ]);
+
+    let taken_a_sender = amount_for_testing(30, &pk_1, r_a);
+    let taken_b_sender = amount_for_testing(20, &pk_1, r_b);
+    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r_a + r_b, elgamal_dst);
+    let old_balance = account_1.balance<TestCurrency>();
+    let total_sender = taken_a_sender.collapse().add(&taken_b_sender.collapse());
+    let total_sender_handle = *total_sender.decryption_handle();
+    let balance_proof = nizk::sum_proof_for_testing(
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        &old_balance,
+        &new_balance_ea.collapse(),
+        &total_sender,
+        &sk_1,
+    );
+
+    // The auditor's handles + one batched DDH per receiver, for the two receiver amounts (both
+    // limb-0-only). `verify_transfer` checks every DDH.
+    let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_auditor_ddh(),
+    );
+    let (handles, proofs) = build_auditor_data(
+        vector[30, 20],
+        vector[r_a, r_b],
+        &vector[pk_2, pk_3],
+        &auditor_pk,
+        auditor_dst,
+    );
+    let auditor_package = auditors::new_auditor_package(handles, proofs);
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1
+        .batched_transfer<TestCurrency>(
+            &auth,
+            &ct,
+            &deny_list,
+            vector[public_key(pk_2), public_key(pk_3)],
+            vector[taken_a_ea, taken_b_ea],
+            well_formed_proofs,
+            total_sender_handle,
+            consistency_proof,
+            ristretto255::g_identity(),
+            new_balance_ea,
+            balance_proof,
+            option::some(auditor_package),
+        )
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
+        .finalize();
+
+    assert_eq!(account_1.balance<TestCurrency>(), new_balance_ea.collapse());
+    assert_eq!(account_2.pending_encrypted_balance<TestCurrency>(), taken_a_ea.collapse());
+    assert_eq!(account_3.pending_encrypted_balance<TestCurrency>(), taken_b_ea.collapse());
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(account_3);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
+}
+
+/// Rotation-grace: after the issuer rotates the auditor key with a grace window
+/// (`update_auditors([new], [old])`), a transfer whose auditor data was built under the outgoing
+/// (`previous`) key still succeeds — it fails to verify under `current_pks` and is then accepted under
+/// `previous_pks`, so in-flight transfers stay auditable across the rotation.
+#[test]
+fun test_batched_transfer_auditor_rotation_grace() {
+    let setup_addr = @0x0;
+
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+    let addr3 = @0x102;
+    let pk_3 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(11111),
+        &ristretto255::g_generator(),
+    );
+
+    let auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xA1),
+        &ristretto255::g_generator(),
+    );
+    let new_auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xB2),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    // Token created with `auditor_pk`, then rotated to `new_auditor_pk` with a grace window: the old
+    // key moves to `previous_pks` and still verifies in-flight transfers built against it.
+    scenario.next_tx(addr1);
+    let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[public_key(auditor_pk)],
+        scenario.ctx(),
+    );
+    ct.update_auditors(
+        &management_cap,
+        vector[public_key(new_auditor_pk)],
+        vector[public_key(auditor_pk)],
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
+    scenario.next_tx(addr3);
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_3.register<TestCurrency>(&auth, public_key(pk_3));
+
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+    scenario.next_tx(addr1);
+
+    let r_a = 32533;
+    let r_b = 17000;
+    let new_balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
+    let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
+    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
+        consistency_proof_for_testing(elgamal_dst, 30, &taken_a_ea, r_a, &pk_2),
+        consistency_proof_for_testing(elgamal_dst, 20, &taken_b_ea, r_b, &pk_3),
+        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
+    ]);
+
+    let taken_a_sender = amount_for_testing(30, &pk_1, r_a);
+    let taken_b_sender = amount_for_testing(20, &pk_1, r_b);
+    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r_a + r_b, elgamal_dst);
+    let old_balance = account_1.balance<TestCurrency>();
+    let total_sender = taken_a_sender.collapse().add(&taken_b_sender.collapse());
+    let total_sender_handle = *total_sender.decryption_handle();
+    let balance_proof = nizk::sum_proof_for_testing(
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        &old_balance,
+        &new_balance_ea.collapse(),
+        &total_sender,
+        &sk_1,
+    );
+
+    // Auditor data built under `auditor_pk` — now the previous key. It fails to verify under
+    // `current_pks` (the new key) and is accepted under `previous_pks` within the grace.
+    let (auditor_handles, auditor_proofs) = build_auditor_data(
+        vector[30, 20],
+        vector[r_a, r_b],
+        &vector[pk_2, pk_3],
+        &auditor_pk,
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_ddh()),
+    );
+    let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proofs);
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1
+        .batched_transfer<TestCurrency>(
+            &auth,
+            &ct,
+            &deny_list,
+            vector[public_key(pk_2), public_key(pk_3)],
+            vector[taken_a_ea, taken_b_ea],
+            well_formed_proofs,
+            total_sender_handle,
+            consistency_proof,
+            ristretto255::g_identity(),
+            new_balance_ea,
+            balance_proof,
+            option::some(auditor_package),
+        )
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
+        .finalize();
+
+    assert_eq!(account_1.balance<TestCurrency>(), new_balance_ea.collapse());
+    assert_eq!(account_2.pending_encrypted_balance<TestCurrency>(), taken_a_ea.collapse());
+    assert_eq!(account_3.pending_encrypted_balance<TestCurrency>(), taken_b_ea.collapse());
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(account_3);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
+}
+
+// === Auditor presence policy ===
+//
+// At most one auditor key (each of `current_pks` / `previous_pks` holds ≤1). Auditing is disabled
+// exactly when `current_pks` is empty. A transfer must carry auditor data iff auditing is enabled.
+// These exercise `verify_transfer`'s presence branches directly (they never read `receiver_amounts`,
+// so an empty vector is fine).
+
+fun test_key(): PublicKey {
+    public_key(ristretto255::g_mul(&ristretto255::scalar_from_u64(7), &ristretto255::g_generator()))
+}
+
+/// Disabled auditing (empty key vectors) accepts a no-op transfer (no auditor data).
+#[test]
+fun auditor_disabled_accepts_no_data() {
+    let auditor = auditors::new(vector[]);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
+    assert!(handles.is_none());
+    auditors::destroy(handles);
+    unit_test::destroy(auditor);
+}
+
+/// Enabled auditing requires auditor data: a no-op transfer (no data) aborts.
+#[test, expected_failure(abort_code = ::contra::auditors::EMissingAuditorData)]
+fun auditor_enabled_requires_data() {
+    let auditor = auditors::new(vector[test_key()]);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    auditors::destroy(auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst"));
+    unit_test::destroy(auditor);
+}
+
+/// Disabled auditing forbids auditor data: attaching a package aborts (both key sets empty).
+#[test, expected_failure(abort_code = ::contra::auditors::EUnexpectedAuditorData)]
+fun auditor_disabled_forbids_data() {
+    let auditor = auditors::new(vector[]);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    // A trivial (empty) package suffices: the presence check aborts before the proofs are inspected.
+    let package = auditors::new_auditor_package(vector[], vector[]);
+    auditors::destroy(auditors::verify_transfer(&auditor, &amounts, option::some(package), b"dst"));
+    unit_test::destroy(auditor);
+}
+
+/// Disable-with-grace (`current_pks` empty but `previous_pks` non-empty, no longer forbidden now that
+/// the two sets need not be the same length): a no-op transfer is still accepted — no current keys
+/// means no audit is required going forward.
+#[test]
+fun auditor_disable_grace_accepts_no_data() {
+    let mut auditor = auditors::new(vector[test_key()]);
+    auditors::update(&mut auditor, vector[], vector[test_key()]);
+    let amounts = vector<encrypted_amount::WellFormedEncryptedAmount>[];
+    let handles = auditors::verify_transfer(&auditor, &amounts, option::none(), b"dst");
+    assert!(handles.is_none());
+    auditors::destroy(handles);
+    unit_test::destroy(auditor);
+}
+
 #[test, expected_failure]
 fun test_deny_list() {
     let setup_addr = @0x0;
@@ -456,22 +810,16 @@ fun test_deny_list() {
         scenario.ctx(),
     );
     let mut deny_cap = builder.make_regulated(true, scenario.ctx());
-    let auditor_public_keys = vector<Element<G>>[];
 
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        auditor_public_keys,
+        vector[],
         scenario.ctx(),
     );
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
 
     deny_list_v2_add<TestCurrency>(&mut deny_list, &mut deny_cap, addr1, scenario.ctx());
 
@@ -529,7 +877,7 @@ fun transfer<T>(
             &auth,
             ct,
             deny_list,
-            vector[receiver_pk],
+            vector[public_key(receiver_pk)],
             vector[receiver_amount],
             well_formed_proofs,
             total_sender_handle,
@@ -537,6 +885,7 @@ fun transfer<T>(
             ristretto255::g_identity(),
             new_balance,
             balance_proof,
+            option::none(),
         )
         .add<T>(receiver, memo, deny_list)
         .finalize();
@@ -563,58 +912,60 @@ fun total_consistency_proof_for_testing(
     )
 }
 
-/// Build a `KeyEncryption` (one `MultiRecipientEncryption` per 32-bit limb of `sk`, the matching
-/// `KeyConsistencyProof`, and an empty `range_proof` since Move tests can't generate real
-/// Bulletproof bytes). `seed` is mixed into the per-limb blindings and prover nonces so callers
-/// can produce distinct, deterministic test data.
-fun build_key_encryption(
-    sk: &Element<Scalar>,
-    pk: &Element<G>,
-    auditor_pks: &vector<Element<G>>,
-    seed: u64,
+/// Build the decryption handles and one batched `DdhProof` per receiver for a batch of limb-0-only
+/// receiver amounts (values `values[i]`, limb-0 blindings `blindings[i]`, under `receiver_pks[i]`) and
+/// the single `auditor_pk`. Each amount's low u32 limb has blinding `r_i` and receiver handle
+/// `r_i*pk_receiver`; the high u32 limb is zero. The returned handles are one `[lo, hi]` pair per
+/// amount (`[r_i*auditor_pk, identity]`), matching `verify_transfer`, and one DDH per (receiver,
+/// u32-limb): limb 0 witness `r_i` with images `[r_i*pk_receiver, r_i*auditor_pk]`, limb 1 (the zero
+/// high limb) witness 0 with all-identity images.
+fun build_auditor_data(
+    values: vector<u64>,
+    blindings: vector<u64>,
+    receiver_pks: &vector<Element<G>>,
+    auditor_pk: &Element<G>,
     dst: vector<u8>,
-): auditors::KeyEncryption {
-    let limbs = nizk::scalar_to_limbs(sk);
-    let n = limbs.length();
-    let m = auditor_pks.length();
-    let g = twisted_elgamal::g();
-    let h = twisted_elgamal::h();
-
-    let mut encryptions = vector[];
-    let mut blindings = vector[];
-    n.do!(|i| {
-        let r = ristretto255::scalar_from_u64(seed + (i + 1) * 1_000_003);
-        let u = ristretto255::scalar_from_u64(limbs[i] as u64);
-        encryptions.push_back(
-            twisted_elgamal::new_multi_recipient_encryption(
-                ristretto255::g_add(
-                    &ristretto255::g_mul(&r, &g),
-                    &ristretto255::g_mul(&u, &h),
-                ),
-                vector::tabulate!(m, |j| ristretto255::g_mul(&r, &auditor_pks[j])),
+): (vector<vector<Element<G>>>, vector<nizk::DdhProof>) {
+    // Per amount, the `[lo, hi]` pair `[r_i*auditor_pk, identity]`.
+    let mut handles = vector[];
+    values.length().do!(|i| {
+        let lo =
+            *encrypt_trivial_for_testing(values[i], auditor_pk, blindings[i]).decryption_handle();
+        handles.push_back(vector[lo, ristretto255::g_identity()]);
+    });
+    // Two DDHs per receiver over the bases `[pk_receiver, auditor_pk]` (receiver-major, limb-minor).
+    let mut proofs = vector[];
+    values.length().do!(|r| {
+        let pk_recv = receiver_pks[r];
+        let br = blindings[r];
+        let bases = vector[pk_recv, *auditor_pk];
+        // Limb 0: witness `r_i`, images `[r_i*pk_receiver, r_i*auditor_pk]`.
+        let images_lo = vector[
+            *encrypt_trivial_for_testing(values[r], &pk_recv, br).decryption_handle(),
+            *encrypt_trivial_for_testing(values[r], auditor_pk, br).decryption_handle(),
+        ];
+        proofs.push_back(
+            nizk::prove_ddh(
+                dst,
+                &ristretto255::scalar_from_u64(br),
+                &bases,
+                &images_lo,
+                &ristretto255::scalar_from_u64(97531),
             ),
         );
-        blindings.push_back(r);
+        // Limb 1: the zero high limb, witness 0, all-identity images.
+        let images_hi = vector[ristretto255::g_identity(), ristretto255::g_identity()];
+        proofs.push_back(
+            nizk::prove_ddh(
+                dst,
+                &ristretto255::scalar_from_u64(0),
+                &bases,
+                &images_hi,
+                &ristretto255::scalar_from_u64(86420),
+            ),
+        );
     });
-
-    let mut a = vector[];
-    let mut b = vector[];
-    n.do!(|i| {
-        a.push_back(ristretto255::scalar_from_u64(seed + (i + 1) * 7_777));
-        b.push_back(ristretto255::scalar_from_u64(seed + (i + 1) * 9_991));
-    });
-
-    let proof = nizk::prove_key_consistency(
-        dst,
-        &limbs,
-        pk,
-        auditor_pks,
-        &encryptions,
-        &blindings,
-        a,
-        b,
-    );
-    auditors::new_key_encryption(encryptions, proof, vector[])
+    (handles, proofs)
 }
 
 /// Build a single-value `EncryptedAmount` (`value` in limb 0, zero elsewhere) under `pk`, with
@@ -628,264 +979,11 @@ fun amount_for_testing(value: u16, pk: &Element<G>, r: u64): encrypted_amount::E
     )
 }
 
-/// Build an `EncryptedAmount` encrypting `amount` under `pk` with limb-0 blinding `r` and a
-/// matching test-only batch-of-1 `WellFormedProof`. Used for transfer receiver amounts and for
-/// the `new_balance` that `set_public_key` requires when rotating the viewing-key encryption.
-fun amount_and_proof_for_testing(
-    amount: u16,
-    pk: &Element<G>,
-    r: u64,
-    dst: vector<u8>,
-): (encrypted_amount::EncryptedAmount, encrypted_amount::WellFormedProof) {
-    let ea = amount_for_testing(amount, pk, r);
-    let proof = consistency_proof_for_testing(dst, amount, &ea, r, pk);
-    (ea, encrypted_amount::new_well_formed_proof_singleton_for_testing(proof))
-}
-
-/// Batched re-key proof for `set_public_key` when the public key is unchanged: with `old_pk = new_pk`
-/// and the new balance byte-equal to the old, the witness `w = new_sk · old_sk⁻¹ = 1` and the proof
-/// is just "the identity rekey." The balance is assumed limb-0-only (limb-0 blinding `r`; the other
-/// limbs encrypt zero, so their handles are the identity).
-fun self_handle_eq_proof_for_testing(pk: &Element<G>, r: u64, dst: vector<u8>): nizk::DdhProof {
-    let r_scalar = ristretto255::scalar_from_u64(r);
-    let d = ristretto255::g_mul(&r_scalar, pk);
-    let id = ristretto255::g_identity();
-    // Pair 0 is the public key; pairs 1..4 are the limb handles (only limb 0 is non-identity).
-    let bases = vector[*pk, d, id, id, id];
-    nizk::prove_ddh(dst, &ristretto255::scalar_one(), &bases, &bases, &r_scalar)
-}
-
+/// Whole-account key rotation must rebind the stored balance handle to the new key: after rotating
+/// from `pk_old` to `pk_new` (`pk_new != pk_old`) the on-chain handle becomes `r * pk_new` and the
+/// account's public key is updated, so decryption with the new secret key succeeds.
 #[test]
-fun test_auditor_version_flow() {
-    let setup_addr = @0x0;
-
-    let addr1 = @0x100;
-    let sk_1 = ristretto255::scalar_from_u64(12345);
-    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
-
-    let addr2 = @0x101;
-    let sk_2 = ristretto255::scalar_from_u64(67890);
-    let pk_2 = ristretto255::g_mul(&sk_2, &ristretto255::g_generator());
-
-    // Two auditors. Their secret keys do not need to leave this test; we only need the
-    // encryption keys to drive the consistency proofs.
-    let auditor_sk_1 = ristretto255::scalar_from_u64(0xA1);
-    let auditor_sk_2 = ristretto255::scalar_from_u64(0xA2);
-    let auditor_pks = vector[
-        ristretto255::g_mul(&auditor_sk_1, &ristretto255::g_generator()),
-        ristretto255::g_mul(&auditor_sk_2, &ristretto255::g_generator()),
-    ];
-
-    let mut scenario = sui::test_scenario::begin(setup_addr);
-    deny_list::create_for_testing(scenario.ctx());
-    scenario.next_tx(setup_addr);
-    let deny_list: deny_list::DenyList = scenario.take_shared();
-
-    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
-    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
-    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
-    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
-        8,
-        "_",
-        "_",
-        "_",
-        "_",
-        scenario.ctx(),
-    );
-
-    // Token initialised with no auditors.
-    scenario.next_tx(addr1);
-    let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
-        &mut t_cap,
-        vector<Element<G>>[],
-        scenario.ctx(),
-    );
-
-    // Account 1 registers while there are no auditors -> placeholder VKE at version 0.
-    scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
-    assert_eq!(account_1.verified_key_encryption_version<TestCurrency>(), 0);
-    assert!(!account_1.verified_key_encryption_is_set<TestCurrency>());
-
-    // Issuer sets two auditor keys with bump_recommended_min=false; the rotation does not
-    // bump the recommended floor, so older registrations are not even advisory-stale.
-    ct.update_auditors<TestCurrency>(&management_cap, auditor_pks, false);
-
-    // Account 2 registers after auditors are set -> VKE at version 1.
-    scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2);
-    let session_id_2 = contra::session_id<TestCurrency>(&account_2);
-    let kc_dst_2 = contra::dst(session_id_2, contra::protocol_id_key_consistency());
-    let key_encryption_2 = build_key_encryption(&sk_2, &pk_2, &auditor_pks, 200, kc_dst_2);
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_2.register_internal<TestCurrency>(
-        &auth,
-        pk_2,
-        ct.verify_key_encryption_for_testing(&pk_2, option::some(key_encryption_2), kc_dst_2),
-        session_id_2,
-    );
-    assert_eq!(account_2.verified_key_encryption_version<TestCurrency>(), 1);
-    assert!(account_2.verified_key_encryption_is_set<TestCurrency>());
-
-    // Account 1 wraps 100, merges, then transfers 50 to account 2. Mixed versions are fine
-    // because the chain does not enforce the recommended floor.
-    scenario.next_tx(addr1);
-    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
-    let coins = t_cap.mint(100, scenario.ctx());
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.wrap(
-        &auth,
-        &ct,
-        &deny_list,
-        &pool,
-        coins,
-        vector[],
-    );
-    account_1.merge<TestCurrency>(&auth);
-    scenario.next_tx(addr1);
-
-    let r_xfer = 32533;
-    let r_balance = 10097;
-    let new_balance_ea = encrypted_amount::new_encrypted_amount(
-        encrypt_trivial_for_testing(50, &pk_1, r_balance),
-        encrypt_zero(),
-        encrypt_zero(),
-        encrypt_zero(),
-    );
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
-    let receiver_amount = amount_for_testing(50, &pk_2, r_xfer);
-    let sender_amount = amount_for_testing(50, &pk_1, r_xfer);
-    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r_xfer, elgamal_dst);
-    let old_balance = account_1.balance<TestCurrency>();
-    let sum_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
-        &old_balance,
-        &new_balance_ea.collapse(),
-        &sender_amount.collapse(),
-        &sk_1,
-    );
-    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
-        consistency_proof_for_testing(elgamal_dst, 50, &receiver_amount, r_xfer, &pk_2),
-        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, r_balance, &pk_1),
-    ]);
-    transfer<TestCurrency>(
-        &mut account_1,
-        &mut account_2,
-        vector[],
-        &ct,
-        new_balance_ea,
-        pk_2,
-        receiver_amount,
-        well_formed_proofs,
-        sender_amount,
-        consistency_proof,
-        sum_proof,
-        &deny_list,
-        scenario.ctx(),
-    );
-
-    // Account 1 rotates its viewing-key encryption (same pk). After the transfer the active
-    // balance is exactly the encryption we just constructed, so we can re-derive r.
-    scenario.next_tx(addr1);
-
-    let rotation_ea_1 = amount_for_testing(50, &pk_1, r_balance);
-    let key_encryption_1 = build_key_encryption(
-        &sk_1,
-        &pk_1,
-        &auditor_pks,
-        100,
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_key_consistency()),
-    );
-    let batch_ddh_dst_1 = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
-    let kc_dst_1 = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_key_consistency(),
-    );
-    let proof_1 = self_handle_eq_proof_for_testing(&pk_1, r_balance, batch_ddh_dst_1);
-    let vke_1 = ct.verify_key_encryption_for_testing(
-        &pk_1,
-        option::some(key_encryption_1),
-        kc_dst_1,
-    );
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.set_public_key_internal<TestCurrency>(
-        &auth,
-        pk_1,
-        rotation_ea_1.decryption_handles_for_testing(),
-        proof_1,
-        vke_1,
-        batch_ddh_dst_1,
-    );
-    assert_eq!(account_1.verified_key_encryption_version<TestCurrency>(), 1);
-    assert!(account_1.verified_key_encryption_is_set<TestCurrency>());
-
-    // Account 2 merges its pending deposit and then rotates its viewing-key encryption.
-    scenario.next_tx(addr2);
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_2.merge<TestCurrency>(&auth);
-    // Account 2's balance is the limb-0-only amount it received under blinding `r_xfer`.
-    let batch_ddh_dst_2 = account_2.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
-    let kc_dst_2 = account_2.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_key_consistency(),
-    );
-    let rotation_ea_2 = amount_for_testing(50, &pk_2, r_xfer);
-    let key_encryption_2_again = build_key_encryption(
-        &sk_2,
-        &pk_2,
-        &auditor_pks,
-        300,
-        kc_dst_2,
-    );
-    let proof_2 = self_handle_eq_proof_for_testing(&pk_2, r_xfer, batch_ddh_dst_2);
-    let vke_2 = ct.verify_key_encryption_for_testing(
-        &pk_2,
-        option::some(key_encryption_2_again),
-        kc_dst_2,
-    );
-    account_2.set_public_key_internal<TestCurrency>(
-        &auth,
-        pk_2,
-        rotation_ea_2.decryption_handles_for_testing(),
-        proof_2,
-        vke_2,
-        batch_ddh_dst_2,
-    );
-    assert_eq!(account_2.verified_key_encryption_version<TestCurrency>(), 1);
-
-    // Clean up.
-    unit_test::destroy(account_1);
-    unit_test::destroy(account_2);
-    unit_test::destroy(acc_reg);
-    unit_test::destroy(t_cap);
-    unit_test::destroy(builder);
-    unit_test::destroy(ct_registry);
-    unit_test::destroy(coin_registry);
-    unit_test::destroy(management_cap);
-    unit_test::destroy(ct);
-
-    sui::test_scenario::return_shared(deny_list);
-    sui::test_scenario::return_shared(pool);
-
-    scenario.end();
-}
-
-/// Rotating from `pk_old` to `pk_new` (`pk_new != pk_old`) must overwrite the on-chain
-/// balance with `new_balance` so the stored decryption handle becomes `r * pk_new` instead
-/// of `r * pk_old`. Without that overwrite, decryption with the new secret key would fail.
-/// The other rotation in `test_auditor_version_flow` reuses the same `pk`, so it cannot
-/// catch a regression here.
-#[test]
-fun test_set_public_key_replaces_balance_with_new_handle() {
+fun test_key_rotation_rebinds_balance_to_new_key() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
 
@@ -915,19 +1013,14 @@ fun test_set_public_key_replaces_balance_with_new_handle() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_old,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_old));
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
 
     // Install a known balance under pk_old with a known blinding `r`.
@@ -947,17 +1040,15 @@ fun test_set_public_key_replaces_balance_with_new_handle() {
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
 
-    // Construct `new_balance` -- same plaintext + blinding under pk_new -- and rotate.
+    // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate: set the
+    // account key (target), then `rekey_token_account` catches the token's balance up from token.pk to it.
     let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_batch_ddh(),
-    );
-    let kc_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_key_consistency(),
     );
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
     let id = ristretto255::g_identity();
-    // Batched re-key proof over (pk, limb-0 handle) — the other limbs are zero (identity handles).
+    // Re-key proof over (pk, limb-0 handle) -- the other limbs are zero (identity handles).
     let rekey_proof = nizk::prove_ddh(
         batch_ddh_dst,
         &w,
@@ -966,20 +1057,27 @@ fun test_set_public_key_replaces_balance_with_new_handle() {
         &r_scalar,
     );
     let new_ea = amount_for_testing(50, &pk_new, r);
-    contra::set_public_key_internal<TestCurrency>(
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    contra::set_default_pk_as_sender(
+        &mut account_1,
+        option::some(public_key(pk_new)),
+        scenario.ctx(),
+    );
+    // The default key is now pk_new, but the token's balance still lags under pk_old.
+    assert_eq!(account_1.default_pk(), option::some(pk_new));
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
+    contra::rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
-        pk_new,
+        public_key(pk_new),
         new_ea.decryption_handles_for_testing(),
         rekey_proof,
-        ct.verify_key_encryption_for_testing(&pk_new, option::none(), kc_dst),
-        batch_ddh_dst,
     );
 
-    // The on-chain handle must now be bound to `pk_new`. Without the in-function
-    // `token_account.balance.overwrite(&new_balance)`, this would still be
-    // `r * pk_old` and decryption with `sk_new` would fail.
+    // The on-chain handle must now be bound to `pk_new` and the token caught up to the account key.
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
 
     unit_test::destroy(account_1);
     unit_test::destroy(acc_reg);
@@ -997,18 +1095,19 @@ fun test_set_public_key_replaces_balance_with_new_handle() {
     scenario.end();
 }
 
-/// `try_set_public_key_and_unpause` unpauses only on a successful rotation: a failing rotation
-/// leaves the account paused and unchanged, a valid one re-keys the balance and unpauses deposits.
-#[test]
-fun test_try_set_public_key_and_unpause() {
+/// `rekey_token_account` aborts on a bad re-key proof (here a wrong witness, standing in for a raced balance
+/// whose handles no longer match), reverting the PTB — nothing is committed.
+#[test, expected_failure(abort_code = ::contra::contra::EAmountsEqualityProofFailed)]
+fun test_rekey_token_account_aborts_on_bad_proof() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
 
     let sk_old = ristretto255::scalar_from_u64(11111);
     let pk_old = ristretto255::g_mul(&sk_old, &ristretto255::g_generator());
-    let sk_new = ristretto255::scalar_from_u64(22222);
-    let pk_new = ristretto255::g_mul(&sk_new, &ristretto255::g_generator());
-    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
+    let pk_new = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(22222),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1031,27 +1130,16 @@ fun test_try_set_public_key_and_unpause() {
     scenario.next_tx(addr1);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_old,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_old));
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
 
-    // Pause deposits (the first half of a key rotation) and install a known balance of 50.
-    contra::set_accepts_encrypted_deposits<TestCurrency>(
-        &mut account_1,
-        &auth,
-        false,
-    );
     let r = 99999;
     let r_scalar = ristretto255::scalar_from_u64(r);
     let balance_under_pk_old = encrypted_amount::new_encrypted_amount(
@@ -1060,95 +1148,165 @@ fun test_try_set_public_key_and_unpause() {
         encrypt_zero(),
         encrypt_zero(),
     );
-    contra::set_balance_by_issuer<TestCurrency>(
-        &mut t_cap,
-        &mut account_1,
-        balance_under_pk_old,
-    );
+    contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
 
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_elgamal(),
-    );
-    let ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh());
+    // A re-key proof built with the wrong witness -- verification fails, standing in for a raced
+    // balance the client's handles no longer match.
     let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
         contra::protocol_id_batch_ddh(),
     );
-
-    // The re-key targets a fresh, client-known blinding `r_restate`; both `new_pk` handles below
-    // are built against it.
-    let r_restate = r + 7;
-    let r_restate_scalar = ristretto255::scalar_from_u64(r_restate);
-    let d_new = ristretto255::g_mul(&r_restate_scalar, &pk_new);
-    let d_old_restate = ristretto255::g_mul(&r_restate_scalar, &pk_old);
+    let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
+    let wrong_w = ristretto255::scalar_from_u64(7);
     let id = ristretto255::g_identity();
+    let bad_proof = nizk::prove_ddh(
+        batch_ddh_dst,
+        &wrong_w,
+        &vector[pk_old, d_old, id, id, id],
+        &vector[pk_new, d_new, id, id, id],
+        &r_scalar,
+    );
+    let new_ea = amount_for_testing(50, &pk_new, r);
 
-    // A failing rotation: the restate's balance proof does not verify (here it is built with the
-    // wrong key; in production a racing deposit would make it fail the same way). The account must
-    // neither re-key nor unpause, and the re-key args are never reached.
-    let (bad_restate_ea, bad_restate_proof) = amount_and_proof_for_testing(
-        50,
-        &pk_old,
-        r_restate,
-        elgamal_dst,
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    contra::set_default_pk_as_sender(
+        &mut account_1,
+        option::some(public_key(pk_new)),
+        scenario.ctx(),
     );
-    let bad_diff = encrypted_amount::collapse_for_testing(&bad_restate_ea).sub(
-        &account_1.balance<TestCurrency>(),
-    );
-    let bad_balance_proof = nizk::zero_proof_for_testing(ddh_dst, &bad_diff, &sk_new);
-    let bad_rekey_ea = amount_for_testing(50, &pk_new, r_restate);
-    contra::try_set_public_key_and_unpause<TestCurrency>(
+    // Aborts here with `EAmountsEqualityProofFailed`.
+    contra::rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
-        &ct,
-        pk_new,
-        bad_restate_ea,
-        bad_restate_proof,
-        bad_balance_proof,
-        bad_rekey_ea.decryption_handles_for_testing(),
-        nizk::prove_ddh(
-            batch_ddh_dst,
-            &w,
-            &vector[pk_old, d_old_restate, id, id, id],
-            &vector[pk_new, d_new, id, id, id],
-            &r_restate_scalar,
-        ),
-        option::none(),
+        public_key(pk_new),
+        new_ea.decryption_handles_for_testing(),
+        bad_proof,
     );
+
+    // Unreachable; included so the resource flow type-checks if the abort is removed.
+    unit_test::destroy(account_1);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(_deny_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list_obj);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
+}
+
+/// `try_rekey_token_account_and_unpause` soft-fails on a bad proof (token left stale — the normal not-yet-re-keyed
+/// state) and succeeds on a good one (token caught up), without aborting either way. This is what lets
+/// a rotation + re-keys ride in one PTB without pausing.
+#[test]
+fun test_try_rekey_token_account_soft_fails_then_succeeds() {
+    let setup_addr = @0x0;
+    let addr1 = @0x100;
+
+    let sk_old = ristretto255::scalar_from_u64(11111);
+    let pk_old = ristretto255::g_mul(&sk_old, &ristretto255::g_generator());
+    let sk_new = ristretto255::scalar_from_u64(22222);
+    let pk_new = ristretto255::g_mul(&sk_new, &ristretto255::g_generator());
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list_obj: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (mut builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+    let _deny_cap = builder.make_regulated(true, scenario.ctx());
+
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, public_key(pk_old));
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+
+    let r = 99999;
+    let r_scalar = ristretto255::scalar_from_u64(r);
+    let balance_under_pk_old = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_old, r),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
+    let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
+    let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
+
+    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
+        contra::protocol_id_batch_ddh(),
+    );
+    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
+    let id = ristretto255::g_identity();
+    let good_proof = nizk::prove_ddh(
+        batch_ddh_dst,
+        &w,
+        &vector[pk_old, d_old, id, id, id],
+        &vector[pk_new, d_new, id, id, id],
+        &r_scalar,
+    );
+    let bad_proof = nizk::prove_ddh(
+        batch_ddh_dst,
+        &ristretto255::scalar_from_u64(7), // wrong witness
+        &vector[pk_old, d_old, id, id, id],
+        &vector[pk_new, d_new, id, id, id],
+        &r_scalar,
+    );
+    let new_ea = amount_for_testing(50, &pk_new, r);
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    contra::set_default_pk_as_sender(
+        &mut account_1,
+        option::some(public_key(pk_new)),
+        scenario.ctx(),
+    );
+    // Pause the token for the rotation; a successful re-key resumes deposits.
+    contra::set_accepts_encrypted_deposits<TestCurrency>(&mut account_1, &auth, false);
+
+    // Bad proof: soft-fails, leaves the token stale (still under pk_old) and paused, no abort.
+    contra::try_rekey_token_account_and_unpause<TestCurrency>(
+        &mut account_1,
+        &auth,
+        public_key(pk_new),
+        new_ea.decryption_handles_for_testing(),
+        bad_proof,
+    );
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
     assert!(!account_1.accepts_deposits<TestCurrency>());
 
-    // A valid rotation: the restate re-states value 50 under the fresh blinding `r_restate`, then
-    // the re-key moves it to pk_new and unpauses deposits.
-    let (restate_ea, restate_proof) = amount_and_proof_for_testing(
-        50,
-        &pk_old,
-        r_restate,
-        elgamal_dst,
-    );
-    let diff = encrypted_amount::collapse_for_testing(&restate_ea).sub(
-        &account_1.balance<TestCurrency>(),
-    );
-    let balance_proof = nizk::zero_proof_for_testing(ddh_dst, &diff, &sk_old);
-    let rekey_ea = amount_for_testing(50, &pk_new, r_restate);
-    contra::try_set_public_key_and_unpause<TestCurrency>(
+    // Good proof: succeeds, token caught up to the account key and deposits resume.
+    contra::try_rekey_token_account_and_unpause<TestCurrency>(
         &mut account_1,
         &auth,
-        &ct,
-        pk_new,
-        restate_ea,
-        restate_proof,
-        balance_proof,
-        rekey_ea.decryption_handles_for_testing(),
-        nizk::prove_ddh(
-            batch_ddh_dst,
-            &w,
-            &vector[pk_old, d_old_restate, id, id, id],
-            &vector[pk_new, d_new, id, id, id],
-            &r_restate_scalar,
-        ),
-        option::none(),
+        public_key(pk_new),
+        new_ea.decryption_handles_for_testing(),
+        good_proof,
     );
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
     assert!(account_1.accepts_deposits<TestCurrency>());
 
@@ -1174,8 +1332,10 @@ fun test_try_set_public_key_and_unpause() {
 fun test_account_freeze_rejects_non_admin() {
     let setup_addr = @0x0;
     let user_addr = @0x100;
-    let sk = ristretto255::scalar_from_u64(12345);
-    let pk = ristretto255::g_mul(&sk, &ristretto255::g_generator());
+    let pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(12345),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1196,19 +1356,14 @@ fun test_account_freeze_rejects_non_admin() {
     scenario.next_tx(setup_addr);
     let (ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(user_addr);
+    let mut account_user = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_user.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk,
-        option::none(),
-    );
+    account_user.register<TestCurrency>(&auth, public_key(pk));
 
     // user_addr is NOT in freeze_admins; this must abort.
     ct.account_freeze<TestCurrency>(&mut account_user, scenario.ctx());
@@ -1230,8 +1385,10 @@ fun test_account_freeze_blocks_wrap() {
     let setup_addr = @0x0;
     let admin_addr = @0xA;
     let user_addr = @0x100;
-    let sk = ristretto255::scalar_from_u64(12345);
-    let pk = ristretto255::g_mul(&sk, &ristretto255::g_generator());
+    let pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(12345),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1252,20 +1409,15 @@ fun test_account_freeze_blocks_wrap() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(user_addr);
+    let mut account_user = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_user.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk,
-        option::none(),
-    );
+    account_user.register<TestCurrency>(&auth, public_key(pk));
 
     scenario.next_tx(admin_addr);
     ct.account_freeze<TestCurrency>(&mut account_user, scenario.ctx());
@@ -1301,8 +1453,10 @@ fun test_account_unfreeze_restores_wrap() {
     let setup_addr = @0x0;
     let admin_addr = @0xA;
     let user_addr = @0x100;
-    let sk = ristretto255::scalar_from_u64(12345);
-    let pk = ristretto255::g_mul(&sk, &ristretto255::g_generator());
+    let pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(12345),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1323,20 +1477,15 @@ fun test_account_unfreeze_restores_wrap() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(user_addr);
-    let mut account_user = acc_reg.new(user_addr);
+    let mut account_user = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_user.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk,
-        option::none(),
-    );
+    account_user.register<TestCurrency>(&auth, public_key(pk));
 
     scenario.next_tx(admin_addr);
     ct.account_freeze<TestCurrency>(&mut account_user, scenario.ctx());
@@ -1379,8 +1528,10 @@ fun test_account_freeze_blocks_batched_transfer() {
     let sk_1 = ristretto255::scalar_from_u64(12345);
     let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
     let addr2 = @0x101;
-    let sk_2 = ristretto255::scalar_from_u64(67890);
-    let pk_2 = ristretto255::g_mul(&sk_2, &ristretto255::g_generator());
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1401,29 +1552,19 @@ fun test_account_freeze_blocks_batched_transfer() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_2.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_2,
-        option::none(),
-    );
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
 
     scenario.next_tx(addr1);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1500,8 +1641,10 @@ fun test_account_freeze_blocks_add_to_batch() {
     let sk_1 = ristretto255::scalar_from_u64(12345);
     let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
     let addr2 = @0x101;
-    let sk_2 = ristretto255::scalar_from_u64(67890);
-    let pk_2 = ristretto255::g_mul(&sk_2, &ristretto255::g_generator());
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1522,29 +1665,19 @@ fun test_account_freeze_blocks_add_to_batch() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
     scenario.next_tx(addr2);
-    let mut account_2 = acc_reg.new(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_2.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_2,
-        option::none(),
-    );
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
 
     scenario.next_tx(addr1);
     let pool: contra::Pool<TestCurrency> = scenario.take_shared();
@@ -1611,6 +1744,235 @@ fun test_account_freeze_blocks_add_to_batch() {
     scenario.end();
 }
 
+/// A receiver that has an `Account` but no `TokenAccount<T>` can be registered by anyone (here the
+/// sender) via `register_with_default_pk` on a permissionless token, keyed at the receiver's
+/// `Account.default_pk`; the subsequent transfer then credits the deposit.
+#[test]
+fun test_transfer_after_register_with_default_pk() {
+    let setup_addr = @0x0;
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(setup_addr);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
+
+    // account_2 has an `Account` with a default key set but is NOT registered for TestCurrency; on a
+    // permissionless token anyone can register it on the owner's behalf up front.
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    contra::set_default_pk_as_sender(
+        &mut account_2,
+        option::some(public_key(pk_2)),
+        scenario.ctx(),
+    );
+    contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+
+    scenario.next_tx(addr1);
+    let r = 32533;
+    let new_balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let receiver_amount = amount_for_testing(50, &pk_2, r);
+    let sender_amount = amount_for_testing(50, &pk_1, r);
+    let consistency_proof = total_consistency_proof_for_testing(50, &pk_1, r, elgamal_dst);
+    let old_balance = account_1.balance<TestCurrency>();
+    let sum_proof = nizk::sum_proof_for_testing(
+        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        &old_balance,
+        &new_balance_ea.collapse(),
+        &sender_amount.collapse(),
+        &sk_1,
+    );
+    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
+        consistency_proof_for_testing(elgamal_dst, 50, &receiver_amount, r, &pk_2),
+        consistency_proof_for_testing(elgamal_dst, 50, &new_balance_ea, 10097, &pk_1),
+    ]);
+    transfer<TestCurrency>(
+        &mut account_1,
+        &mut account_2,
+        vector[],
+        &ct,
+        new_balance_ea,
+        pk_2,
+        receiver_amount,
+        well_formed_proofs,
+        sender_amount,
+        consistency_proof,
+        sum_proof,
+        &deny_list,
+        scenario.ctx(),
+    );
+
+    // The token account was created for account_2, keyed at its account key.
+    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+    scenario.end();
+}
+
+/// `register_with_default_pk` aborts on a token whose registration (operation 0) is permissioned.
+#[test, expected_failure(abort_code = ::contra::contra::ERegistrationNotPermissionless)]
+fun test_register_with_default_pk_aborts_when_permissioned() {
+    let setup_addr = @0x0;
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(setup_addr);
+    let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[],
+        scenario.ctx(),
+    );
+    // Make registration (operation 0) permissioned.
+    ct.set_policy<TestCurrency, Witness>(&mut t_cap, vector[0u8]);
+
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    contra::set_default_pk_as_sender(
+        &mut account_2,
+        option::some(public_key(pk_2)),
+        scenario.ctx(),
+    );
+    // Aborts: registration is not permissionless, so no `Auth`-free registration is allowed.
+    contra::register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
+    scenario.end();
+}
+
+/// `try_register_with_default_pk` is idempotent: a second call on an already-registered token account
+/// is a no-op rather than aborting, so concurrent permissionless registrations don't fight.
+#[test]
+fun test_try_register_with_default_pk_is_idempotent() {
+    let setup_addr = @0x0;
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    // Registration is left permissionless (no `set_policy`).
+    scenario.next_tx(setup_addr);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    contra::set_default_pk_as_sender(
+        &mut account_2,
+        option::some(public_key(pk_2)),
+        scenario.ctx(),
+    );
+
+    // First call registers the token account under the default key.
+    contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+    // Second call is a no-op (`register_with_default_pk` here would abort `EAccountAlreadyRegistered`).
+    contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
+    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(ct);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = ::contra::contra::ETransferDenied)]
 fun test_account_freeze_blocks_unwrap() {
     let setup_addr = @0x0;
@@ -1638,20 +2000,15 @@ fun test_account_freeze_blocks_unwrap() {
     scenario.next_tx(setup_addr);
     let (mut ct, management_cap) = ct_registry.new<TestCurrency>(
         &mut t_cap,
-        vector<Element<G>>[],
+        vector[],
         scenario.ctx(),
     );
     ct.issue_freeze_cap<TestCurrency>(&management_cap, admin_addr);
 
     scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
     let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        pk_1,
-        option::none(),
-    );
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
 
     let mut pool: contra::Pool<TestCurrency> = scenario.take_shared();
     let coins = t_cap.mint(100, scenario.ctx());
@@ -1729,7 +2086,13 @@ fun verify_well_formed_proof_dst_match_succeeds() {
         consistency_proof_for_testing(dst, amount, &ea, r, &pk),
     );
     assert!(
-        encrypted_amount::verify(&proof, dst, b"range-proof-dst-21byt", &vector[ea], &vector[pk]),
+        encrypted_amount::verify(
+            &proof,
+            dst,
+            b"range-proof-dst-21byt",
+            &vector[ea],
+            &vector[public_key(pk)],
+        ),
     );
 }
 
@@ -1737,82 +2100,14 @@ fun verify_well_formed_proof_dst_match_succeeds() {
 //
 // Identity is the additive zero of the group; an identity public key trivializes the discrete-log
 // statement `sk · g = pk` (the unique witness is `sk = 0`, which anyone has). That cascades
-// through the ElGamal / DDH / key-consistency proofs into a soundness break. The fix is to reject
-// `pk = identity` at every install boundary: `register`, `set_public_key{,_internal}`, and the
-// `auditors::{new,update}` calls that install the auditor key set.
+// through the ElGamal / DDH proofs into a soundness break. Every public key entering the protocol —
+// the account default key (`set_default_pk_*`), a token's per-token key (`register`/`rekey_*`), and
+// the auditor keys (`new_confidential_token`/`update_auditors`) — is wrapped through
+// `twisted_elgamal::public_key`, the single boundary that rejects `pk = identity`.
 
-#[test, expected_failure(abort_code = ::contra::contra::EIdentityPublicKey)]
-fun register_rejects_identity_pk() {
-    let setup_addr = @0x0;
-    let addr1 = @0x100;
-
-    let mut scenario = sui::test_scenario::begin(setup_addr);
-    deny_list::create_for_testing(scenario.ctx());
-    scenario.next_tx(setup_addr);
-    let deny_list_obj: deny_list::DenyList = scenario.take_shared();
-
-    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
-    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
-    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
-    let (mut builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
-        8,
-        "_",
-        "_",
-        "_",
-        "_",
-        scenario.ctx(),
-    );
-    let _deny_cap = builder.make_regulated(true, scenario.ctx());
-
-    scenario.next_tx(addr1);
-    let (ct, management_cap) = ct_registry.new<TestCurrency>(
-        &mut t_cap,
-        vector<Element<G>>[],
-        scenario.ctx(),
-    );
-
-    scenario.next_tx(addr1);
-    let mut account_1 = acc_reg.new(addr1);
-    // Identity pk: register must reject this.
-    let auth = ct.authorize_as_sender(scenario.ctx());
-    account_1.register<TestCurrency>(
-        &auth,
-        &ct,
-        ristretto255::g_identity(),
-        option::none(),
-    );
-
-    unit_test::destroy(account_1);
-    unit_test::destroy(acc_reg);
-    unit_test::destroy(ct);
-    unit_test::destroy(management_cap);
-    unit_test::destroy(t_cap);
-    unit_test::destroy(builder);
-    unit_test::destroy(_deny_cap);
-    unit_test::destroy(ct_registry);
-    unit_test::destroy(coin_registry);
-    sui::test_scenario::return_shared(deny_list_obj);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = ::contra::auditors::EIdentityAuditorPublicKey)]
-fun auditors_new_rejects_identity_pk() {
-    let real_pk = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(123),
-        &ristretto255::g_generator(),
-    );
-    unit_test::destroy(auditors::new(vector[real_pk, ristretto255::g_identity()]));
-}
-
-#[test, expected_failure(abort_code = ::contra::auditors::EIdentityAuditorPublicKey)]
-fun auditors_update_rejects_identity_pk() {
-    let real_pk = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(123),
-        &ristretto255::g_generator(),
-    );
-    let mut auditors = auditors::new(vector[real_pk]);
-    auditors.update(vector[real_pk, ristretto255::g_identity()], false);
-    unit_test::destroy(auditors);
+#[test, expected_failure(abort_code = ::contra::twisted_elgamal::EIdentityPublicKey)]
+fun public_key_rejects_identity() {
+    public_key(ristretto255::g_identity());
 }
 
 #[test]
@@ -1841,7 +2136,7 @@ fun verify_well_formed_proof_dst_mismatch_fails() {
             verifier_dst,
             b"range-proof-dst-21byt",
             &vector[ea],
-            &vector[pk],
+            &vector[public_key(pk)],
         ),
     );
 }

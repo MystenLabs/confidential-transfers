@@ -23,11 +23,13 @@
  *     `sui::coin::deny_list_v2_add` / `sui::coin::deny_list_v2_remove`. The deny
  *     list affects both the public and the private coin; to freeze only the
  *     private coin, see items 2 and 3.
- * 6.  Rotate or disable the auditor key set via `update_auditors` (using the
- *     ManagementCap). Setting `bump_recommended_min` raises the auditors'
- *     `recommended_min_version` to the new version, signalling to wallets that
- *     every user should refresh their key. Passing an empty `public_keys` vector
- *     disables the auditor flow.
+ * 6.  Rotate, enable, or disable the auditor keys via `update_auditors` (using the
+ *     ManagementCap), which sets the parallel `current_pks` / `previous_pks` key
+ *     vectors. A transfer is accepted under either set, so pointing `current_pks`
+ *     at new keys while `previous_pks` still holds the outgoing keys gives a grace
+ *     window for in-flight transfers; passing empty vectors disables auditing.
+ *     Auditing is per-transfer and each transfer carries auditor-readable
+ *     ciphertexts of the amount, one set per auditor key.
  * 7.  [Advanced] Set the policy for the confidential token (using the
  *     TreasuryCap). Policies define which operations are permissioned. Currently
  *     supported permissioned operations are:
@@ -45,15 +47,19 @@
  *
  * ## Key Flows for Users:
  *
- * 1.  Create an account for an address (needed once for all token types).
- * 2.  Register a token account for a token type `T` with a public key `pk`. If the
- *     token has auditors configured, the user must additionally provide the user's
- *     key encrypted to every auditor public key in the current set, and a proof
- *     that the ciphertext encrypts its secret key.
- * 3.  Update the public key for a token account.
+ * 1.  Create an account for an address (permissionless, needed once for all token
+ *     types). Optionally set a default key later (`set_default_pk_as_sender`) so
+ *     others can auto-register tokens for you via `register_with_default_pk`.
+ * 2.  Register a token account for a token type `T` under a key of your choice
+ *     (`register`). Per-token keys are independent of the account's default key.
+ * 3.  Rotate a token's key with `rekey_token_account` (to any `new_pk`), and
+ *     set/clear the account's default key with `set_default_pk_as_sender`.
  * 4.  Wrap a public coin into a confidential token, adding to the pending
  *     encrypted balance of an account.
- * 5.  Transfer an encrypted amount to two or more token accounts.
+ * 5.  Transfer an encrypted amount to one or more token accounts. Every receiver
+ *     must already have a `TokenAccount<T>`; for permissionless tokens anyone can
+ *     create one on their behalf up front with `register_with_default_pk`. Auditor
+ *     data is attached if set.
  * 6.  Unwrap an encrypted amount from a token account and convert it to public
  *     coins.
  *
@@ -90,6 +96,7 @@ import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
 import * as policy from './policy.js';
+import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::contra';
 export const TokenRegistry = new MoveStruct({
@@ -125,13 +132,13 @@ export const Account = new MoveStruct({
 	fields: {
 		id: bcs.Address,
 		owner: bcs.Address,
+		default_pk: bcs.option(twisted_elgamal.PublicKey),
 	},
 });
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
-		pk: group_ops.Element,
-		verified_key_encryption: auditors.VerifiedKeyEncryption,
+		pk: twisted_elgamal.PublicKey,
 		session_id: bcs.vector(bcs.u8()),
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
@@ -186,10 +193,11 @@ export const TransferBatch = new MoveEnum({
 			name: `TransferBatch.Ok`,
 			fields: {
 				sender: bcs.Address,
-				sender_pk: group_ops.Element,
+				sender_pk: twisted_elgamal.PublicKey,
 				coins: bcs.vector(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),
+				auditor_data: bcs.option(auditors.VerifiedAuditorHandles),
 			},
 		}),
 	},
@@ -314,9 +322,10 @@ export interface NewConfidentialTokenOptions {
  * Requires a `&mut TreasuryCap` for authorization, this is to prevent frozen
  * TreasuryCaps from being used.
  *
- * Creates an `Auditors` object for the confidential token using the provided
- * public keys. The auditor public keys can be empty initially and updated later by
- * the issuer.
+ * Sets the token's auditor keys to `auditor_public_keys` (per-transfer auditing);
+ * every transfer will carry one auditor-readable ciphertext set per key. Pass an
+ * empty vector to start with auditing disabled. The issuer can enable, rotate, or
+ * disable the keys later via `update_auditors`.
  *
  * Returns the created `ConfidentialToken` and a `ManagementCap` that can be used
  * to perform administrative operations for this token.
@@ -370,12 +379,10 @@ export interface NewAccountOptions {
 		| [registry: RawTransactionArgument<string>, owner: RawTransactionArgument<string>];
 }
 /**
- * Create a new account for the given address. Can only happen once per address.
- *
- * Note: the `owner` argument is not tied to `ctx.sender()` — anyone can create an
- * `Account` on behalf of any address. Since `Account` has `key` only (no `store`),
- * the only way to dispose of it outside this module is via `share_account`, and
- * all authenticated operations still gate on `account.owner == ctx.sender()`.
+ * Create a new account owned by `owner`, with no default key set (set one later
+ * with `set_default_pk_as_sender` / `set_default_pk_as_object`). Permissionless:
+ * anyone can create the account for any owner — it only reserves the owner's
+ * derived slot and sets no key. Aborts if `owner` already has an account.
  */
 export function newAccount(options: NewAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -415,38 +422,86 @@ export function shareAccount(options: ShareAccountOptions) {
 export interface RegisterArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
-	ct: RawTransactionArgument<string>;
 	pk: TransactionArgument;
-	keyEncryption: TransactionArgument;
 }
 export interface RegisterOptions {
 	package?: string;
 	arguments:
 		| RegisterArguments
-		| [
-				account: RawTransactionArgument<string>,
-				auth: TransactionArgument,
-				ct: RawTransactionArgument<string>,
-				pk: TransactionArgument,
-				keyEncryption: TransactionArgument,
-		  ];
+		| [account: RawTransactionArgument<string>, auth: TransactionArgument, pk: TransactionArgument];
 	typeArguments: [string];
 }
 /**
- * Create a `TokenAccount` for token `T` with the given `pk`. Authorized by `auth`,
- * which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
- * If `ConfidentialToken<T>` has auditors enabled, a `KeyEncryption` must be
- * provided.
+ * Create a `TokenAccount` for token `T`, with its balances keyed under `pk`.
+ * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation
+ * and for `account.owner`.
  */
 export function register(options: RegisterOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth', 'ct', 'pk', 'keyEncryption'];
+	const argumentsTypes = [null, null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'pk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
 			function: 'register',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+			typeArguments: options.typeArguments,
+		});
+}
+export interface RegisterWithDefaultPkArguments {
+	account: RawTransactionArgument<string>;
+	ct: RawTransactionArgument<string>;
+}
+export interface RegisterWithDefaultPkOptions {
+	package?: string;
+	arguments:
+		| RegisterWithDefaultPkArguments
+		| [account: RawTransactionArgument<string>, ct: RawTransactionArgument<string>];
+	typeArguments: [string];
+}
+/**
+ * Permissionless `register`: create a `TokenAccount<T>` keyed under the account's
+ * `default_pk`, without any `Auth`. Requires `T`'s registration permissionless and
+ * `default_pk` set.
+ */
+export function registerWithDefaultPk(options: RegisterWithDefaultPkOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'ct'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'register_with_default_pk',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+			typeArguments: options.typeArguments,
+		});
+}
+export interface TryRegisterWithDefaultPkArguments {
+	account: RawTransactionArgument<string>;
+	ct: RawTransactionArgument<string>;
+}
+export interface TryRegisterWithDefaultPkOptions {
+	package?: string;
+	arguments:
+		| TryRegisterWithDefaultPkArguments
+		| [account: RawTransactionArgument<string>, ct: RawTransactionArgument<string>];
+	typeArguments: [string];
+}
+/**
+ * Like `register_with_default_pk`, but a no-op if `account` already has a
+ * `TokenAccount<T>`.
+ */
+export function tryRegisterWithDefaultPk(options: TryRegisterWithDefaultPkOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'ct'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'try_register_with_default_pk',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
@@ -486,134 +541,144 @@ export function setAcceptsEncryptedDeposits(options: SetAcceptsEncryptedDeposits
 			typeArguments: options.typeArguments,
 		});
 }
-export interface SetPublicKeyArguments {
+export interface SetDefaultPkAsSenderArguments {
 	account: RawTransactionArgument<string>;
-	auth: TransactionArgument;
-	ct: RawTransactionArgument<string>;
-	newPk: TransactionArgument;
-	newHandles: TransactionArgument;
-	rekeyProof: TransactionArgument;
-	keyEncryption: TransactionArgument;
+	defaultPk: TransactionArgument;
 }
-export interface SetPublicKeyOptions {
+export interface SetDefaultPkAsSenderOptions {
 	package?: string;
 	arguments:
-		| SetPublicKeyArguments
-		| [
-				account: RawTransactionArgument<string>,
-				auth: TransactionArgument,
-				ct: RawTransactionArgument<string>,
-				newPk: TransactionArgument,
-				newHandles: TransactionArgument,
-				rekeyProof: TransactionArgument,
-				keyEncryption: TransactionArgument,
-		  ];
-	typeArguments: [string];
+		| SetDefaultPkAsSenderArguments
+		| [account: RawTransactionArgument<string>, defaultPk: TransactionArgument];
 }
 /**
- * Update the public key for the account of token `T`. Authorized by `auth`, which
- * must be for the `PERMISSIONED_REGISTER` operation and for `account.owner` -- key
- * rotation reuses the registration authorization since the same flow gates account
- * onboarding. This aborts if there are pending deposits that need to be merged, so
- * the caller should:
- *
- * - Call `merge` to merge pending deposits and `set_accepts_encrypted_deposits` to
- *   false to prevent new encrypted deposits.
- * - Call `set_public_key` to update the public key and
- *   `set_accepts_encrypted_deposits` to true to allow new encrypted deposits
- *   again.
+ * Set the account's optional `default_pk` (pass `none` to clear it, which disables
+ * permissionless auto-registration).
  */
-export function setPublicKey(options: SetPublicKeyOptions) {
+export function setDefaultPkAsSender(options: SetDefaultPkAsSenderOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, 'vector<null>', null, null] satisfies (
-		| string
-		| null
-	)[];
-	const parameterNames = [
-		'account',
-		'auth',
-		'ct',
-		'newPk',
-		'newHandles',
-		'rekeyProof',
-		'keyEncryption',
-	];
+	const argumentsTypes = [null, null] satisfies (string | null)[];
+	const parameterNames = ['account', 'defaultPk'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'set_public_key',
+			function: 'set_default_pk_as_sender',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface SetDefaultPkAsObjectArguments {
+	account: RawTransactionArgument<string>;
+	defaultPk: TransactionArgument;
+	uid: RawTransactionArgument<string>;
+}
+export interface SetDefaultPkAsObjectOptions {
+	package?: string;
+	arguments:
+		| SetDefaultPkAsObjectArguments
+		| [
+				account: RawTransactionArgument<string>,
+				defaultPk: TransactionArgument,
+				uid: RawTransactionArgument<string>,
+		  ];
+}
+/**
+ * Set the `default_pk` of an account owned by the object identified by `uid`.
+ * Holding `&mut UID` proves custody of the object, so it self-authenticates as its
+ * own owner.
+ */
+export function setDefaultPkAsObject(options: SetDefaultPkAsObjectOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null, '0x2::object::ID'] satisfies (string | null)[];
+	const parameterNames = ['account', 'defaultPk', 'uid'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'set_default_pk_as_object',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface RekeyTokenAccountArguments {
+	account: RawTransactionArgument<string>;
+	auth: TransactionArgument;
+	newPk: TransactionArgument;
+	newHandles: TransactionArgument;
+	rekeyProof: TransactionArgument;
+}
+export interface RekeyTokenAccountOptions {
+	package?: string;
+	arguments:
+		| RekeyTokenAccountArguments
+		| [
+				account: RawTransactionArgument<string>,
+				auth: TransactionArgument,
+				newPk: TransactionArgument,
+				newHandles: TransactionArgument,
+				rekeyProof: TransactionArgument,
+		  ];
+	typeArguments: [string];
+}
+/**
+ * Re-key token `T`'s active balance from its current `TokenAccount.pk` to
+ * `new_pk`, swapping each limb's decryption handle for the matching
+ * `new_handles[i]` (proven by `rekey_proof`). `new_pk` is explicit and independent
+ * of the account's default key. Aborts if the token has unmerged pending deposits
+ * (which are under the old key, so they must be merged first) or the proof fails.
+ * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation
+ * and for `account.owner`.
+ */
+export function rekeyTokenAccount(options: RekeyTokenAccountOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'contra',
+			function: 'rekey_token_account',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
 }
-export interface TrySetPublicKeyAndUnpauseArguments {
+export interface TryRekeyTokenAccountAndUnpauseArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
-	ct: RawTransactionArgument<string>;
 	newPk: TransactionArgument;
-	restatedBalance: TransactionArgument;
-	restatedBalanceProof: TransactionArgument;
-	balanceProof: TransactionArgument;
 	newHandles: TransactionArgument;
 	rekeyProof: TransactionArgument;
-	keyEncryption: TransactionArgument;
 }
-export interface TrySetPublicKeyAndUnpauseOptions {
+export interface TryRekeyTokenAccountAndUnpauseOptions {
 	package?: string;
 	arguments:
-		| TrySetPublicKeyAndUnpauseArguments
+		| TryRekeyTokenAccountAndUnpauseArguments
 		| [
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
-				ct: RawTransactionArgument<string>,
 				newPk: TransactionArgument,
-				restatedBalance: TransactionArgument,
-				restatedBalanceProof: TransactionArgument,
-				balanceProof: TransactionArgument,
 				newHandles: TransactionArgument,
 				rekeyProof: TransactionArgument,
-				keyEncryption: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Optimistic key rotation: re-state the balance under a fresh blinding, re-key it
- * to `new_pk`, and unpause. If the restate's `balance_proof` fails (e.g. a deposit
- * raced the caller's read), emits `TrySetPublicKeyFailedEvent` and leaves the
- * account paused for a retry. The caller must `merge` (and pause) first.
+ * Like `rekey_token_account` but soft-fails instead of aborting if the re-key
+ * proof does not verify (e.g. a deposit raced the caller's read). The re-key flow
+ * pauses the token first (`accepts_deposits  = false`) so no deposit lands under
+ * the old key mid-rotation; on success this re-keys the token and resumes deposits
+ * (`accepts_deposits = true`), now under the new key. On failure it emits
+ * `TryTokenRekeyFailedEvent` and leaves the token unchanged (still paused) for a
+ * retry. Still aborts on unmerged pending deposits.
  */
-export function trySetPublicKeyAndUnpause(options: TrySetPublicKeyAndUnpauseOptions) {
+export function tryRekeyTokenAccountAndUnpause(options: TryRekeyTokenAccountAndUnpauseOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		null,
-		'vector<null>',
-		null,
-		null,
-	] satisfies (string | null)[];
-	const parameterNames = [
-		'account',
-		'auth',
-		'ct',
-		'newPk',
-		'restatedBalance',
-		'restatedBalanceProof',
-		'balanceProof',
-		'newHandles',
-		'rekeyProof',
-		'keyEncryption',
-	];
+	const argumentsTypes = [null, null, null, 'vector<null>', null] satisfies (string | null)[];
+	const parameterNames = ['account', 'auth', 'newPk', 'newHandles', 'rekeyProof'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
 			module: 'contra',
-			function: 'try_set_public_key_and_unpause',
+			function: 'try_rekey_token_account_and_unpause',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 			typeArguments: options.typeArguments,
 		});
@@ -678,6 +743,7 @@ export interface BatchedTransferArguments {
 	seedPoint: TransactionArgument;
 	newBalance: TransactionArgument;
 	balanceProof: TransactionArgument;
+	auditorPackage: TransactionArgument;
 }
 export interface BatchedTransferOptions {
 	package?: string;
@@ -695,6 +761,7 @@ export interface BatchedTransferOptions {
 				seedPoint: TransactionArgument,
 				newBalance: TransactionArgument,
 				balanceProof: TransactionArgument,
+				auditorPackage: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -710,10 +777,15 @@ export interface BatchedTransferOptions {
  * the sender can re-derive each transfer's blinding and recover its outgoing
  * amounts; it is not otherwise verified on chain.
  *
+ * Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package`
+ * must be `some` and carry one entry per auditor key. See
+ * `auditors::verify_transfer` for details.
+ *
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
- * `BalanceProofFailed`. Aborts if `well_formed_proofs` does not verify or
- * `consistency_proof` fails. Call `add` once per receiver, in `receiver_amounts`
- * order, then `finalize`. Authorized by any `Auth<T>` for `sender.owner`.
+ * `BalanceProofFailed`. Aborts if `well_formed_proofs`, the auditor requirement,
+ * or `consistency_proof` fails. Call `add` once per receiver, in
+ * `receiver_amounts` order, then `finalize`. Authorized by any `Auth<T>` for
+ * `sender.owner`.
  */
 export function batchedTransfer(options: BatchedTransferOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -724,6 +796,7 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'0x2::deny_list::DenyList',
 		'vector<null>',
 		'vector<null>',
+		null,
 		null,
 		null,
 		null,
@@ -743,6 +816,7 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'seedPoint',
 		'newBalance',
 		'balanceProof',
+		'auditorPackage',
 	];
 	return (tx: Transaction) =>
 		tx.moveCall({
@@ -771,12 +845,15 @@ export interface AddToBatchOptions {
 }
 /**
  * Add a receiver to a batched transfer: pop the next receiver-keyed
- * `EncryptedCoin` and credit it to the receiver's pending deposits. Aborts if:
+ * `EncryptedCoin` and credit it to the receiver's pending deposits. The receiver
+ * must already have a `TokenAccount<T>` (for permissionless tokens anyone can
+ * create one up front with `register_with_default_pk`). Aborts if:
  *
- * - the receiver is not registered, frozen, or on the deny list,
+ * - the receiver has no `TokenAccount<T>`,
+ * - the receiver is frozen or on the deny list,
  * - `add_to_batch` is called more times than there were `receiver_amounts` in
  *   `batched_transfer`,
- * - the coin is not encrypted under the receiver's registered public key.
+ * - the coin is not encrypted under the receiver's public key.
  */
 export function addToBatch(options: AddToBatchOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -1319,8 +1396,8 @@ export function setPolicy(options: SetPolicyOptions) {
 export interface UpdateAuditorsArguments {
 	ct: RawTransactionArgument<string>;
 	Cap: RawTransactionArgument<string>;
-	publicKeys: TransactionArgument;
-	bumpRecommendedMin: RawTransactionArgument<boolean>;
+	currentPks: TransactionArgument;
+	previousPks: TransactionArgument;
 }
 export interface UpdateAuditorsOptions {
 	package?: string;
@@ -1329,24 +1406,22 @@ export interface UpdateAuditorsOptions {
 		| [
 				ct: RawTransactionArgument<string>,
 				Cap: RawTransactionArgument<string>,
-				publicKeys: TransactionArgument,
-				bumpRecommendedMin: RawTransactionArgument<boolean>,
+				currentPks: TransactionArgument,
+				previousPks: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Update the auditors for this confidential token by setting their new public keys
- * in the corresponding `auditors` struct. If `bump_recommended_min` is true, the
- * auditors' `recommended_min_version` is raised to the new version, signalling
- * that all users should call `set_public_key` with a valid viewing key encrypted
- * towards the new auditor keys. The floor is advisory; the chain does not enforce
- * it on transfer. The auditor flow can be disabled by inputting an empty
- * `public_keys` vector.
+ * Replace this confidential token's auditor keys. `current_pks` is tried first
+ * when verifying a transfer, then `previous_pks`. The two does not have to be the
+ * same length. The caller can drive a grace policy: rotate with
+ * `update_auditors(new, old_current)` and end the grace with
+ * `update_auditors(new, new)`.
  */
 export function updateAuditors(options: UpdateAuditorsOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, 'vector<null>', 'bool'] satisfies (string | null)[];
-	const parameterNames = ['ct', 'Cap', 'publicKeys', 'bumpRecommendedMin'];
+	const argumentsTypes = [null, null, 'vector<null>', 'vector<null>'] satisfies (string | null)[];
+	const parameterNames = ['ct', 'Cap', 'currentPks', 'previousPks'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

@@ -7,7 +7,10 @@
 /// the contra entrypoint -- no extra access control is performed.
 module gated::gated;
 
-use contra::{auditors::KeyEncryption, contra::{Self, ConfidentialToken, Account, Pool}};
+use contra::{
+    contra::{Self, ConfidentialToken, Account, AccountRegistry, Pool},
+    twisted_elgamal::public_key
+};
 use sui::{coin::Coin, deny_list::DenyList, group_ops::Element, ristretto255::G};
 
 // Operation indices, mirroring private constants in `contra::contra`.
@@ -39,14 +42,9 @@ public fun vault_address(vault: &Vault): address {
 
 // === Permissioned ops (`authorize_with_witness`) ===
 
-public fun gated_register<T>(
-    ct: &ConfidentialToken<T>,
-    account: &mut Account,
-    pk: Element<G>,
-    key_encryption: Option<KeyEncryption>,
-) {
+public fun gated_register<T>(ct: &ConfidentialToken<T>, account: &mut Account, pk: Element<G>) {
     let auth = ct.authorize_with_witness(REGISTER_OP, account.owner(), GatedWitness {});
-    contra::register(account, &auth, ct, pk, key_encryption);
+    contra::register(account, &auth, public_key(pk));
 }
 
 public fun gated_wrap<T>(
@@ -63,15 +61,20 @@ public fun gated_wrap<T>(
 
 // === Object-bound ops (`authorize_as_object`) ===
 
+/// Create the contra `Account` owned by `vault`'s address. `new_account` is permissionless, so this
+/// is a thin wrapper; the vault's token account is keyed explicitly at `vault_register`.
+public fun vault_new_account(vault: &Vault, registry: &mut AccountRegistry): Account {
+    contra::new_account(registry, vault.id.to_inner().to_address())
+}
+
 public fun vault_register<T>(
     vault: &mut Vault,
     ct: &ConfidentialToken<T>,
     account: &mut Account,
     pk: Element<G>,
-    key_encryption: Option<KeyEncryption>,
 ) {
     let auth = ct.authorize_as_object(&mut vault.id);
-    contra::register(account, &auth, ct, pk, key_encryption);
+    contra::register(account, &auth, public_key(pk));
 }
 
 public fun vault_wrap<T>(

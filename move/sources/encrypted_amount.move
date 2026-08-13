@@ -5,12 +5,12 @@ module contra::encrypted_amount;
 
 use contra::{
     nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
-    twisted_elgamal::{Self, Encryption, g, encrypt_trivial, encrypt_zero}
+    twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_trivial, encrypt_zero}
 };
 use sui::{
     group_ops::Element,
     rangeproofs,
-    ristretto255::{G, g_add, g_identity, g_mul, scalar_from_u64}
+    ristretto255::{G, Scalar, g_add, g_identity, g_mul, scalar_from_u64}
 };
 
 /// Bulletproof construction version. `0` is the original Bulletproofs construction
@@ -21,6 +21,8 @@ const BULLETPROOFS_VERSION: u8 = 0;
 /// Bit-length used by the per-limb range check: each limb encrypts a u16, so the proof
 /// must show every committed value lies in `[0, 2^16)`.
 const LIMB_BITS: u8 = 16;
+
+const U16_LIMBS: u64 = 4;
 
 /// Maximum number of amounts covered by a single Bulletproof chunk.
 /// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
@@ -48,22 +50,16 @@ public struct EncryptedAmount has copy, drop, store {
 /// 2) All limbs are valid encryptions with respect to the given public key (in the Proof of Knowledge sense).
 public struct WellFormedEncryptedAmount has copy, drop {
     amount: EncryptedAmount,
-    pk: Element<G>,
-}
-
-/// Per-amount ElGamal consistency. The public key isn't stored
-/// here — the verifier supplies it at `verify` time.
-public struct ConsistencyProof has drop {
-    proof: ElGamalProof,
+    pk: PublicKey,
 }
 
 /// Well-formedness proof: one Bulletproof per chunk of the canonical partition of
 /// `consistency_proofs.length()` (see `batch_sizes`; e.g. N=7 → [4, 2, 1], N=20 → [8, 8, 4]),
-/// plus one `ConsistencyProof` per amount. An empty `range_proofs` vector skips the range
+/// plus one per-amount ElGamal consistency proof. An empty `range_proofs` vector skips the range
 /// check entirely — only reachable via the `#[test_only]` constructor.
 public struct WellFormedProof has drop {
     range_proofs: vector<vector<u8>>,
-    consistency_proofs: vector<ConsistencyProof>,
+    consistency_proofs: vector<ElGamalProof>,
 }
 
 public fun new_encrypted_amount(
@@ -75,10 +71,6 @@ public fun new_encrypted_amount(
     EncryptedAmount { l0, l1, l2, l3 }
 }
 
-public fun new_consistency_proof(proof: ElGamalProof): ConsistencyProof {
-    ConsistencyProof { proof }
-}
-
 /// Bundle range proofs and consistency proofs into a `WellFormedProof`. Pass one consistency
 /// proof per amount and one range proof per `batch_sizes(consistency_proofs.length())` chunk,
 /// where each chunk's range proof covers that chunk's amounts (4 limbs each). Aborts on length
@@ -86,7 +78,7 @@ public fun new_consistency_proof(proof: ElGamalProof): ConsistencyProof {
 /// `verify`.
 public fun new_well_formed_proof(
     range_proofs: vector<vector<u8>>,
-    consistency_proofs: vector<ConsistencyProof>,
+    consistency_proofs: vector<ElGamalProof>,
 ): WellFormedProof {
     assert!(
         range_proofs.length() == batch_sizes(consistency_proofs.length()).length(),
@@ -108,7 +100,7 @@ public(package) fun verify(
     elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
     amounts: &vector<EncryptedAmount>,
-    pks: &vector<Element<G>>,
+    pks: &vector<PublicKey>,
 ): bool {
     let n = amounts.length();
     assert!(pks.length() == n, EMismatchedBatchLength);
@@ -128,7 +120,7 @@ public(package) fun into_well_formed(
     amount: EncryptedAmount,
     elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
-    pk: Element<G>,
+    pk: PublicKey,
     proof: WellFormedProof,
 ): WellFormedEncryptedAmount {
     assert!(
@@ -146,7 +138,7 @@ public(package) fun batch_into_well_formed(
     amounts: vector<EncryptedAmount>,
     elgamal_dst: vector<u8>,
     range_dst: vector<u8>,
-    pks: vector<Element<G>>,
+    pks: vector<PublicKey>,
     proof: WellFormedProof,
 ): vector<WellFormedEncryptedAmount> {
     assert!(proof.verify(elgamal_dst, range_dst, &amounts, &pks), EWellFormedProofFailed);
@@ -159,13 +151,13 @@ public(package) fun amount(self: &WellFormedEncryptedAmount): &EncryptedAmount {
 }
 
 /// The public key `self.amount()` is encrypted under.
-public(package) fun pk(self: &WellFormedEncryptedAmount): &Element<G> {
+public(package) fun pk(self: &WellFormedEncryptedAmount): &PublicKey {
     &self.pk
 }
 
 #[syntax(index)]
 public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
-    assert!(i < 4, EIndexOutOfBounds);
+    assert!(i < U16_LIMBS, EIndexOutOfBounds);
     if (i == 0) {
         &ea.l0
     } else if (i == 1) {
@@ -177,22 +169,16 @@ public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
     }
 }
 
-/// Return a single encryption of the value this encrypted amount encrypts.
-public(package) fun collapse(eq: &EncryptedAmount): Encryption {
-    twisted_elgamal::new(
-        collapse_limbs(
-            eq.l0.ciphertext(),
-            eq.l1.ciphertext(),
-            eq.l2.ciphertext(),
-            eq.l3.ciphertext(),
-        ),
-        collapse_limbs(
-            eq.l0.decryption_handle(),
-            eq.l1.decryption_handle(),
-            eq.l2.decryption_handle(),
-            eq.l3.decryption_handle(),
-        ),
-    )
+/// The two u32-limb `Encryption`s `(l0 + 2^16 l1, l2 + 2^16 l3)` (ciphertext and handle alike).
+public(package) fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
+    let two_16 = scalar_from_u64(1 << 16);
+    vector[fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16)]
+}
+
+/// The single `Encryption` of the full u64 value: the two u32 limbs folded by `2^32`.
+public(package) fun collapse(ea: &EncryptedAmount): Encryption {
+    let u32s = ea.collapse_to_u32();
+    fold_encryption(&u32s[0], &u32s[1], &scalar_from_u64(1 << 32))
 }
 
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
@@ -206,7 +192,7 @@ public(package) fun verify_equal(
     proof.verify_ddh(
         dst,
         &vector[g(), *encryption.ciphertext()],
-        &vector[ea1.pk, *encryption.decryption_handle()],
+        &vector[*ea1.pk.as_element(), *encryption.decryption_handle()],
     )
 }
 
@@ -218,17 +204,17 @@ public(package) fun verify_equal(
 /// per-limb values under `new_pk` by construction.
 public(package) fun try_rekey(
     old_amount: &EncryptedAmount,
-    old_pk: &Element<G>,
-    new_pk: &Element<G>,
+    old_pk: &PublicKey,
+    new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
     proof: &DdhProof,
     dst: vector<u8>,
 ): Option<EncryptedAmount> {
-    assert!(new_handles.length() == 4, EMismatchedBatchLength);
-    // Pair 0 re-keys the public key; pairs 1..4 re-key each limb's decryption handle.
-    let mut bases = vector[*old_pk];
-    let mut images = vector[*new_pk];
-    4u64.do!(|i| {
+    assert!(new_handles.length() == U16_LIMBS, EMismatchedBatchLength);
+    // Pair 0 re-keys the public key and pairs 1..4 re-key each limb's decryption handle.
+    let mut bases = vector[*old_pk.as_element()];
+    let mut images = vector[*new_pk.as_element()];
+    U16_LIMBS.do!(|i| {
         bases.push_back(*old_amount[i].decryption_handle());
         images.push_back(new_handles[i]);
     });
@@ -246,38 +232,33 @@ public(package) fun try_rekey(
 
 /// Sum of the collapsed Pedersen commitments of `amounts` (ciphertext components only).
 public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>): Element<G> {
-    // `collapse_limbs` is linear, so sum the four limb positions across all amounts first (cheap
-    // point adds) and collapse once, rather than collapsing each amount (three scalar mults each).
-    let mut c0 = g_identity();
-    let mut c1 = g_identity();
-    let mut c2 = g_identity();
-    let mut c3 = g_identity();
-    amounts.do_ref!(|wfea| {
-        let a = &wfea.amount;
-        c0 = g_add(&c0, a[0].ciphertext());
-        c1 = g_add(&c1, a[1].ciphertext());
-        c2 = g_add(&c2, a[2].ciphertext());
-        c3 = g_add(&c3, a[3].ciphertext());
-    });
-    collapse_limbs(&c0, &c1, &c2, &c3)
+    let mut cs = vector::tabulate!(U16_LIMBS, |_| g_identity());
+    amounts.do_ref!(|wfea| U16_LIMBS.do!(|j| {
+        let sum = g_add(&cs[j], wfea.amount[j].ciphertext());
+        *cs.borrow_mut(j) = sum;
+    }));
+    let two_16 = scalar_from_u64(1 << 16);
+    let lo = fold(&cs[0], &cs[1], &two_16);
+    let hi = fold(&cs[2], &cs[3], &two_16);
+    fold(&lo, &hi, &scalar_from_u64(1 << 32))
 }
 
-/// Combine four limbs into `l0 + 2^16 l1 + 2^32 l2 + 2^48 l3`.
-public(package) fun collapse_limbs(
-    l0: &Element<G>,
-    l1: &Element<G>,
-    l2: &Element<G>,
-    l3: &Element<G>,
-): Element<G> {
-    g_add(
-        l0,
-        &g_add(
-            &g_mul(&scalar_from_u64(1 << 16), l1),
-            &g_add(
-                &g_mul(&scalar_from_u64(1 << 32), l2),
-                &g_mul(&scalar_from_u64(1 << 48), l3),
-            ),
-        ),
+/// This amount's two u32-limb decryption handles under the receiver's key — the anchor `ρ̃_l · pk` the
+/// auditor DDH proves the auditor handles re-key from.
+public(package) fun handles_u32(self: &WellFormedEncryptedAmount): vector<Element<G>> {
+    self.amount.collapse_to_u32().map!(|e| *e.decryption_handle())
+}
+
+/// `lo + shift * hi`.
+fun fold(lo: &Element<G>, hi: &Element<G>, shift: &Element<Scalar>): Element<G> {
+    g_add(lo, &g_mul(shift, hi))
+}
+
+/// Fold two `Encryption`s into `lo + shift * hi` (ciphertext and handle alike).
+fun fold_encryption(lo: &Encryption, hi: &Encryption, shift: &Element<Scalar>): Encryption {
+    twisted_elgamal::new(
+        fold(lo.ciphertext(), hi.ciphertext(), shift),
+        fold(lo.decryption_handle(), hi.decryption_handle(), shift),
     )
 }
 
@@ -324,7 +305,10 @@ fun verify_well_formed_range_proofs(
         rangeproofs::verify_bulletproofs_with_dst_ristretto255(
             range_proof,
             LIMB_BITS,
-            &vector::tabulate!(4 * chunk, |j| *amounts[start + j / 4][j % 4].ciphertext()),
+            &vector::tabulate!(
+                U16_LIMBS * chunk,
+                |j| *amounts[start + j / U16_LIMBS][j % U16_LIMBS].ciphertext(),
+            ),
             &dst,
             BULLETPROOFS_VERSION,
         )
@@ -351,8 +335,8 @@ fun batch_sizes(n: u64): vector<u64> {
 /// Verify each limb of each `amounts[i]` is a valid ElGamal encryption under `pks[i]`.
 fun verify_well_formed_knowledge(
     amounts: &vector<EncryptedAmount>,
-    proofs: &vector<ConsistencyProof>,
-    pks: &vector<Element<G>>,
+    proofs: &vector<ElGamalProof>,
+    pks: &vector<PublicKey>,
     dst: vector<u8>,
 ): bool {
     let n = amounts.length();
@@ -360,7 +344,7 @@ fun verify_well_formed_knowledge(
     while (i < n) {
         let ea = &amounts[i];
         let limbs = vector[ea[0], ea[1], ea[2], ea[3]];
-        if (!proofs[i].proof.verify_elgamal(dst, &pks[i], &limbs)) return false;
+        if (!proofs[i].verify_elgamal(dst, &pks[i], &limbs)) return false;
         i = i + 1;
     };
     true
@@ -395,14 +379,14 @@ public fun total_consistency_proof_for_testing(
 /// Bulletproof bytes; they bound limbs out of band.
 #[test_only]
 public fun new_well_formed_proof_for_testing(
-    consistency_proofs: vector<ConsistencyProof>,
+    consistency_proofs: vector<ElGamalProof>,
 ): WellFormedProof {
     WellFormedProof { range_proofs: vector[], consistency_proofs }
 }
 
 #[test_only]
 public fun new_well_formed_proof_singleton_for_testing(
-    consistency_proof: ConsistencyProof,
+    consistency_proof: ElGamalProof,
 ): WellFormedProof {
     new_well_formed_proof_for_testing(vector[consistency_proof])
 }
@@ -425,18 +409,13 @@ public fun decryption_handles_for_testing(ea: &EncryptedAmount): vector<Element<
 }
 
 #[test_only]
-public fun limb_for_testing(ea: &EncryptedAmount, i: u64): Encryption {
-    *ea.limb(i)
-}
-
-#[test_only]
 public fun consistency_proof_for_testing(
     dst: vector<u8>,
     amount: u16,
     ea: &EncryptedAmount,
     blinding: u64,
     pk: &Element<G>,
-): ConsistencyProof {
+): ElGamalProof {
     let e0 = ea[0];
     let e1 = ea[1];
     let e2 = ea[2];
@@ -445,15 +424,13 @@ public fun consistency_proof_for_testing(
     let b2 = if (*e2.decryption_handle() == g_identity()) 0 else blinding;
     let b3 = if (*e3.decryption_handle() == g_identity()) 0 else blinding;
     // Limb messages are (amount, 0, 0, 0); the four share `pk`, so fold them into one proof.
-    new_consistency_proof(
-        prove_elgamal(
-            dst,
-            pk,
-            &vector[e0, e1, e2, e3],
-            &vector[amount as u64, 0, 0, 0],
-            &vector[blinding, b1, b2, b3],
-            &scalar_from_u64(1111),
-            &scalar_from_u64(2222),
-        ),
+    prove_elgamal(
+        dst,
+        pk,
+        &vector[e0, e1, e2, e3],
+        &vector[amount as u64, 0, 0, 0],
+        &vector[blinding, b1, b2, b3],
+        &scalar_from_u64(1111),
+        &scalar_from_u64(2222),
     )
 }

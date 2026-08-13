@@ -5,13 +5,7 @@ import { dst, newSessionId, PROTOCOL_VERIFIED_DEC } from './helpers.js';
 import type { DdhNizk } from './nizk.js';
 import { assertNonZeroScalar, G, mul, randomScalar, type RistrettoPoint } from './ristretto255.js';
 import { recoverTransferRandomness } from './transfer_randomness.js';
-import type {
-	Ciphertext,
-	DiscreteLogTable,
-	EncryptedAmount,
-	PrivateKey,
-	PublicKey,
-} from './twisted_elgamal.js';
+import type { Ciphertext, DiscreteLogTable, PrivateKey, PublicKey } from './twisted_elgamal.js';
 import type { ContraPackageConfig } from './types.js';
 
 /**
@@ -60,13 +54,16 @@ export class TokenAccount {
 	}
 
 	/**
-	 * Decrypt an `EncryptedAmount` using this account's private key,
-	 * returning the underlying u64 plaintext as a `bigint`.
-	 *
-	 * Convenience wrapper over `EncryptedAmount.decrypt(privateKey, table)`.
+	 * Decrypt a transferred amount from a `TransferEvent`'s `encrypted_amount_receiver` — its four
+	 * u16-limb ciphertexts under this account's key — returning the u64 plaintext. Each limb `k` is
+	 * BSGS-decrypted (a single table lookup, since each is `< 2^16`) and shifted into place:
+	 * `Σ_k n_k · 2^{16k}`.
 	 */
-	decryptAmount(encryptedAmount: EncryptedAmount, table: DiscreteLogTable): bigint {
-		return encryptedAmount.decrypt(this.privateKey, table);
+	decryptAmount(limbs: Ciphertext[], table: DiscreteLogTable): bigint {
+		return limbs.reduce(
+			(acc, limb, k) => acc + (limb.decrypt(this.privateKey, table) << BigInt(16 * k)),
+			0n,
+		);
 	}
 
 	/**
@@ -95,19 +92,21 @@ export class TokenAccount {
 	}
 
 	/**
-	 * Recover an outgoing batched-transfer amount this account sent, from the
-	 * on-chain `TransferEvent`, without any sender-keyed decryption handle.
+	 * Recover an outgoing batched-transfer amount this account sent, from the `TransferEvent`'s
+	 * `encrypted_amount_receiver` (four u16-limb ciphertexts), without any sender-keyed decryption
+	 * handle. The per-transfer blindings are re-derived from `seedPoint` (`P`) — limb `k` uses blinding
+	 * `ρ_k` — and the value reads off the commitment alone.
 	 */
 	recoverSentAmount(
-		encryptedAmount: EncryptedAmount,
+		limbs: Ciphertext[],
 		seedPoint: RistrettoPoint,
 		batchIndex: number,
 		table: DiscreteLogTable,
 	): bigint {
 		const randomness = recoverTransferRandomness(this.privateKey, seedPoint);
-		return encryptedAmount.decryptWithBlindings(
-			(limbIndex) => randomness.blinding(batchIndex, limbIndex),
-			table,
-		);
+		return limbs.reduce((acc, limb, k) => {
+			const blinding = randomness.blinding(batchIndex, k);
+			return acc + (limb.decryptWithBlinding(blinding, table) << BigInt(16 * k));
+		}, 0n);
 	}
 }

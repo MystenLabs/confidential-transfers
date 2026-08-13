@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RistrettoPoint } from './ristretto255.js';
+
 /**
  * Error taxonomy for the SDK. Every error the SDK raises itself extends
  * {@link ContraError}, and falls into one of five categories:
@@ -85,5 +87,19 @@ export class DecryptionFailedError extends ContraError {
 			`Decryption failed: no plaintext found in the table's 2^${numBits * 2} range (wrong key or plaintext exceeds range).`,
 		);
 		this.numBits = numBits;
+	}
+}
+
+/**
+ * A transfer was audited under an `auditorPk` this {@link ContraAuditor} holds no private key for —
+ * e.g. a rotated-out key it did not retain. Add the matching key via `ContraAuditor.addKey`.
+ */
+export class AuditorKeyNotHeldError extends ContraError {
+	readonly auditorPk: RistrettoPoint;
+	constructor(auditorPk: RistrettoPoint) {
+		super(
+			"This auditor holds no private key matching the transfer's auditor_pk; add it with addKey.",
+		);
+		this.auditorPk = auditorPk;
 	}
 }
