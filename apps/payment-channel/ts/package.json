@@ -11,7 +11,7 @@
 	},
 	"packageManager": "pnpm@10.10.0",
 	"dependencies": {
-		"@mysten/sui": "^2.22.1",
+		"@mysten/sui": "^2.24.0",
 		"contra-utils": "file:../../../utils/ts-utils",
 		"ts-sdk": "file:../../../ts-sdk"
 	},

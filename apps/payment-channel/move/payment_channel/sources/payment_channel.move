@@ -21,9 +21,7 @@
 ///
 /// # State machine
 /// - `Initialized` — fresh channel; the sender has full control via
-///   `get_auth` and uses it to set up the channel's contra account
-///   (`contra::new_account` keyed by `address_of(channel)` then
-///   `contra::register` with the channel's auth), fund it, etc.
+///   `get_auth` and uses it to set up the channel's contra account, fund it, etc.
 /// - `Active { receiver, end_time_ms }` — sender called `activate`, locking
 ///   themselves out: `get_auth` only returns an auth if the call is
 ///   receiver-sponsored (`ctx.sponsor() == Some(receiver)`) or after the
@@ -36,7 +34,7 @@
 /// To pay the receiver `X`, the sender builds a PTB consisting of:
 ///   1. `payment_channel::get_auth(channel, ct, clock, ctx)` → `Auth<T>`,
 ///   2. `contra::batched_transfer(channel_account, ct, [amount(X)],
-///      new_balance, balance_proof, deny_list, auth)`,
+///      new_balance, balance_proof, ..., auth)`,
 ///   3. `contra::add_to_batch(batch, receiver_account, none, deny_list)`,
 ///   4. `contra::finalize(batch)`,
 /// signs as `ctx.sender = c.sender` (with the channel still `Active`), and
@@ -44,8 +42,7 @@
 /// dry-runs to verify the encrypted amount paid to them, signs as gas
 /// sponsor, and broadcasts. On chain, step 1 sees `ctx.sponsor() ==
 /// Some(receiver)` while `Active`, returns the auth, and atomically flips
-/// state to `Closed`; if the contra balance proof in step 4 fails, the entire
-/// PTB aborts and the state change in step 1 is rolled back.
+/// state to `Closed`.
 ///
 /// # Privacy
 /// All transfer amounts and account balances appear on chain only as
@@ -73,8 +70,8 @@
 /// is dry-run before the receiver signs as gas sponsor, so an underfunded
 /// or otherwise invalid transfer would fail in dry-run and be rejected.
 ///
-/// On every settlement, the receiver dry-runs the sender-signed PTB and
-/// inspects the contra `TransferEvent` it would emit:
+/// On every settlement, the receiver structurally verifies the raw PTB,
+/// dry-runs it and inspects the contra `TransferEvent` it would emit:
 ///   - `sender` equals the channel's contra-account address
 ///     (`address_of(channel)`) — proves the funds come from *this* channel,
 ///     not someone else's;
@@ -85,6 +82,14 @@
 ///     chain.
 /// Any mismatch means the PTB is not the settlement the sender claimed,
 /// and the receiver MUST NOT sign as gas sponsor.
+///
+/// A held transfer is also invalidated by an auditor-key change on the token:
+/// each sender-signed transfer embeds auditor data built against the token's
+/// auditor key at signing time, and after a rotation it stays settleable only
+/// while the outgoing key remains accepted (the token's `previous_pks` grace
+/// window). The receiver should therefore know the token's official grace
+/// policy, watch for `UpdateAuditorsEvent`, and settle — or ask the sender to
+/// re-sign against the new key — before the grace window closes.
 ///
 /// # Lifecycle
 /// 1. `new` — create and share the `Channel<T>`. State = `Initialized`.
@@ -142,8 +147,7 @@ public fun new<T>(ctx: &mut TxContext) {
     transfer::share_object(c);
 }
 
-/// Create the contra `Account` owned by the channel's address (no default key — the channel registers
-/// its token account explicitly). Restricted to the channel `sender`.
+/// Create the contra `Account` owned by the channel's address.
 public fun new_account<T>(
     c: &Channel<T>,
     registry: &mut AccountRegistry,

@@ -112,13 +112,15 @@ export async function setupChannelContraAccount(opts: {
  * txs because `bu::mint_10` transfers the freshly minted coin to the caller's
  * wallet (so the wrap can't chain into the same PTB):
  *   tx1: `bu::mint_10`,
- *   tx2: split → `contra::wrap` → `payment_channel::activate`.
+ *   tx2: `get_auth` → split → `contra::wrap` → `contra::merge` →
+ *        `payment_channel::activate`.
  *
- * No upfront merge: the wrapped funds sit in the channel account's pending
- * balance until the first settlement, whose `transfer({ merge: true })` call
- * prepends a merge under the channel auth. The "merge succeeded but transfer
- * failed" race that motivates `merge: false` elsewhere can't fire here —
- * only the channel sender deposits, and they stop after activate.
+ * The wrapped funds are merged into the channel's *active* balance before
+ * `activate`, so settlement PTBs never need a merge: their proofs bind only
+ * the active balance, which nobody can move while the channel is `Active`.
+ * A settlement that did carry a merge would let any deposit into the channel
+ * account invalidate its proofs — and, via `try_finalize`'s soft-fail, close
+ * the channel without paying — so receivers reject merge-carrying PTBs.
  */
 export async function fundAndActivateChannel(opts: {
 	suiClient: ClientWithCoreApi;
@@ -161,8 +163,12 @@ export async function fundAndActivateChannel(opts: {
 	});
 	if (objects.length === 0) throw new Error('no BU coin found after mint_10');
 
-	// 2. Split + wrap into channel, then activate.
+	// 2. Split + wrap into channel, merge into active, then activate.
 	const tx = new Transaction();
+	const channelArg = tx.object(channelObjectId);
+	const auth = tx.add(
+		paymentChannelClient.getAuth({ channel: channelArg, tokenType: deployment.buType }),
+	);
 	const [split] = tx.splitCoins(tx.object(objects[0].objectId), [tx.pure.u64(fundAmount)]);
 	tx.add(
 		await contraClient.wrap({
@@ -172,8 +178,18 @@ export async function fundAndActivateChannel(opts: {
 		}),
 	);
 	tx.add(
+		contraContracts.merge({
+			package: deployment.contra.packageId,
+			typeArguments: [deployment.buType],
+			arguments: {
+				account: contraClient.getAccountId(channelObjectId),
+				auth,
+			},
+		}),
+	);
+	tx.add(
 		paymentChannelClient.activate({
-			channel: tx.object(channelObjectId),
+			channel: channelArg,
 			receiver: receiverAddress,
 			endTimeMs,
 			tokenType: deployment.buType,

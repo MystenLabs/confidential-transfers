@@ -4,6 +4,7 @@
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction } from '@mysten/sui/transactions';
 import { createContraAccount, grpcClientFor, waitForSui } from 'contra-utils';
 import { ContraClient, DiscreteLogTable, TokenAccount } from 'ts-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -124,16 +125,19 @@ describe('payment_channel e2e', () => {
 		});
 	}
 
-	function makeReceiver() {
-		return new Receiver({
+	async function makeReceiver() {
+		const receiver = new Receiver({
 			suiClient,
 			walletKeypair: receiverKp,
 			contraTokenAccount: receiverTokenAccount,
 			tokenType: deployment.buType,
 			channelAddress: channelObjectId,
 			contraPackageId: deployment.contra.packageId,
+			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
 			table,
 		});
+		await receiver.init();
+		return receiver;
 	}
 
 	it('sender cannot sweep while channel is open and receiver has not settled', async () => {
@@ -148,9 +152,93 @@ describe('payment_channel e2e', () => {
 		);
 	});
 
+	it('receiver init rejects a channel naming someone else as receiver', async () => {
+		const notTheReceiver = new Receiver({
+			suiClient,
+			walletKeypair: senderKp,
+			contraTokenAccount: senderTokenAccount,
+			tokenType: deployment.buType,
+			channelAddress: channelObjectId,
+			contraPackageId: deployment.contra.packageId,
+			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			table,
+		});
+		await expect(notTheReceiver.init()).rejects.toThrow(/is not this wallet/);
+	});
+
+	it('receiver init rejects a channel with too little time left to settle', async () => {
+		const receiver = new Receiver({
+			suiClient,
+			walletKeypair: receiverKp,
+			contraTokenAccount: receiverTokenAccount,
+			tokenType: deployment.buType,
+			channelAddress: channelObjectId,
+			contraPackageId: deployment.contra.packageId,
+			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			table,
+		});
+		// The channel was activated with a ~10 minute window; demand a day.
+		await expect(receiver.init(24n * 60n * 60n * 1000n)).rejects.toThrow(/leaves less than/);
+	});
+
+	it('receiver rejects a settlement whose gas budget exceeds its cap', async () => {
+		const sender = makeSender();
+		const receiver = await makeReceiver();
+		const recvGas = await pickSuiGasCoin(suiClient, receiverKp.toSuiAddress());
+		const overBudget = await sender.transfer(5n, recvGas, 500_000_000n);
+		await expect(receiver.update(5n, overBudget)).rejects.toThrow(/gas budget .* exceeds cap/);
+	});
+
+	it('receiver rejects a settlement smuggling a get_auth on another channel', async () => {
+		// A second channel from the same sender (Initialized is enough:
+		// `get_auth` releases auth unconditionally pre-activation).
+		const { channelObjectId: otherChannelId } = await createChannel({
+			suiClient,
+			paymentChannelClient,
+			tokenType: deployment.buType,
+			senderKp,
+		});
+
+		// Hand-build a settlement-shaped tx whose first command grabs auth on
+		// the *other* channel before the legitimate transfer.
+		const tx = new Transaction();
+		tx.add(
+			paymentChannelClient.getAuth({
+				channel: tx.object(otherChannelId),
+				tokenType: deployment.buType,
+			}),
+		);
+		tx.add(
+			await contraClient.transfer({
+				tokenAccount: channelTokenAccount,
+				receiverAddress: receiverKp.toSuiAddress(),
+				amount: 5n,
+				auth: (innerTx) =>
+					innerTx.add(
+						paymentChannelClient.getAuth({
+							channel: innerTx.object(channelObjectId),
+							tokenType: deployment.buType,
+						}),
+					),
+				merge: false,
+			}),
+		);
+		tx.setSender(senderKp.toSuiAddress());
+		tx.setGasOwner(receiverKp.toSuiAddress());
+		tx.setGasPayment([await pickSuiGasCoin(suiClient, receiverKp.toSuiAddress())]);
+		tx.setGasBudget(200_000_000n);
+		const txBytes = await tx.build({ client: suiClient });
+		const { signature: senderSignature } = await senderKp.signTransaction(txBytes);
+
+		const receiver = await makeReceiver();
+		await expect(
+			receiver.update(5n, { cumulativeAmount: 5n, txBytes, senderSignature }),
+		).rejects.toThrow(/get_auth must target this channel/);
+	});
+
 	it('receiver settles, then sender sweeps the residual without waiting for end_time', async () => {
 		const sender = makeSender();
-		const receiver = makeReceiver();
+		const receiver = await makeReceiver();
 
 		const recvGas = await pickSuiGasCoin(suiClient, receiverKp.toSuiAddress());
 		const t1 = await sender.transfer(20n, recvGas);
@@ -171,6 +259,8 @@ describe('payment_channel e2e', () => {
 		expect(recvBal.pending.amount).toBe(35n);
 
 		// Sender, now that the channel is Closed, can sweep the residual.
+		// The sweep is a plain non-sponsored tx: the sender pays gas from its
+		// own coin and no gas owner is set.
 		const senderGas = await pickSuiGasCoin(suiClient, senderKp.toSuiAddress());
 		const sweep = await sender.sweep(senderGas);
 		expect(sweep.$kind).toBe('Transaction');
@@ -182,5 +272,80 @@ describe('payment_channel e2e', () => {
 
 		const senderBal = await contraClient.getBalance(senderTokenAccount);
 		expect(senderBal.pending.amount).toBe(lockedAmount - 35n);
+	});
+
+	it('after end_time the sender sweeps an unsettled channel via the timeout path', async () => {
+		// A fresh short-lived channel: the receiver never settles, so the
+		// sender reclaims through the `clock >= end_time_ms` branch of
+		// `get_auth` with a plain non-sponsored sweep.
+		const { channelObjectId: shortChannelId } = await createChannel({
+			suiClient,
+			paymentChannelClient,
+			tokenType: deployment.buType,
+			senderKp,
+		});
+		const shortChannelTokenAccount = await setupChannelContraAccount({
+			suiClient,
+			contraClient,
+			paymentChannelClient,
+			deployment,
+			senderKp,
+			channelObjectId: shortChannelId,
+		});
+		const endTimeMs = BigInt(Date.now() + 5_000);
+		await fundAndActivateChannel({
+			suiClient,
+			contraClient,
+			paymentChannelClient,
+			deployment,
+			senderKp,
+			channelObjectId: shortChannelId,
+			receiverAddress: receiverKp.toSuiAddress(),
+			endTimeMs,
+			fundAmount: 10n,
+		});
+
+		// A prudent receiver would refuse this channel outright: the default
+		// init margin (60s) exceeds the 5s window.
+		const receiver = new Receiver({
+			suiClient,
+			walletKeypair: receiverKp,
+			contraTokenAccount: receiverTokenAccount,
+			tokenType: deployment.buType,
+			channelAddress: shortChannelId,
+			contraPackageId: deployment.contra.packageId,
+			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			table,
+		});
+		await expect(receiver.init()).rejects.toThrow(/leaves less than/);
+
+		const sender = new Sender({
+			suiClient,
+			contraClient,
+			paymentChannelClient,
+			walletKeypair: senderKp,
+			tokenType: deployment.buType,
+			channelObjectId: shortChannelId,
+			channelTokenAccount: shortChannelTokenAccount,
+			receiverAddress: receiverKp.toSuiAddress(),
+			sweepDestAddress: senderTokenAccount.address,
+		});
+
+		const before = await contraClient.getBalance(senderTokenAccount);
+		// Wait until the deadline has comfortably passed (devnet clock lags
+		// wall time by at most a checkpoint or two).
+		await new Promise((r) => setTimeout(r, 12_000));
+
+		const senderGas = await pickSuiGasCoin(suiClient, senderKp.toSuiAddress());
+		const sweep = await sender.sweep(senderGas);
+		expect(sweep.$kind).toBe('Transaction');
+		await suiClient.core.waitForTransaction({ result: sweep });
+		const sweepFailed = (sweep.Transaction?.events ?? []).find((e) =>
+			e.eventType.includes('::events::TryTransferFailedEvent'),
+		);
+		expect(sweepFailed, 'timeout sweep should not soft-fail').toBeUndefined();
+
+		const after = await contraClient.getBalance(senderTokenAccount);
+		expect(after.pending.amount - before.pending.amount).toBe(10n);
 	});
 });
