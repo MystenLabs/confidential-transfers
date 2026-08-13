@@ -3,7 +3,7 @@
 
 import { type ClientWithCoreApi } from '@mysten/sui/client';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Ciphertext, DiscreteLogTable, TokenAccount, TransferEventBcs } from 'ts-sdk';
+import { DiscreteLogTable, EncryptedAmount, TokenAccount, TransferEventBcs } from 'ts-sdk';
 
 import { type SignedTransfer } from './sender.ts';
 
@@ -93,8 +93,9 @@ export class Receiver {
 		if (parsed.receiver !== myAddress) {
 			throw new Error(`TransferEvent receiver ${parsed.receiver} != ${myAddress}`);
 		}
+		const receiverAmount = EncryptedAmount.fromBcs(parsed.encrypted_amount_receiver);
 		const foundAmount = this.opts.contraTokenAccount.decryptAmount(
-			parsed.encrypted_amount_receiver.map((e) => Ciphertext.fromBcs(e)),
+			[receiverAmount.l0, receiverAmount.l1, receiverAmount.l2, receiverAmount.l3],
 			this.opts.table,
 		);
 		if (foundAmount !== expected) {

@@ -29,11 +29,11 @@ import type { TransactionResult } from '@mysten/sui/transactions';
 import { SUI_DENY_LIST_OBJECT_ID, SUI_FRAMEWORK_ADDRESS } from '@mysten/sui/utils';
 import { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from 'contra-utils';
 import {
-	Ciphertext,
 	ContraAuditor,
 	ContraClient,
 	contraContracts,
 	DiscreteLogTable,
+	EncryptedAmount,
 	G,
 	point,
 	pointFromBcs,
@@ -657,7 +657,8 @@ export function decryptTransferEventAmount(opts: {
 }): bigint | null {
 	try {
 		const decoded = TransferEventBcs.parse(opts.eventBcs);
-		const limbs = decoded.encrypted_amount_receiver.map((e) => Ciphertext.fromBcs(e));
+		const ea = EncryptedAmount.fromBcs(decoded.encrypted_amount_receiver);
+		const limbs = [ea.l0, ea.l1, ea.l2, ea.l3];
 		if (opts.side === 'receiver') {
 			return opts.tokenAccount.decryptAmount(limbs, opts.table);
 		}
