@@ -221,7 +221,7 @@ The contract implements per-transfer auditing with a single auditor key per toke
 ### Onboarding flow
 
 1. **Generate an auditor keypair off-chain.** The token issuer generates a Twisted ElGamal keypair `(sk, pk)` over Ristretto255.
-2. **Issuer sets the on-chain auditor key.** The issuer calls [`update_auditors`](move/sources/contra.move) with two key vectors, each holding at most one key: `current_pks` (tried first on a transfer; empty disables auditing going forward) and `previous_pks` (also accepted, for a grace window). Grace is caller-driven: rotate with `update_auditors([new], [old])` so in-flight transfers built against the old key still verify, and end the grace with `update_auditors([new], [new])`.
+2. **Issuer sets the on-chain auditor key.** The issuer calls [`update_auditors`](move/sources/contra.move) with two key vectors, each holding at most one key: `current_pks` (tried first on a transfer; empty disables auditing going forward) and `previous_pks` (also accepted, for a grace window). Grace is caller-driven: rotate with `update_auditors([new], [old])` so in-flight transfers built against the old key still verify, and end the grace with `update_auditors([new], [])`.
 3. **Initialize [`ContraAuditor`](ts-sdk/src/auditor.ts).** Construct the SDK with `{ tokenType, privateKeys, table }` — one or more auditor secret keys plus a precomputed discrete-log table (the larger `numBits` is, the faster decryption will be).
 
 ### Reading transfer amounts
