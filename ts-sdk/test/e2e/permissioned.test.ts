@@ -25,10 +25,12 @@ import {
 	buildAuditorPackageOption,
 	buildDdhProof,
 	buildElGamalProof,
+	buildElGamalProofs,
 	buildEncryptedAmount,
-	buildEncryptedAmountAndProof,
+	buildEncryptedAmounts,
+	buildInRangeAmount,
 	buildPublicKeyVector,
-	buildWellFormedProof,
+	buildRangeProofs,
 	point,
 	PROTOCOL_AUDITOR_ELGAMAL,
 	PROTOCOL_DDH,
@@ -118,17 +120,14 @@ describe('permissioned & uncovered flows (devnet)', () => {
 			...Ciphertext.encryptWithBlinding(receiverPk, v, randomScalar()),
 		}));
 
-		// Consistency proof on the collapsed sender total (value=amount,
-		// blinding=Σ collapsed blindings).
+		// The collapsed sender total (value=amount, blinding=Σ collapsed blindings). Its consistency is
+		// folded together with the new-balance limbs into `senderEncsPok` below.
 		const totalBlinding = collapseBlindings(encAmountReceiver);
 		const { ciphertext: totalSenderEnc } = Ciphertext.encryptWithBlinding(
 			senderPk,
 			amount,
 			totalBlinding,
 		);
-		const consistencyProof = ElGamalNizk.prove(elgamalDst, senderPk, [
-			{ ciphertext: totalSenderEnc, value: amount, blinding: totalBlinding },
-		]);
 
 		// A well-formed (but arbitrary) new balance paired with a deliberately
 		// invalid balance proof, so the balance proof inside `try_split_batch`
@@ -194,32 +193,32 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					auth,
 					ct: tokenIssuer.confidentialTokenId,
 					receiverPks: buildPublicKeyVector(pid, [receiverPk]),
-					receiverAmounts: tx.makeMoveVec({
-						type: `${pid}::encrypted_amount::EncryptedAmount`,
-						elements: [
-							buildEncryptedAmount(
-								pid,
-								encAmountReceiver.map((l) => l.ciphertext),
-							),
-						],
-					}),
-					wellFormedProofs: buildWellFormedProof(
+					receiverAmounts: buildEncryptedAmounts(pid, [encAmountReceiver.map((l) => l.ciphertext)]),
+					receiverEncsPok: buildElGamalProofs(pid, [
+						ElGamalNizk.prove(elgamalDst, receiverPk, encAmountReceiver),
+					]),
+					newBalance: buildEncryptedAmount(
+						pid,
+						newBalanceLimbs.map((l) => l.ciphertext),
+					),
+					totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
+					senderEncsPok: buildElGamalProof(
+						pid,
+						ElGamalNizk.prove(elgamalDst, senderPk, [
+							...newBalanceLimbs,
+							{ ciphertext: totalSenderEnc, value: amount, blinding: totalBlinding },
+						]),
+					),
+					rangeProofs: buildRangeProofs(
 						batchRangeProver,
 						sender.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-						elgamalDst,
 						pid,
 						[
 							{ limbs: encAmountReceiver, pk: receiverPk },
 							{ limbs: newBalanceLimbs, pk: senderPk },
 						],
 					),
-					totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
-					consistencyProof: buildElGamalProof(pid, consistencyProof),
 					seedPoint: point(senderPk.toBytes()),
-					newBalance: buildEncryptedAmount(
-						pid,
-						newBalanceLimbs.map((l) => l.ciphertext),
-					),
 					balanceProof: buildDdhProof(pid, fakeBalanceProof),
 					auditorPackage: buildAuditorPackageOption(pid, {
 						handles: auditorHandles,
@@ -373,15 +372,18 @@ describe('permissioned & uncovered flows (devnet)', () => {
 					arguments: { ct: tokenIssuer.confidentialTokenId },
 				}),
 			);
-			const { encryptedAmount: newBalanceEa, wellFormedProof: newBalanceProof } =
-				buildEncryptedAmountAndProof(
-					batchRangeProver,
-					user.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-					elgamalDst,
-					tx,
-					pid,
-					{ limbs: newBalanceLimbs, pk },
-				);
+			const {
+				encryptedAmount: newBalanceEa,
+				consistencyProof: newBalancePok,
+				rangeProofs: newBalanceRange,
+			} = buildInRangeAmount(
+				batchRangeProver,
+				user.tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+				elgamalDst,
+				tx,
+				pid,
+				{ limbs: newBalanceLimbs, pk },
+			);
 			const coin = tx.add(
 				contraContracts.tryUnwrap({
 					package: pid,
@@ -392,7 +394,8 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						ct: tokenIssuer.confidentialTokenId,
 						pool: poolId,
 						newBalance: newBalanceEa,
-						newBalanceProof,
+						newBalanceConsistencyProof: newBalancePok,
+						newBalanceRangeProofs: newBalanceRange,
 						amount: callAmount,
 						balanceProof: buildDdhProof(pid, balanceProof),
 					},

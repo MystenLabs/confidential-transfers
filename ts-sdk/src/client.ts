@@ -23,13 +23,15 @@ import {
 	buildAuditorPackageOption,
 	buildDdhProof,
 	buildElGamalProof,
+	buildElGamalProofs,
 	buildEncryptedAmount,
-	buildEncryptedAmountAndProof,
+	buildEncryptedAmounts,
 	buildGVector,
+	buildInRangeAmount,
 	buildOptionalPublicKey,
 	buildPublicKey,
 	buildPublicKeyVector,
-	buildWellFormedProof,
+	buildRangeProofs,
 	getAccountId,
 	getConfidentialTokenId,
 	getTokenAccountId,
@@ -676,7 +678,7 @@ export class ContraClient {
 	}
 
 	/**
-	 * Helper composing `buildEncryptedAmountAndProof` + `buildDdhProof` with the
+	 * Helper composing `buildInRangeAmount` + `buildDdhProof` with the
 	 * generated `contra::update_active_balance` Move call for `tokenAccount`. Used by `updateBalance`.
 	 */
 	#updateActiveBalance(
@@ -688,7 +690,7 @@ export class ContraClient {
 		auth: TransactionObjectArgument,
 	): TransactionResult {
 		const pid = this.#packageConfig.packageId;
-		const { encryptedAmount, wellFormedProof } = buildEncryptedAmountAndProof(
+		const { encryptedAmount, consistencyProof, rangeProofs } = buildInRangeAmount(
 			batchRangeProver,
 			tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
 			tokenAccount.dst(PROTOCOL_ELGAMAL),
@@ -704,7 +706,8 @@ export class ContraClient {
 					account: this.getAccountId(tokenAccount.address),
 					auth,
 					newBalance: encryptedAmount,
-					newBalanceProof: wellFormedProof,
+					newBalancePok: consistencyProof,
+					newBalanceRangeProofs: rangeProofs,
 					balanceProof: buildDdhProof(pid, balanceProof),
 				},
 			}),
@@ -1156,16 +1159,13 @@ export class ContraClient {
 		const totalBlinding = addScalars(prepared.map((p) => collapseBlindings(p.encAmountReceiver)));
 		// The total re-encrypted under the sender's key: its commitment is the sum of the receiver
 		// commitments (key-independent), its handle is `senderPk * totalBlinding`. Only the handle is
-		// sent on chain (`totalSenderHandle`); the `consistencyProof` proves it is the honest one — pinning
-		// the amount the balance proof debits.
+		// sent on chain (`totalSenderHandle`); `senderEncsPok` (below) proves it is the honest one —
+		// pinning the amount the balance proof debits.
 		const { ciphertext: totalSenderEnc } = Ciphertext.encryptWithBlinding(
 			senderPk,
 			totalAmount,
 			totalBlinding,
 		);
-		const consistencyProof = ElGamalNizk.prove(elgamalDst, senderPk, [
-			{ ciphertext: totalSenderEnc, value: totalAmount, blinding: totalBlinding },
-		]);
 
 		const { shouldMerge, newBalance, balanceProof } = await this.#createBalanceUpdate(
 			tokenAccount,
@@ -1192,16 +1192,13 @@ export class ContraClient {
 
 			const pid = this.#packageConfig.packageId;
 
-			// One aggregate `WellFormedProof` covers every receiver amount AND the sender's new
-			// balance, in that order (new_balance last). Bound to the sender's ELGAMAL DST;
-			// `batched_transfer` verifies it under `[...receiver_pks, sender_pk]`, pops the
-			// new_balance entry, and `add_to_batch` later asserts each coin's pk matches the
-			// receiver it's credited to.
-			// 1. Start the batched transfer: split the receiver-keyed coins off the sender's
-			//    balance against the balance proof. One `well_formed_proofs` covers receivers
-			//    and the new balance; `totalSenderHandle` is the single sender-keyed decryption handle
-			//    for the transfer total, proven well-formed by `consistencyProof`;
-			//    `seedPoint` (`P`) is forwarded to the events.
+			// 1. Start the batched transfer: split the receiver-keyed coins off the sender's balance
+			//    against the balance proof. `receiverEncsPok` proves each receiver amount consistent
+			//    under its own key; `senderEncsPok` folds the new-balance limbs and the total under the
+			//    sender's key; `rangeProofs` range-checks every receiver amount and the new balance;
+			//    `totalSenderHandle` is the single sender-keyed decryption handle for the total;
+			//    `seedPoint` (`P`) is forwarded to the events. `add_to_batch` later asserts each coin's
+			//    pk matches the receiver it's credited to.
 			let [batch] = tx.add(
 				contraContracts.batchedTransfer({
 					package: pid,
@@ -1214,32 +1211,40 @@ export class ContraClient {
 							pid,
 							prepared.map((p) => p.receiverPk),
 						),
-						receiverAmounts: tx.makeMoveVec({
-							type: `${pid}::encrypted_amount::EncryptedAmount`,
-							elements: prepared.map((p) =>
-								buildEncryptedAmount(
-									pid,
-									p.encAmountReceiver.map((l) => l.ciphertext),
-								),
-							),
-						}),
-						wellFormedProofs: buildWellFormedProof(
+						receiverAmounts: buildEncryptedAmounts(
+							pid,
+							prepared.map((p) => p.encAmountReceiver.map((l) => l.ciphertext)),
+						),
+						receiverEncsPok: buildElGamalProofs(
+							pid,
+							prepared.map((p) => ElGamalNizk.prove(elgamalDst, p.receiverPk, p.encAmountReceiver)),
+						),
+						newBalance: buildEncryptedAmount(
+							pid,
+							newBalance.map((l) => l.ciphertext),
+						),
+						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
+						// One folded proof over the new-balance limbs and the transfer total (under the
+						// sender's key), matching the sender side of `verify_transfer_amounts`.
+						senderEncsPok: buildElGamalProof(
+							pid,
+							ElGamalNizk.prove(elgamalDst, senderPk, [
+								...newBalance,
+								{ ciphertext: totalSenderEnc, value: totalAmount, blinding: totalBlinding },
+							]),
+						),
+						// One batched range proof over every receiver amount and the new balance (the
+						// total is not range-checked).
+						rangeProofs: buildRangeProofs(
 							batchRangeProver,
 							tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-							elgamalDst,
 							pid,
 							[
 								...prepared.map((p) => ({ limbs: p.encAmountReceiver, pk: p.receiverPk })),
 								{ limbs: newBalance, pk: senderPk },
 							],
 						),
-						totalSenderHandle: point(totalSenderEnc.decryptionHandle.toBytes()),
-						consistencyProof: buildElGamalProof(pid, consistencyProof),
 						seedPoint: point(randomness.seedPoint.toBytes()),
-						newBalance: buildEncryptedAmount(
-							pid,
-							newBalance.map((l) => l.ciphertext),
-						),
 						balanceProof: buildDdhProof(pid, balanceProof),
 						auditorPackage: buildAuditorPackageOption(pid, auditorData),
 					},
@@ -1336,15 +1341,18 @@ export class ContraClient {
 			}
 
 			const pid = this.#packageConfig.packageId;
-			const { encryptedAmount: newBalanceEa, wellFormedProof: newBalanceProof } =
-				buildEncryptedAmountAndProof(
-					batchRangeProver,
-					tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
-					tokenAccount.dst(PROTOCOL_ELGAMAL),
-					tx,
-					pid,
-					{ limbs: newBalance, pk: tokenAccount.publicKey },
-				);
+			const {
+				encryptedAmount: newBalanceEa,
+				consistencyProof: newBalancePok,
+				rangeProofs: newBalanceRange,
+			} = buildInRangeAmount(
+				batchRangeProver,
+				tokenAccount.dst(PROTOCOL_RANGE_PROOF_16),
+				tokenAccount.dst(PROTOCOL_ELGAMAL),
+				tx,
+				pid,
+				{ limbs: newBalance, pk: tokenAccount.publicKey },
+			);
 			return tx.add(
 				contraContracts.tryUnwrap({
 					package: pid,
@@ -1355,7 +1363,8 @@ export class ContraClient {
 						ct: this.#getConfidentialTokenId(tokenType),
 						pool: this.#getPoolId(tokenType),
 						newBalance: newBalanceEa,
-						newBalanceProof,
+						newBalanceConsistencyProof: newBalancePok,
+						newBalanceRangeProofs: newBalanceRange,
 						amount,
 						balanceProof: buildDdhProof(pid, balanceProof),
 					},

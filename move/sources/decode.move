@@ -47,6 +47,25 @@ entry fun encrypted_amount(parts: vector<vector<u8>>): EncryptedAmount {
     )
 }
 
+/// Build one `EncryptedAmount` per 8 consecutive point-encoded `parts` (four limbs, each a
+/// ciphertext + handle), in amount order. Aborts if `parts.length()` is not a multiple of 8.
+entry fun encrypted_amounts(parts: vector<vector<u8>>): vector<EncryptedAmount> {
+    let mut out = vector[];
+    let mut i = 0;
+    while (i < parts.length()) {
+        out.push_back(
+            new_encrypted_amount(
+                encryption_at(&parts, i),
+                encryption_at(&parts, i + 2),
+                encryption_at(&parts, i + 4),
+                encryption_at(&parts, i + 6),
+            ),
+        );
+        i = i + 8;
+    };
+    out
+}
+
 entry fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
     let n = parts.length() - 1;
     nizk::new_ddh_proof(g_range(&parts, 0, n), scalar_from_bytes(parts.borrow(n)))
@@ -54,6 +73,18 @@ entry fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
 
 entry fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
     elgamal_proof_at(&parts, 0)
+}
+
+/// Build one folded `ElGamalProof` per 4 consecutive parts (`a`, `b`, `z1`, `z2`), in order.
+/// Aborts if `parts.length()` is not a multiple of 4.
+entry fun elgamal_proofs(parts: vector<vector<u8>>): vector<ElGamalProof> {
+    let mut out = vector[];
+    let mut i = 0;
+    while (i < parts.length()) {
+        out.push_back(elgamal_proof_at(&parts, i));
+        i = i + 4;
+    };
+    out
 }
 
 fun encryption_at(parts: &vector<vector<u8>>, off: u64): Encryption {

@@ -30,6 +30,6 @@ export const PublicCoin = new MoveStruct({
 export const EncryptedCoin = new MoveStruct({
 	name: `${$moduleName}::EncryptedCoin<phantom T>`,
 	fields: {
-		amount: encrypted_amount.WellFormedEncryptedAmount,
+		amount: encrypted_amount.InRangeVerifiedEncryptedAmount,
 	},
 });

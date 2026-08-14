@@ -78,11 +78,17 @@ use contra::{
     },
     balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
-    encrypted_amount::{Self, EncryptedAmount, WellFormedEncryptedAmount, WellFormedProof},
+    encrypted_amount::{
+        Self,
+        EncryptedAmount,
+        InRangeVerifiedEncryptedAmount,
+        VerifiedEncryption,
+        RangeProofs,
+    },
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    twisted_elgamal::PublicKey
+    twisted_elgamal::{Self, PublicKey}
 };
 use sui::{
     coin::{Self, Coin, TreasuryCap},
@@ -111,6 +117,7 @@ const EBatchTooLarge: u64 = 11;
 const EReceiverNotRegistered: u64 = 12;
 const ERegistrationNotPermissionless: u64 = 13;
 const EDefaultPkNotSet: u64 = 14;
+const EMismatchedBatchLength: u64 = 15;
 
 // === Constants ===
 
@@ -519,22 +526,25 @@ public fun wrap<T>(
     events::emit_wrap<T>(receiver.owner, amount, memo);
 }
 
-/// Start a batched transfer from `sender`. `receiver_amounts[i]` is the transferred value
-/// re-encrypted under `receiver_pks[i]`. `well_formed_proofs` is a single batched `WellFormedProof`
-/// covering `receiver_amounts ++ [new_balance]` under `receiver_pks ++ [sender_pk]` — one aggregate
-/// Bulletproof for the whole transfer. `total_sender_handle` is the single sender-keyed decryption handle
-/// for the transfer total; `consistency_proof` proves it well-formed and `balance_proof` proves the
-/// sender's balance drops by exactly that total (see `balance::try_split_batch`).
-/// `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
-/// transfer's blinding and recover its outgoing amounts; it is not otherwise verified on chain.
+/// Initiate a batched transfer from `sender` to multiple receivers.
 ///
-/// Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package` must be `some` and
-/// carry one entry per auditor key. See `auditors::verify_transfer` for details.
+/// `receiver_amounts[i]` is the transferred value re-encrypted under `receiver_pks[i]` and proven
+/// valid by `receiver_encs_pok[i]`; `sender_encs_pok` folds the `new_balance` limbs and the
+/// transfer total (under `sender`'s key) into one proof; `range_proofs` range-check every limb; and
+/// `total_sender_handle` is the single sender-keyed decryption handle for the total (its commitment is
+/// reconstructed on chain from the receiver amounts). The amounts are verified against `sender`'s own
+/// key and session (see `verify_transfer_amounts`), so they are bound to this transfer by construction.
+/// `balance_proof` proves the sender's balance drops by exactly the transfer total (see
+/// `balance::try_split_batch`). `seed_point` (= `P`) is forwarded to the events so the sender can
+/// re-derive each transfer's blinding and recover its outgoing amounts; it is not otherwise verified on
+/// chain.
 ///
-/// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts
-/// if `well_formed_proofs`, the auditor requirement, or `consistency_proof` fails. Call `add` once
-/// per receiver, in `receiver_amounts` order, then `finalize`. Authorized by any `Auth<T>` for
-/// `sender.owner`.
+/// Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package` must be `some`. See
+/// `auditors::verify_transfer` for details.
+///
+/// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts if a
+/// proof or the auditor requirement fails. Call `add` once per receiver, in `receiver_amounts` order,
+/// then `finalize`. Authorized by any `Auth<T>` for `sender.owner`.
 public fun batched_transfer<T>(
     sender: &mut Account,
     auth: &Auth<T>,
@@ -542,11 +552,12 @@ public fun batched_transfer<T>(
     deny_list: &DenyList,
     receiver_pks: vector<PublicKey>,
     receiver_amounts: vector<EncryptedAmount>,
-    well_formed_proofs: WellFormedProof,
-    total_sender_handle: Element<G>,
-    consistency_proof: ElGamalProof,
-    seed_point: Element<G>,
+    receiver_encs_pok: vector<ElGamalProof>,
     new_balance: EncryptedAmount,
+    total_sender_handle: Element<G>,
+    sender_encs_pok: ElGamalProof,
+    range_proofs: RangeProofs,
+    seed_point: Element<G>,
     balance_proof: DdhProof,
     auditor_package: Option<AuditorPackage>,
 ): TransferBatch<T> {
@@ -558,26 +569,20 @@ public fun batched_transfer<T>(
     );
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
-    assert!(receiver_amounts.length() == receiver_pks.length(), EEmptyTransferBatch);
+
+    let (total_sender, receiver_amounts, new_balance) = sender.verify_transfer_amounts<T>(
+        receiver_pks,
+        receiver_amounts,
+        receiver_encs_pok,
+        new_balance,
+        total_sender_handle,
+        sender_encs_pok,
+        range_proofs,
+    );
+
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
-    // `well_formed_proofs` is one aggregate proof over `[receiver_amounts..., new_balance]`
-    // under `[receiver_pks..., sender.pk]`. Verify and wrap into WFEAs in one call, then peel
-    // the last entry off as the sender's new-balance WFEA.
-    let mut amounts = receiver_amounts;
-    let mut pks = receiver_pks;
-    amounts.push_back(new_balance);
-    pks.push_back(sender.pk);
-    let mut wfeas = encrypted_amount::batch_into_well_formed(
-        amounts,
-        sender.session_id.dst(DST_ELGAMAL),
-        sender.session_id.dst(DST_RANGE_PROOF_16),
-        pks,
-        well_formed_proofs,
-    );
-    let new_balance = wfeas.pop_back();
-    let receiver_amounts = wfeas;
 
     let auditor_data = ct
         .auditors
@@ -593,9 +598,7 @@ public fun batched_transfer<T>(
             &sender.pk,
             new_balance,
             receiver_amounts,
-            total_sender_handle,
-            consistency_proof,
-            sender.session_id.dst(DST_ELGAMAL),
+            total_sender,
             &balance_proof,
             sender.session_id.dst(DST_DDH),
         );
@@ -614,7 +617,6 @@ public fun batched_transfer<T>(
         }
     } else {
         withdrawn.destroy_none();
-        // The balance proof failed, so no receiver is credited; discard the (unpopped) auditor data.
         destroy(auditor_data);
         TransferBatch::BalanceProofFailed
     }
@@ -733,7 +735,8 @@ public fun update_active_balance<T>(
     account: &mut Account,
     auth: &Auth<T>,
     new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
+    new_balance_pok: ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
 ) {
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
@@ -741,28 +744,40 @@ public fun update_active_balance<T>(
     let token_account = &mut account[TokenAccountKey<T>()];
     let sid = token_account.session_id;
     assert!(
-        token_account.try_update_active(new_balance, new_balance_proof, balance_proof, sid),
+        token_account.try_update_active(
+            new_balance,
+            new_balance_pok,
+            new_balance_range_proofs,
+            balance_proof,
+            sid,
+        ),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
 }
 
-/// Re-state `self.active` as the well-formed `new_balance` (same key `self.pk`), proven equal in
+/// Re-state `self.active` as the in-range `new_balance` (same key `self.pk`), proven equal in
 /// value by `balance_proof`. Returns whether the proof verified; adds no authorization or event.
 fun try_update_active<T>(
     self: &mut TokenAccount<T>,
     new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
+    new_balance_pok: ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
     sid: vector<u8>,
 ): bool {
-    let new_balance = new_balance.into_well_formed(
-        sid.dst(DST_ELGAMAL),
-        sid.dst(DST_RANGE_PROOF_16),
+    let verified = encrypted_amount::verify_encrypted_amount(
+        new_balance,
         self.pk,
-        new_balance_proof,
+        &new_balance_pok,
+        sid.dst(DST_ELGAMAL),
     );
-    self.active.try_update(&self.pk, new_balance, balance_proof, sid.dst(DST_DDH))
+    let mut in_range = encrypted_amount::verify_in_range(
+        vector[verified],
+        new_balance_range_proofs,
+        sid.dst(DST_RANGE_PROOF_16),
+    );
+    self.active.try_update(&self.pk, in_range.pop_back(), balance_proof, sid.dst(DST_DDH))
 }
 
 /// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
@@ -778,7 +793,8 @@ public fun unwrap<T>(
     deny_list: &DenyList,
     pool: &mut Pool<T>,
     new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
+    new_balance_consistency_proof: ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
     ctx: &mut TxContext,
@@ -789,7 +805,8 @@ public fun unwrap<T>(
         deny_list,
         pool,
         new_balance,
-        new_balance_proof,
+        new_balance_consistency_proof,
+        new_balance_range_proofs,
         amount,
         balance_proof,
         ctx,
@@ -807,7 +824,8 @@ public fun try_unwrap<T>(
     deny_list: &DenyList,
     pool: &mut Pool<T>,
     new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
+    new_balance_consistency_proof: ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
     ctx: &mut TxContext,
@@ -818,7 +836,8 @@ public fun try_unwrap<T>(
         deny_list,
         pool,
         new_balance,
-        new_balance_proof,
+        new_balance_consistency_proof,
+        new_balance_range_proofs,
         amount,
         balance_proof,
         ctx,
@@ -838,7 +857,8 @@ fun try_unwrap_internal<T>(
     deny_list: &DenyList,
     pool: &mut Pool<T>,
     new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
+    new_balance_consistency_proof: ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
     ctx: &mut TxContext,
@@ -854,17 +874,22 @@ fun try_unwrap_internal<T>(
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
     let sid = account.session_id;
-    let new_balance = new_balance.into_well_formed(
-        sid.dst(DST_ELGAMAL),
-        sid.dst(DST_RANGE_PROOF_16),
+    let verified = encrypted_amount::verify_encrypted_amount(
+        new_balance,
         account.pk,
-        new_balance_proof,
+        &new_balance_consistency_proof,
+        sid.dst(DST_ELGAMAL),
+    );
+    let mut in_range = encrypted_amount::verify_in_range(
+        vector[verified],
+        new_balance_range_proofs,
+        sid.dst(DST_RANGE_PROOF_16),
     );
     let withdrawn = account
         .active
         .try_split_to_public(
             &account.pk,
-            new_balance,
+            in_range.pop_back(),
             amount,
             balance_proof,
             sid.dst(DST_DDH),
@@ -892,7 +917,7 @@ public fun owner(account: &Account): address {
 /// tokens in circulation does not match the amount of coins in the pool. It is the responsibility
 /// of the caller to ensure consistency is maintained when using this function.
 /// The `upper_bound` is set to 1, so the caller is responsible for ensuring that the
-/// `EncryptedAmount` is well-formed.
+/// `EncryptedAmount` is in range.
 public fun set_balance_by_issuer<T>(
     t: &mut TreasuryCap<T>,
     account: &mut Account,
@@ -1024,6 +1049,65 @@ fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
 }
 
 use fun dst as vector.dst;
+
+/// Verify the inputs for a batched transfer from `sender`, returning the sender-keyed transfer total,
+/// the per-receiver verified amounts, and the new balance.
+/// `receiver_amounts[i]` is the transferred value re-encrypted under `receiver_pks[i]` and proven
+/// valid by
+/// `receiver_encs_pok[i]`. `sender_encs_pok` folds the `new_balance` limbs and the
+/// total (under `sender`'s key) into one proof, `range_proofs` range-check every limb, and
+/// `total_sender_handle` is the single sender-keyed decryption handle for the transfer total (its
+/// commitment is reconstructed from the receiver amounts). Verifying against `sender`'s own key and
+/// session is what binds the returned amounts to the caller (`batched_transfer`).
+fun verify_transfer_amounts<T>(
+    sender: &Account,
+    receiver_pks: vector<PublicKey>,
+    receiver_amounts: vector<EncryptedAmount>,
+    receiver_encs_pok: vector<ElGamalProof>,
+    new_balance: EncryptedAmount,
+    total_sender_handle: Element<G>,
+    sender_encs_pok: ElGamalProof,
+    range_proofs: RangeProofs,
+): (VerifiedEncryption, vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount) {
+    let n = receiver_amounts.length();
+    assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
+    let token_account = &sender[TokenAccountKey<T>()];
+
+    // Each receiver amount is proven valid under its own key.
+    let mut verified_amounts = vector::tabulate!(n, |i| {
+        encrypted_amount::verify_encrypted_amount(
+            receiver_amounts[i],
+            receiver_pks[i],
+            &receiver_encs_pok[i],
+            token_account.session_id.dst(DST_ELGAMAL),
+        )
+    });
+
+    // The total's commitment is reconstructed from the receiver commitments and the given handle.
+    let total = twisted_elgamal::new(
+        encrypted_amount::sum_ciphertexts(&receiver_amounts),
+        total_sender_handle,
+    );
+
+    // Sender side: the new-balance limbs and the total are verified under `sender_pk` in one proof.
+    let (new_balance, total_sender) = encrypted_amount::verify_encrypted_amount_and_encryption(
+        new_balance,
+        total,
+        token_account.pk,
+        &sender_encs_pok,
+        token_account.session_id.dst(DST_ELGAMAL),
+    );
+    verified_amounts.push_back(new_balance);
+
+    // One batched range proof over every limb, grouped into the n receivers followed by the new balance.
+    let mut receiver_amounts = encrypted_amount::verify_in_range(
+        verified_amounts,
+        range_proofs,
+        token_account.session_id.dst(DST_RANGE_PROOF_16),
+    );
+    let new_balance = receiver_amounts.pop_back();
+    (total_sender, receiver_amounts, new_balance)
+}
 
 // === Syntactic Sugar ===
 

@@ -76,14 +76,12 @@ fun do_throttled_unwrap(
         sk_alice,
     );
     let elgamal_sid = alice_account.derive_dst_for_testing<BU>(protocol_id_elgamal());
-    let new_balance_proof = encrypted_amount::new_well_formed_proof_singleton_for_testing(
-        consistency_proof_for_testing(
-            elgamal_sid,
-            new_balance_value as u16,
-            &new_balance,
-            blinding,
-            pk_alice,
-        ),
+    let new_balance_pok = consistency_proof_for_testing(
+        elgamal_sid,
+        new_balance_value as u16,
+        &new_balance,
+        blinding,
+        pk_alice,
     );
     confidential_bu::unwrap(
         ct,
@@ -92,7 +90,8 @@ fun do_throttled_unwrap(
         contra_pool,
         throttled_pool,
         new_balance,
-        new_balance_proof,
+        new_balance_pok,
+        encrypted_amount::assume_range_checked(),
         amount,
         &balance_proof,
         clock,

@@ -5,7 +5,6 @@ import { bcs } from '@mysten/sui/bcs';
 import { type Transaction, type TransactionArgument } from '@mysten/sui/transactions';
 
 import { MoveStruct, normalizeMoveArguments, type RawTransactionArgument } from '../utils/index.js';
-import * as nizk from './nizk.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::encrypted_amount';
@@ -18,20 +17,56 @@ export const EncryptedAmount = new MoveStruct({
 		l3: twisted_elgamal.Encryption,
 	},
 });
-export const WellFormedEncryptedAmount = new MoveStruct({
-	name: `${$moduleName}::WellFormedEncryptedAmount`,
+export const InRangeVerifiedEncryptedAmount = new MoveStruct({
+	name: `${$moduleName}::InRangeVerifiedEncryptedAmount`,
 	fields: {
 		amount: EncryptedAmount,
 		pk: twisted_elgamal.PublicKey,
 	},
 });
-export const WellFormedProof = new MoveStruct({
-	name: `${$moduleName}::WellFormedProof`,
+export const VerifiedEncryption = new MoveStruct({
+	name: `${$moduleName}::VerifiedEncryption`,
 	fields: {
-		range_proofs: bcs.vector(bcs.vector(bcs.u8())),
-		consistency_proofs: bcs.vector(nizk.ElGamalProof),
+		encryption: twisted_elgamal.Encryption,
+		pk: twisted_elgamal.PublicKey,
 	},
 });
+export const VerifiedEncryptedAmount = new MoveStruct({
+	name: `${$moduleName}::VerifiedEncryptedAmount`,
+	fields: {
+		amount: EncryptedAmount,
+		pk: twisted_elgamal.PublicKey,
+	},
+});
+export const RangeProofs = new MoveStruct({
+	name: `${$moduleName}::RangeProofs`,
+	fields: {
+		proofs: bcs.vector(bcs.vector(bcs.u8())),
+	},
+});
+export interface NewRangeProofsArguments {
+	proofs: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface NewRangeProofsOptions {
+	package?: string;
+	arguments: NewRangeProofsArguments | [proofs: RawTransactionArgument<Array<Array<number>>>];
+}
+/**
+ * Wrap `proofs` into `RangeProofs`; rejects an empty set so the range check can't
+ * be skipped on chain.
+ */
+export function newRangeProofs(options: NewRangeProofsOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['proofs'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'encrypted_amount',
+			function: 'new_range_proofs',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface NewEncryptedAmountArguments {
 	l0: TransactionArgument;
 	l1: TransactionArgument;
@@ -58,38 +93,6 @@ export function newEncryptedAmount(options: NewEncryptedAmountOptions) {
 			package: packageAddress,
 			module: 'encrypted_amount',
 			function: 'new_encrypted_amount',
-			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
-		});
-}
-export interface NewWellFormedProofArguments {
-	rangeProofs: RawTransactionArgument<Array<Array<number>>>;
-	consistencyProofs: TransactionArgument;
-}
-export interface NewWellFormedProofOptions {
-	package?: string;
-	arguments:
-		| NewWellFormedProofArguments
-		| [
-				rangeProofs: RawTransactionArgument<Array<Array<number>>>,
-				consistencyProofs: TransactionArgument,
-		  ];
-}
-/**
- * Bundle range proofs and consistency proofs into a `WellFormedProof`. Pass one
- * consistency proof per amount and one range proof per
- * `batch_sizes(consistency_proofs.length())` chunk, where each chunk's range proof
- * covers that chunk's amounts (4 limbs each). Aborts on length mismatch or empty
- * `range_proofs[i]`; proofs are not verified here — callers must call `verify`.
- */
-export function newWellFormedProof(options: NewWellFormedProofOptions) {
-	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = ['vector<vector<u8>>', 'vector<null>'] satisfies (string | null)[];
-	const parameterNames = ['rangeProofs', 'consistencyProofs'];
-	return (tx: Transaction) =>
-		tx.moveCall({
-			package: packageAddress,
-			module: 'encrypted_amount',
-			function: 'new_well_formed_proof',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }

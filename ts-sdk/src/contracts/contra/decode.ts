@@ -116,6 +116,30 @@ export function encryptedAmount(options: EncryptedAmountOptions) {
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
+export interface EncryptedAmountsArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface EncryptedAmountsOptions {
+	package?: string;
+	arguments: EncryptedAmountsArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+/**
+ * Build one `EncryptedAmount` per 8 consecutive point-encoded `parts` (four limbs,
+ * each a ciphertext + handle), in amount order. Aborts if `parts.length()` is not
+ * a multiple of 8.
+ */
+export function encryptedAmounts(options: EncryptedAmountsOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'encrypted_amounts',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
 export interface DdhProofArguments {
 	parts: RawTransactionArgument<Array<Array<number>>>;
 }
@@ -151,6 +175,29 @@ export function elgamalProof(options: ElgamalProofOptions) {
 			package: packageAddress,
 			module: 'decode',
 			function: 'elgamal_proof',
+			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
+		});
+}
+export interface ElgamalProofsArguments {
+	parts: RawTransactionArgument<Array<Array<number>>>;
+}
+export interface ElgamalProofsOptions {
+	package?: string;
+	arguments: ElgamalProofsArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
+}
+/**
+ * Build one folded `ElGamalProof` per 4 consecutive parts (`a`, `b`, `z1`, `z2`),
+ * in order. Aborts if `parts.length()` is not a multiple of 4.
+ */
+export function elgamalProofs(options: ElgamalProofsOptions) {
+	const packageAddress = options.package ?? '@local-pkg/contra';
+	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
+	const parameterNames = ['parts'];
+	return (tx: Transaction) =>
+		tx.moveCall({
+			package: packageAddress,
+			module: 'decode',
+			function: 'elgamal_proofs',
 			arguments: normalizeMoveArguments(options.arguments, argumentsTypes, parameterNames),
 		});
 }
