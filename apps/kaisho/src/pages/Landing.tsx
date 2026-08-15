@@ -12,9 +12,9 @@ import { createTokenFromBytecodes, getSuiClient, requestSui } from '../sdk';
 const STEPS = [
 	{
 		id: 'wallet',
-		label: 'Generating fresh wallet & funding from faucet',
+		label: 'Generating fresh wallet & funding it',
 		detail:
-			'A brand-new Ed25519 burner keypair is created in this browser and funded with SUI from the faucet for gas. It only exists here — its secret never leaves localStorage.',
+			'A brand-new Ed25519 burner keypair is created in this browser and funded with SUI for gas — from the faucet, or by you if the faucet is unavailable. It only exists here — its secret never leaves localStorage.',
 	},
 	{
 		id: 'publish',
@@ -39,6 +39,14 @@ const STEPS = [
 type StepId = (typeof STEPS)[number]['id'];
 type StepState = 'pending' | 'active' | 'done';
 
+const MIN_DEPLOY_SUI = 1;
+
+/** Thrown when the user cancels the manual-funding dialog; resets the UI
+ *  instead of surfacing an error. */
+class DeployCancelled extends Error {}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function Landing() {
 	const navigate = useNavigate();
 	const network = useActiveNetwork();
@@ -51,6 +59,12 @@ export function Landing() {
 	// in-flight handleDeploy reads the latest value without re-rendering.
 	const verboseLatchedRef = useRef(false);
 	const [completedConfigId, setCompletedConfigId] = useState<string | null>(null);
+	// Non-null while the manual-funding dialog is up; balance refreshes each poll.
+	const [funding, setFunding] = useState<{ address: string; balance: number } | null>(null);
+	const fundingCancelledRef = useRef(false);
+	const [copiedAddress, setCopiedAddress] = useState(false);
+	const [faucetRetrying, setFaucetRetrying] = useState(false);
+	const [faucetRetryError, setFaucetRetryError] = useState('');
 	const logEndRef = useRef<HTMLDivElement>(null);
 	const [steps, setSteps] = useState<Record<StepId, StepState>>({
 		wallet: 'pending',
@@ -91,16 +105,88 @@ export function Landing() {
 		verboseLatchedRef.current = false;
 		setSteps({ wallet: 'active', publish: 'pending', register: 'pending', config: 'pending' });
 		const log = (msg: string) => setLogs((prev) => [...prev, msg]);
-		try {
-			log('Generating Ed25519 keypair...');
-			const keypair = Ed25519Keypair.generate();
-			const address = keypair.getPublicKey().toSuiAddress();
-			const secretKey = keypair.getSecretKey();
-			log(`Address: ${address}`);
+
+		// Blocks until the deployer holds at least MIN_DEPLOY_SUI: tries the
+		// faucet first, and if funds don't arrive (the testnet faucet fails
+		// often) opens a dialog asking the user to fund the address themselves,
+		// polling the balance until they do or they cancel.
+		const waitForFunds = async (address: string) => {
+			const client = getSuiClient(network);
+			const getBalance = async () => {
+				try {
+					return Number((await client.core.getBalance({ owner: address })).balance.balance) / 1e9;
+				} catch {
+					return 0;
+				}
+			};
+
+			if ((await getBalance()) >= MIN_DEPLOY_SUI) {
+				log('Deployer wallet already funded.');
+				return;
+			}
 
 			log(`Requesting SUI from ${network} faucet...`);
-			await requestSui(network, address);
-			log('Faucet funded successfully.');
+			// After an accepted faucet request, give the funds a grace window to
+			// land before falling back to the manual-funding dialog.
+			let graceDeadline = 0;
+			try {
+				await requestSui(network, address);
+				log('Faucet request accepted, waiting for funds to arrive...');
+				graceDeadline = Date.now() + 15_000;
+			} catch (e) {
+				log(`Faucet request failed: ${e}`);
+			}
+
+			fundingCancelledRef.current = false;
+			let dialogShown = false;
+			for (;;) {
+				const balance = await getBalance();
+				if (balance >= MIN_DEPLOY_SUI) {
+					setFunding(null);
+					log(`Deployer wallet funded (${balance} SUI).`);
+					return;
+				}
+				if (Date.now() >= graceDeadline) {
+					if (!dialogShown) {
+						dialogShown = true;
+						setFaucetRetryError('');
+						log('Waiting for the wallet to be funded manually...');
+					}
+					setFunding({ address, balance });
+				}
+				if (fundingCancelledRef.current) {
+					setFunding(null);
+					throw new DeployCancelled();
+				}
+				await sleep(2000);
+			}
+		};
+
+		const pendingKeyStorage = nsKey('kaisho_pending_deployer', network);
+		try {
+			// Reuse the deployer wallet from a previous failed attempt so funds
+			// already sent to it (by the faucet or the user) aren't stranded.
+			let keypair: Ed25519Keypair | null = null;
+			const pendingSecret = localStorage.getItem(pendingKeyStorage);
+			if (pendingSecret) {
+				try {
+					keypair = Ed25519Keypair.fromSecretKey(pendingSecret);
+					log('Reusing deployer wallet from a previous attempt...');
+				} catch {
+					localStorage.removeItem(pendingKeyStorage);
+				}
+			}
+			if (!keypair) {
+				log('Generating Ed25519 keypair...');
+				keypair = Ed25519Keypair.generate();
+			}
+			const address = keypair.getPublicKey().toSuiAddress();
+			const secretKey = keypair.getSecretKey();
+			// Persist before funding so the wallet survives a failed attempt.
+			localStorage.setItem(pendingKeyStorage, secretKey);
+			log(`Address: ${address}`);
+
+			await waitForFunds(address);
 
 			advanceTo('publish');
 			log('Loading pre-compiled Move bytecodes...');
@@ -126,6 +212,7 @@ export function Landing() {
 				confidentialTokenId: tokenResult.confidentialTokenId,
 			};
 			localStorage.setItem(nsKey('kaisho_issuer_wallets', network), JSON.stringify(wallets));
+			localStorage.removeItem(pendingKeyStorage);
 			log('Deployment complete.');
 
 			finishAll();
@@ -141,11 +228,38 @@ export function Landing() {
 				navigate(`/${tokenResult.tokenConfigId}`);
 			}
 		} catch (e) {
-			log(`ERROR: ${e}`);
-			setError(String(e));
+			if (e instanceof DeployCancelled) {
+				// User backed out of manual funding — return to the initial screen.
+				// The pending wallet stays in localStorage for the next attempt.
+				setLogs([]);
+				setSteps({ wallet: 'pending', publish: 'pending', register: 'pending', config: 'pending' });
+			} else {
+				log(`ERROR: ${e}`);
+				setError(String(e));
+			}
 		} finally {
 			setRunning(false);
 		}
+	};
+
+	const handleFaucetRetry = async () => {
+		if (!funding) return;
+		setFaucetRetrying(true);
+		setFaucetRetryError('');
+		try {
+			await requestSui(network, funding.address);
+		} catch (e) {
+			setFaucetRetryError(String(e));
+		} finally {
+			setFaucetRetrying(false);
+		}
+	};
+
+	const copyAddress = () => {
+		if (!funding) return;
+		navigator.clipboard.writeText(funding.address);
+		setCopiedAddress(true);
+		setTimeout(() => setCopiedAddress(false), 2000);
 	};
 
 	return (
@@ -196,8 +310,8 @@ export function Landing() {
 								</span>
 								<span>
 									<strong className="text-white">Burner issuer wallet</strong> — a fresh Sui
-									keypair, funded from the {network} faucet, kept only in this browser's
-									localStorage.
+									keypair, funded from the {network} faucet (or by you if the faucet is
+									unavailable), kept only in this browser's localStorage.
 								</span>
 							</li>
 						</ul>
@@ -300,6 +414,71 @@ export function Landing() {
 							Go to Deployment
 						</button>
 					)}
+				</div>
+			)}
+
+			{funding && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+					<div className="card mx-4 flex w-full max-w-md flex-col gap-4 p-6">
+						<div className="flex flex-col gap-1">
+							<p className="text-sm font-semibold text-white">Fund the deployer wallet</p>
+							<p className="text-xs text-zinc-500 leading-relaxed">
+								The {network} faucet didn't come through. Send at least{' '}
+								<strong className="text-zinc-300">{MIN_DEPLOY_SUI} SUI</strong> to the burner wallet
+								below from any funded wallet — deployment resumes automatically once the funds
+								arrive.
+							</p>
+						</div>
+						<div className="rounded-lg bg-black/50 px-3 py-2.5">
+							<div className="mb-1.5 flex items-center justify-between">
+								<p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
+									Deployer Address
+								</p>
+								<button
+									className="text-[11px] font-medium text-zinc-600 hover:text-zinc-300 transition-colors"
+									onClick={copyAddress}
+									title="Copy the deployer address to clipboard"
+								>
+									{copiedAddress ? 'Copied' : 'Copy'}
+								</button>
+							</div>
+							<code className="block break-all font-mono text-[11px] leading-relaxed text-zinc-400">
+								{funding.address}
+							</code>
+						</div>
+						<div className="flex items-center gap-3">
+							<div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-zinc-700 border-t-accent" />
+							<p className="text-xs text-zinc-500">
+								Waiting for funds… current balance: {funding.balance} SUI
+							</p>
+						</div>
+						{faucetRetryError && (
+							<p className="break-all text-[10px] text-red-400/80">{faucetRetryError}</p>
+						)}
+						<div className="flex gap-2">
+							<button
+								className="btn-secondary flex-1 text-xs"
+								onClick={handleFaucetRetry}
+								disabled={faucetRetrying}
+								title="Try the faucet again"
+							>
+								{faucetRetrying ? 'Requesting…' : 'Retry Faucet'}
+							</button>
+							<button
+								className="btn-secondary flex-1 text-xs"
+								onClick={() => {
+									fundingCancelledRef.current = true;
+								}}
+								title="Abort the deployment"
+							>
+								Cancel
+							</button>
+						</div>
+						<p className="text-[10px] text-zinc-600 leading-relaxed">
+							If you cancel after sending funds, the same wallet is reused on your next attempt —
+							nothing is lost.
+						</p>
+					</div>
 				</div>
 			)}
 		</div>
