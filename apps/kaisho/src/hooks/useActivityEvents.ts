@@ -3,9 +3,7 @@
 
 /**
  * On-chain event feed over gRPC, polled via `LedgerService.ListEvents` —
- * the indexed event query that replaces JSON-RPC's `queryEvents` (served
- * through the hand-written stub in `../grpc/listEvents` until the TS SDK
- * ships one).
+ * the indexed event query that replaces JSON-RPC's `queryEvents`.
  * Event timestamps are resolved from their containing checkpoints and
  * cached, since `Event` carries a checkpoint number but no timestamp.
  */
@@ -15,7 +13,6 @@ import { useEffect, useRef, useState } from 'react';
 
 import { listEvents } from '../grpc/listEvents';
 import type { TokenConfig } from '../sdk';
-import { useActiveNetwork } from './useActiveNetwork';
 
 export interface ModuleEvent {
 	packageId: string;
@@ -41,7 +38,6 @@ const MAX_EVENTS = 50;
  */
 export function useActivityEvents(config: TokenConfig, enabled: boolean) {
 	const client = useCurrentClient();
-	const network = useActiveNetwork();
 	const [events, setEvents] = useState<ModuleEvent[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const timestampByCheckpointRef = useRef<Map<bigint, number>>(new Map());
@@ -73,7 +69,7 @@ export function useActivityEvents(config: TokenConfig, enabled: boolean) {
 		const poll = async () => {
 			try {
 				const raw = await listEvents({
-					network,
+					client,
 					anyOf: [{ eventType: `${contraPackage}::events` }, { emitModule: `${buPackage}::bu` }],
 					limit: MAX_EVENTS,
 					descending: true,
@@ -105,7 +101,7 @@ export function useActivityEvents(config: TokenConfig, enabled: boolean) {
 			cancelled = true;
 			clearInterval(interval);
 		};
-	}, [client, network, enabled, contraPackage, buPackage]);
+	}, [client, enabled, contraPackage, buPackage]);
 
 	return { events, isLoading };
 }

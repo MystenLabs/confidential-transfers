@@ -17,11 +17,6 @@ const GRPC_FULLNODE_URLS: Record<ContraNetwork, string> = {
 	testnet: 'https://fullnode.testnet.sui.io:443',
 };
 
-/** gRPC URL of the public Sui fullnode on `network`. */
-export function grpcUrlFor(network: ContraNetwork): string {
-	return GRPC_FULLNODE_URLS[network];
-}
-
 /** gRPC client for a public Sui fullnode on `network`. */
 export function grpcClientFor(network: ContraNetwork): SuiGrpcClient {
 	return new SuiGrpcClient({

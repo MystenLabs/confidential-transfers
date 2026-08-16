@@ -16,8 +16,6 @@
 		"@mysten/dapp-kit-core": "^1.6.14",
 		"@mysten/dapp-kit-react": "^2.1.16",
 		"@mysten/sui": "^2.24.0",
-		"@protobuf-ts/runtime": "^2.11.1",
-		"@protobuf-ts/runtime-rpc": "^2.11.1",
 		"@radix-ui/themes": "^3.3.0",
 		"@tanstack/react-query": "^5.101.4",
 		"contra-utils": "file:../../utils/ts-utils",
