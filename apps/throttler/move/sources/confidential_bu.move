@@ -181,6 +181,7 @@ public fun unwrap(
         new_balance_proof,
         amount,
         balance_proof,
+        option::none(),
         ctx,
     );
     assert!(coin.value() == amount, EAmountMismatch);

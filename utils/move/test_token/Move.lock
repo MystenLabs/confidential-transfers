@@ -4,26 +4,26 @@
 [move]
 version = 4
 
-[pinned.fresh.MoveStdlib]
+[pinned.devnet.MoveStdlib]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
-use_environment = "fresh"
+use_environment = "devnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
 
-[pinned.fresh.Sui]
+[pinned.devnet.Sui]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d034d564f84b901efe507ff8f6e4b5c8c0cb53bd" }
-use_environment = "fresh"
-manifest_digest = "EC6D85DFFADBBDC68D81DC6F694E5CF00BC9192F6714F50F3669FD227FC1E990"
+use_environment = "devnet"
+manifest_digest = "E2EF92175C2575B1EA85274B70A9CFD8DE08662B35A68669746BBE7BAC06C17A"
 deps = { MoveStdlib = "MoveStdlib" }
 
-[pinned.fresh.bu_token]
+[pinned.devnet.bu_token]
 source = { root = true }
-use_environment = "fresh"
-manifest_digest = "B7EB485353029CBB90A50A662A744B527493E25C0C27366D9F705F9E6F9450E4"
+use_environment = "devnet"
+manifest_digest = "D1D7185DF23A2CC48DA0244EBCB83571F45BD612DF455774EFC96CE34DC60172"
 deps = { contra = "contra", std = "MoveStdlib", sui = "Sui" }
 
-[pinned.fresh.contra]
+[pinned.devnet.contra]
 source = { local = "../../../move" }
-use_environment = "fresh"
-manifest_digest = "094A925BB5AC790F2CA230EA81DEA9D9590CE9D469D0574522ED29C5759A77C0"
+use_environment = "devnet"
+manifest_digest = "2C3B95DE5C755333D5BA5D69C59C967A77E22C21E3001ACFC5307EB07138F58B"
 deps = { std = "MoveStdlib", sui = "Sui" }

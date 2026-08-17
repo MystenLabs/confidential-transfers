@@ -138,6 +138,7 @@ fun closed_loop_roundtrip() {
             new_balance,
             sum_proof,
             option::none(),
+            option::none(),
         )
         .add<PBU>(&mut bob_account, vector[], &deny_list)
         .finalize();
@@ -182,6 +183,7 @@ fun closed_loop_roundtrip() {
         new_bob_balance_proof,
         50,
         &bob_balance_proof,
+        option::none(),
         scenario.ctx(),
     );
     assert_eq!(pbu_coin_out.value(), 50);
