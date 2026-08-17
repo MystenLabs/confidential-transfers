@@ -348,9 +348,6 @@ public fun register_guardian_enclave_key_for_testing(
     self.insert_key(new_ed25519_public_key(signing_pk), new_x25519_public_key(enc_pk)).index
 }
 
-// Constructors: `RequestPayload` can only be packed in its defining module, so
-// the serde pin tests in `guardian_tests` build payloads through these.
-
 #[test_only]
 public fun new_transfer_request_payload(
     sender_pk: PublicKey,

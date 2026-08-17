@@ -33,3 +33,33 @@ source = { local = "../../../move" }
 use_environment = "devnet"
 manifest_digest = "2C3B95DE5C755333D5BA5D69C59C967A77E22C21E3001ACFC5307EB07138F58B"
 deps = { std = "MoveStdlib", sui = "Sui" }
+
+[pinned.testnet.MoveStdlib]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "d50b78880fdacb1bbde92e6974ed71a7650c1090" }
+use_environment = "testnet"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
+[pinned.testnet.Sui]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "d50b78880fdacb1bbde92e6974ed71a7650c1090" }
+use_environment = "testnet"
+manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D01C"
+deps = { MoveStdlib = "MoveStdlib" }
+
+[pinned.testnet.bu_token]
+source = { local = "../../../utils/move/test_token" }
+use_environment = "testnet"
+manifest_digest = "905E0386E2F901B05D0D70001AC1FD65CA6DD1BB593DC8A5AC223DB77FD2B103"
+deps = { contra = "contra", std = "MoveStdlib", sui = "Sui" }
+
+[pinned.testnet.closed_loop]
+source = { root = true }
+use_environment = "testnet"
+manifest_digest = "E96768FF708C3D64A2EA09F6D62A0F33E9EE2F5310A7E8D359CF0C391825AA3B"
+deps = { bu_token = "bu_token", contra = "contra", std = "MoveStdlib", sui = "Sui" }
+
+[pinned.testnet.contra]
+source = { local = "../../../move" }
+use_environment = "testnet"
+manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
+deps = { std = "MoveStdlib", sui = "Sui" }
