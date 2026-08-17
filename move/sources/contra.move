@@ -1071,14 +1071,14 @@ public fun register_guardian_enclave<T>(
 }
 
 /// Called by the operator address defined in guardian policy.
-/// Remove a registered enclave by its signing pk.
+/// Remove a registered enclave by its slot index.
 public fun remove_guardian_enclave<T>(
     ct: &mut ConfidentialToken<T>,
-    signing_pk: vector<u8>,
+    key_index: u8,
     ctx: &TxContext,
 ) {
     let policy = ct.guardian_policy.borrow_mut();
-    let key = policy.remove_enclave(signing_pk, ctx);
+    let key = policy.remove_enclave(key_index, ctx);
     events::emit_guardian_enclave_removed<T>(key);
 }
 
@@ -1284,12 +1284,12 @@ public fun guardian_policy_for_testing<T>(ct: &ConfidentialToken<T>): &Option<Gu
 }
 
 /// Register an enclave key directly on the guardian policy, bypassing the
-/// attestation document and the operator gate.
+/// attestation document and the operator gate; returns its slot index.
 #[test_only]
 public fun register_guardian_enclave_for_testing<T>(
     ct: &mut ConfidentialToken<T>,
     signing_pk: vector<u8>,
     enc_pk: vector<u8>,
-) {
-    ct.guardian_policy.borrow_mut().register_guardian_enclave_key_for_testing(signing_pk, enc_pk);
+): u8 {
+    ct.guardian_policy.borrow_mut().register_guardian_enclave_key_for_testing(signing_pk, enc_pk)
 }

@@ -73,7 +73,7 @@ fun min_version_cannot_exceed_version() {
 fun verify_approval_accepts_valid_signature() {
     let mut policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
     policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
-    assert_fixture_transfer(&policy, guardian::new_guardian_approval(FIXTURE_PK, FIXTURE_SIG));
+    assert_fixture_transfer(&policy, guardian::new_guardian_approval(0, FIXTURE_SIG));
 }
 
 #[test, expected_failure(abort_code = contra::guardian::EApprovalSignatureMismatch)]
@@ -81,7 +81,7 @@ fun verify_approval_rejects_wrong_payload() {
     let mut policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
     policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
     policy.assert_transfer_approval(
-        &guardian::new_guardian_approval(FIXTURE_PK, FIXTURE_SIG),
+        &guardian::new_guardian_approval(0, FIXTURE_SIG),
         public_key(ristretto255::g_generator()),
         vector[], // no receiver changes payload
         encrypt_zero_for_testing(),
@@ -93,7 +93,7 @@ fun verify_approval_rejects_wrong_payload() {
 #[test, expected_failure(abort_code = contra::guardian::EApprovalKeyNotRegistered)]
 fun verify_approval_rejects_unknown_key() {
     let policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
-    assert_fixture_transfer(&policy, guardian::new_guardian_approval(FIXTURE_PK, FIXTURE_SIG));
+    assert_fixture_transfer(&policy, guardian::new_guardian_approval(0, FIXTURE_SIG));
 }
 
 #[test]
@@ -101,26 +101,26 @@ fun verify_approval_accepts_key_after_routine_pcr_update() {
     let mut policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
     policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
     let _ = policy.update(guardian::new_pcrs(x"10", x"11", x"12"), 0, ALICE);
-    assert_fixture_transfer(&policy, guardian::new_guardian_approval(FIXTURE_PK, FIXTURE_SIG));
+    assert_fixture_transfer(&policy, guardian::new_guardian_approval(0, FIXTURE_SIG));
 }
 
 #[test]
 fun operator_can_remove_key() {
     let mut policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
-    policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
-    assert!(policy.contains_guardian_enclave_key(FIXTURE_PK));
+    let index = policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
+    assert!(policy.contains_guardian_enclave_key(index));
 
     let ctx = alice_ctx();
-    policy.remove_enclave(FIXTURE_PK, &ctx);
-    assert!(!policy.contains_guardian_enclave_key(FIXTURE_PK));
+    policy.remove_enclave(index, &ctx);
+    assert!(!policy.contains_guardian_enclave_key(index));
 }
 
 #[test, expected_failure(abort_code = contra::guardian::ENotOperator)]
 fun non_operator_cannot_remove_key() {
     let mut policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
-    policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
+    let index = policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
     let ctx = tx_context::dummy(); // sender @0x0 != operator ALICE
-    policy.remove_enclave(FIXTURE_PK, &ctx);
+    policy.remove_enclave(index, &ctx);
 }
 
 #[test]
@@ -149,31 +149,31 @@ fun min_version_bump_prunes_stale_keys() {
     *(&mut key_c[0]) = 0xc1;
 
     // register key_a
-    policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
-    policy.register_guardian_enclave_key_for_testing(key_a, ENC_PK);
+    let slot_fixture = policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
+    let slot_a = policy.register_guardian_enclave_key_for_testing(key_a, ENC_PK);
 
     // update to key_b
     let _ = policy.update(guardian::new_pcrs(x"10", x"11", x"12"), 0, ALICE);
-    policy.register_guardian_enclave_key_for_testing(key_b, ENC_PK);
+    let slot_b = policy.register_guardian_enclave_key_for_testing(key_b, ENC_PK);
 
     // update to key_c
     let _ = policy.update(guardian::new_pcrs(x"20", x"21", x"22"), 0, ALICE);
-    policy.register_guardian_enclave_key_for_testing(key_c, ENC_PK);
+    let slot_c = policy.register_guardian_enclave_key_for_testing(key_c, ENC_PK);
 
     // update min_version 0->2
     let pruned = policy.update(guardian::new_pcrs(x"20", x"21", x"22"), 2, ALICE);
     assert_eq!(pruned.length(), 3);
 
     // only key_c survived
-    assert!(!policy.contains_guardian_enclave_key(FIXTURE_PK));
-    assert!(!policy.contains_guardian_enclave_key(key_a));
-    assert!(!policy.contains_guardian_enclave_key(key_b));
-    assert!(policy.contains_guardian_enclave_key(key_c));
+    assert!(!policy.contains_guardian_enclave_key(slot_fixture));
+    assert!(!policy.contains_guardian_enclave_key(slot_a));
+    assert!(!policy.contains_guardian_enclave_key(slot_b));
+    assert!(policy.contains_guardian_enclave_key(slot_c));
 
     // update min_version 2->0, still only key_c
     let _ = policy.update(guardian::new_pcrs(x"20", x"21", x"22"), 0, ALICE);
-    assert!(!policy.contains_guardian_enclave_key(FIXTURE_PK));
-    assert!(policy.contains_guardian_enclave_key(key_c));
+    assert!(!policy.contains_guardian_enclave_key(slot_fixture));
+    assert!(policy.contains_guardian_enclave_key(slot_c));
 }
 
 #[test]
@@ -223,13 +223,8 @@ fun parse_user_data_rejects_wrong_length() {
 }
 
 #[test, expected_failure(abort_code = contra::guardian::EInvalidKeyLength)]
-fun approval_rejects_short_signing_pk() {
-    guardian::new_guardian_approval(x"aa", FIXTURE_SIG);
-}
-
-#[test, expected_failure(abort_code = contra::guardian::EInvalidKeyLength)]
 fun approval_rejects_short_signature() {
-    guardian::new_guardian_approval(FIXTURE_PK, x"bb");
+    guardian::new_guardian_approval(0, x"bb");
 }
 
 #[test, expected_failure(abort_code = contra::guardian::ETooManyGuardianEnclaveKeys)]
@@ -242,9 +237,13 @@ fun registration_rejects_11th_key() {
     });
 }
 
-#[test, expected_failure(abort_code = sui::vec_map::EKeyAlreadyExists)]
-fun registration_rejects_duplicate_signing_pk() {
+#[test]
+fun registration_uses_lowest_emptied_slot() {
     let mut policy = guardian::new(guardian::new_pcrs(x"00", x"01", x"02"), ALICE);
-    policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
-    policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK);
+    assert_eq!(policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK), 0);
+    assert_eq!(policy.register_guardian_enclave_key_for_testing(ENC_PK, ENC_PK), 1);
+    let ctx = alice_ctx();
+    policy.remove_enclave(0, &ctx);
+    assert_eq!(policy.register_guardian_enclave_key_for_testing(FIXTURE_PK, ENC_PK), 0);
+    assert!(policy.contains_guardian_enclave_key(1));
 }

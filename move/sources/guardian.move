@@ -27,7 +27,7 @@ const ETooManyGuardianEnclaveKeys: u64 = 3;
 const EInvalidMinVersion: u64 = 4;
 const EInvalidKeyLength: u64 = 5;
 
-/// The approval's signing key is not registered in `guardian_enclave_keys`.
+/// The approval's `key_index` has no registered enclave.
 const EApprovalKeyNotRegistered: u64 = 6;
 /// The signature does not verify over the BCS payload.
 const EApprovalSignatureMismatch: u64 = 7;
@@ -35,7 +35,7 @@ const EApprovalSignatureMismatch: u64 = 7;
 // === Constants ===
 
 /// Maximum number of enclave keys a policy may hold.
-const MAX_GUARDIAN_ENCLAVE_KEYS: u64 = 10;
+const MAX_GUARDIAN_ENCLAVE_KEYS: u8 = 10;
 
 const KEY_LENGTH: u64 = 32;
 const SIGNATURE_LENGTH: u64 = 64;
@@ -67,12 +67,13 @@ public struct GuardianPolicy has copy, drop, store {
     min_version: u16,
     /// The expected enclave image measurements.
     pcrs: Pcrs,
-    /// A list enclave keys for the fleet, keyed by `signing_pk`.
-    guardian_enclave_keys: VecMap<Ed25519PublicKey, GuardianEnclaveKey>,
+    /// The fleet's enclave keys, keyed by a slot index.
+    guardian_enclave_keys: VecMap<u8, GuardianEnclaveKey>,
 }
 
 /// Registered enclave keys.
 public struct GuardianEnclaveKey has copy, drop, store {
+    index: u8,
     signing_pk: Ed25519PublicKey,
     enc_pk: X25519PublicKey,
     /// Policy version at registration. If `min_version` is
@@ -80,10 +81,10 @@ public struct GuardianEnclaveKey has copy, drop, store {
     version: u16,
 }
 
-/// An enclave's ed25519 signature over the BCS `RequestPayload` and the
-/// `signing_pk` that produced it.
+/// An enclave's ed25519 signature over the BCS `RequestPayload`
+/// and the slot index for key used.
 public struct GuardianApproval has copy, drop {
-    signing_pk: Ed25519PublicKey,
+    key_index: u8,
     signature: Ed25519Signature,
 }
 
@@ -106,11 +107,8 @@ public enum RequestPayload has copy, drop {
 
 // === Public Functions ===
 
-public fun new_guardian_approval(signing_pk: vector<u8>, signature: vector<u8>): GuardianApproval {
-    GuardianApproval {
-        signing_pk: new_ed25519_public_key(signing_pk),
-        signature: new_ed25519_signature(signature),
-    }
+public fun new_guardian_approval(key_index: u8, signature: vector<u8>): GuardianApproval {
+    GuardianApproval { key_index, signature: new_ed25519_signature(signature) }
 }
 
 public fun new_pcrs(pcr0: vector<u8>, pcr1: vector<u8>, pcr2: vector<u8>): Pcrs {
@@ -151,9 +149,9 @@ public(package) fun update(
     self.operator = operator;
 
     let mut pruned = vector[];
-    self.guardian_enclave_keys.keys().do!(|pk| {
-        if (self.guardian_enclave_keys.get(&pk).version < min_version) {
-            let (_, key) = self.guardian_enclave_keys.remove(&pk);
+    self.guardian_enclave_keys.keys().do!(|index| {
+        if (self.guardian_enclave_keys.get(&index).version < min_version) {
+            let (_, key) = self.guardian_enclave_keys.remove(&index);
             pruned.push_back(key);
         };
     });
@@ -177,19 +175,21 @@ public(package) fun register_enclave(
         entries[2].index() == 2 && *entries[2].value() == self.pcrs.2,
         EPcrMismatch,
     );
-    let (signing_pk, enc_pk) = parse_user_data((*document.user_data()).destroy_some());
+    let user_data = document.user_data();
+    assert!(user_data.is_some(), EInvalidUserData);
+    let (signing_pk, enc_pk) = parse_user_data(*user_data.borrow());
     self.insert_key(signing_pk, enc_pk)
 }
 
 /// Called by the operator in `contra.move`.
-/// Remove the enclave key at `signing_pk` and return it.
+/// Remove the enclave key at slot `key_index` and return it.
 public(package) fun remove_enclave(
     self: &mut GuardianPolicy,
-    signing_pk: vector<u8>,
+    key_index: u8,
     ctx: &TxContext,
 ): GuardianEnclaveKey {
     assert!(ctx.sender() == self.operator, ENotOperator);
-    let (_, key) = self.guardian_enclave_keys.remove(&new_ed25519_public_key(signing_pk));
+    let (_, key) = self.guardian_enclave_keys.remove(&key_index);
     key
 }
 
@@ -279,29 +279,29 @@ fun new_x25519_public_key(bytes: vector<u8>): X25519PublicKey {
 
 /// Helper function to assert approval on payload (transfer or unwrap).
 fun assert_approval(self: &GuardianPolicy, approval: &GuardianApproval, payload: &RequestPayload) {
-    assert!(self.guardian_enclave_keys.contains(&approval.signing_pk), EApprovalKeyNotRegistered);
+    assert!(self.guardian_enclave_keys.contains(&approval.key_index), EApprovalKeyNotRegistered);
+    let key = &self.guardian_enclave_keys[&approval.key_index];
     assert!(
-        ed25519::ed25519_verify(
-            &approval.signature.0,
-            &approval.signing_pk.0,
-            &bcs::to_bytes(payload),
-        ),
+        ed25519::ed25519_verify(&approval.signature.0, &key.signing_pk.0, &bcs::to_bytes(payload)),
         EApprovalSignatureMismatch,
     );
 }
 
-/// Insert the enclave keys with current policy version.
+/// Insert the enclave keys at the lowest empty slot, stamped with the current
+/// policy version. Aborts when all slots are taken.
 fun insert_key(
     self: &mut GuardianPolicy,
     signing_pk: Ed25519PublicKey,
     enc_pk: X25519PublicKey,
 ): GuardianEnclaveKey {
-    assert!(
-        self.guardian_enclave_keys.length() < MAX_GUARDIAN_ENCLAVE_KEYS,
-        ETooManyGuardianEnclaveKeys,
-    );
-    let key = GuardianEnclaveKey { signing_pk, enc_pk, version: self.version };
-    self.guardian_enclave_keys.insert(signing_pk, key);
+    let mut free = option::none();
+    MAX_GUARDIAN_ENCLAVE_KEYS.do!(|i| {
+        if (free.is_none() && !self.guardian_enclave_keys.contains(&i)) free.fill(i);
+    });
+    assert!(free.is_some(), ETooManyGuardianEnclaveKeys);
+    let index = free.extract();
+    let key = GuardianEnclaveKey { index, signing_pk, enc_pk, version: self.version };
+    self.guardian_enclave_keys.insert(index, key);
     key
 }
 
@@ -334,18 +334,18 @@ public use fun ed25519_public_key_bytes as Ed25519PublicKey.bytes;
 public use fun x25519_public_key_bytes as X25519PublicKey.bytes;
 
 #[test_only]
-public fun contains_guardian_enclave_key(self: &GuardianPolicy, signing_pk: vector<u8>): bool {
-    self.guardian_enclave_keys.contains(&new_ed25519_public_key(signing_pk))
+public fun contains_guardian_enclave_key(self: &GuardianPolicy, key_index: u8): bool {
+    self.guardian_enclave_keys.contains(&key_index)
 }
 
-/// Register the enclave without the attestation document.
+/// Register the enclave without the attestation document; returns its slot index.
 #[test_only]
 public fun register_guardian_enclave_key_for_testing(
     self: &mut GuardianPolicy,
     signing_pk: vector<u8>,
     enc_pk: vector<u8>,
-) {
-    self.insert_key(new_ed25519_public_key(signing_pk), new_x25519_public_key(enc_pk));
+): u8 {
+    self.insert_key(new_ed25519_public_key(signing_pk), new_x25519_public_key(enc_pk)).index
 }
 
 // Constructors: `RequestPayload` can only be packed in its defining module, so
