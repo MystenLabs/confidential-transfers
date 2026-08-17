@@ -7,7 +7,7 @@
  * faucet + filesystem access) live in `contra-utils/node`.
  */
 
-export { grpcClientFor, grpcUrlFor } from './grpc.js';
+export { grpcClientFor } from './grpc.js';
 export type { ContraNetwork } from './grpc.js';
 export { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
 export type { Bytecodes, CreatedObject, ExecutedTransaction, PublishResult } from './publish.js';
