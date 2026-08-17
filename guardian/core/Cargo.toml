@@ -1,0 +1,10 @@
+[package]
+name = "contra-guardian-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fastcrypto.workspace = true
+bcs.workspace = true
+serde.workspace = true
