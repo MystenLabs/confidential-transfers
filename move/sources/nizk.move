@@ -242,7 +242,7 @@ public(package) fun default_elgamal_proof(): ElGamalProof {
 /// Build a DDH proof that `ea` decrypts to zero under `sk` (where `pk = sk*g`):
 /// `ea.ciphertext = w*g` and `ea.decryption_handle = w*pk` for the shared witness.
 #[test_only]
-public(package) fun zero_proof_for_testing(
+public fun zero_proof_for_testing(
     dst: vector<u8>,
     ea: &Encryption,
     sk: &Element<Scalar>,

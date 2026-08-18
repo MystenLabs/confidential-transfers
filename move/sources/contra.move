@@ -35,6 +35,9 @@
 ///    Permissioned operations are customized flows that should be implemented by the issuer's
 ///    contract, and may not be supported by all clients/wallets.
 ///    The default policy is fully permissionless.
+/// 8. [Advanced] Enable an external authority for the confidential token using `ManagementCap<T>`.
+///    While enabled, every protected operation requires an `Approval<T>` minted
+///    by that authority. See `guardian.move` for an authority implementation.
 ///
 /// ## Key Flows for Users:
 /// 1. Create an account for an address (permissionless, needed once for all token types). Optionally
@@ -49,6 +52,8 @@
 /// 5. Transfer an encrypted amount to one or more token accounts. Every receiver must already have a
 ///    `TokenAccount<T>`. Auditor data is attached if set.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
+/// 7. If the token has an authority, obtain its `Approval<T>` before a protected balance-changing
+///    operation and pass it along; otherwise pass `none`.
 ///
 /// ## Authentication:
 /// Some functions require authorization via an `&Auth<T>` argument. An `Auth<T>` carries two
@@ -84,6 +89,7 @@ use contra::{
         destroy_empty,
         new as new_auditors,
     },
+    authority::{Self, Approval, AuthorityCap},
     balance::{Self, Balances, EncryptedCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::EncryptedAmount,
@@ -92,7 +98,7 @@ use contra::{
     policy::{Self, Auth, Policy},
     range_proof::RangeProofs,
     session_id::{Self, SessionId},
-    twisted_elgamal::PublicKey
+    twisted_elgamal::{Encryption, PublicKey}
 };
 use sui::{
     coin::{Self, Coin, TreasuryCap},
@@ -121,6 +127,7 @@ const EReceiverNotRegistered: u64 = 11;
 const ERegistrationNotPermissionless: u64 = 12;
 const EDefaultPkNotSet: u64 = 13;
 const EZeroAmount: u64 = 14;
+const EApprovalRequired: u64 = 15;
 
 // === Constants ===
 
@@ -161,6 +168,8 @@ public struct ConfidentialTokenV1 has drop, store {
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
     auditors: Auditors,
+    /// The enabled authority ID; `none` means authority checks are disabled.
+    authority_id: Option<ID>,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -236,7 +245,7 @@ public struct AccountKey(address) has copy, drop, store;
 
 // === Caps ===
 
-/// Capability granting management of the freeze admins and auditor keys.
+/// Capability granting management of freeze admins, auditor keys, and the external authority.
 public struct ManagementCap<phantom T> has key, store { id: UID }
 
 // === Init ===
@@ -276,6 +285,20 @@ public fun authorize_as_object<T>(ct: &ConfidentialToken<T>, uid: &mut UID): Aut
     policy::as_object<T>(&ct.inner().policy, uid)
 }
 
+/// Mint the enabled authority's approval of the operation identified by `digest`. The separate
+/// canonical Guardian package calls this from `guardian::new_approval` using its private
+/// `AuthorityCap<T>`, verifies the enclave signature, and only then returns the approval. Returns
+/// `none` when authority checks are disabled.
+public fun mint_approval<T>(
+    ct: &ConfidentialToken<T>,
+    authority_cap: &AuthorityCap<T>,
+    digest: &vector<u8>,
+): Option<Approval<T>> {
+    ct.inner().authority_id.map_ref!(|authority_id| {
+        authority::mint<T>(authority_id, authority_cap, *digest)
+    })
+}
+
 // === Creation Flows ===
 
 public use fun new_confidential_token as TokenRegistry.new;
@@ -312,6 +335,7 @@ public fun new_confidential_token<T>(
                 freeze_admins: vec_set::empty(),
                 policy: policy::permissionless(),
                 auditors: new_auditors(auditor_public_keys),
+                authority_id: option::none(),
             }),
         },
         ManagementCap { id: object::new(ctx) },
@@ -532,7 +556,8 @@ public fun wrap<T>(
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts if a
 /// proof or the auditor requirement fails. Call `add` once per receiver, in `receiver_amounts` order,
-/// then `finalize`.
+/// then `finalize`. Authorized by any `Auth<T>` for `sender.owner`; `approval` is the configured
+/// authority's approval of this exact transfer if `ct` has one, else `none`.
 public fun batched_transfer<T>(
     sender: &mut Account,
     auth: &Auth<T>,
@@ -548,6 +573,7 @@ public fun batched_transfer<T>(
     seed_point: Element<G>,
     balance_proof: DdhProof,
     auditor_package: Option<AuditorPackage>,
+    approval: Option<Approval<T>>,
 ): TransferBatch<T> {
     ct.assert_token_active(deny_list);
     let sender_addr = sender.owner();
@@ -555,9 +581,27 @@ public fun batched_transfer<T>(
     assert!(!is_sender_denied<T>(deny_list, sender_addr), ETransferDenied);
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
+    let token = &sender[TokenAccountKey<T>()];
+    assert!(!token.is_frozen, ETransferDenied);
+    let inner = ct.inner();
+    if (inner.authority_id.is_none()) {
+        authority::discard_optional_approval(approval);
+    } else {
+        approval
+            .destroy_or!(abort EApprovalRequired)
+            .verify_and_consume(
+                inner.authority_id.borrow(),
+                authority::transfer_binding(
+                    *token.pk(),
+                    receiver_pks,
+                    token.balance.active_amount(),
+                    &new_balance,
+                    &receiver_amounts,
+                ),
+            );
+    };
 
     let sender = &mut sender[TokenAccountKey<T>()];
-    assert!(!sender.is_frozen, ETransferDenied);
 
     let withdrawn = sender
         .balance
@@ -724,7 +768,9 @@ public fun update_active_balance<T>(
     events::emit_update_balance<T>(owner);
 }
 
-/// Take an amount of `Coin<T>` from the encrypted balance of `account`.
+/// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
+/// which must be for the `PERMISSIONED_UNWRAP` operation and for `account.owner`; `approval` is the
+/// configured authority's approval of this exact unwrap if `ct` has one, else `none`.
 /// The caller needs to provide a proof that the new balance is correct after taking the amount:
 /// - `new_balance` is the new encrypted balance of the account after taking the amount,
 /// - `amount` is the amount of coins taken from the balance,
@@ -740,6 +786,7 @@ public fun unwrap<T>(
     new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
+    approval: Option<Approval<T>>,
     ctx: &mut TxContext,
 ): Coin<T> {
     let (success, coin) = account.try_unwrap_internal(
@@ -752,6 +799,7 @@ public fun unwrap<T>(
         new_balance_range_proofs,
         amount,
         balance_proof,
+        approval,
         ctx,
     );
     assert!(success, EBalanceProofFailed);
@@ -771,6 +819,7 @@ public fun try_unwrap<T>(
     new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
+    approval: Option<Approval<T>>,
     ctx: &mut TxContext,
 ): Coin<T> {
     let (success, coin) = account.try_unwrap_internal(
@@ -783,6 +832,7 @@ public fun try_unwrap<T>(
         new_balance_range_proofs,
         amount,
         balance_proof,
+        approval,
         ctx,
     );
     if (!success) {
@@ -804,6 +854,7 @@ fun try_unwrap_internal<T>(
     new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
+    approval: Option<Approval<T>>,
     ctx: &mut TxContext,
 ): (bool, Coin<T>) {
     assert!(amount > 0, EZeroAmount);
@@ -814,6 +865,22 @@ fun try_unwrap_internal<T>(
     assert!(!is_sender_denied<T>(deny_list, owner), ETransferDenied);
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
+    let inner = ct.inner();
+    if (inner.authority_id.is_none()) {
+        authority::discard_optional_approval(approval);
+    } else {
+        approval
+            .destroy_or!(abort EApprovalRequired)
+            .verify_and_consume(
+                inner.authority_id.borrow(),
+                authority::unwrap_binding(
+                    *account.pk(),
+                    account.balance.active_amount(),
+                    &new_balance,
+                    amount,
+                ),
+            );
+    };
     let withdrawn = account
         .balance
         .try_withdraw_public(
@@ -926,6 +993,50 @@ public fun set_policy<T, W>(
     events::emit_policy_update<T, W>(permissioned_operations);
 }
 
+/// Borrow the confidential token's UID so an authority implementation can claim a derived object
+/// under it. Called by `guardian::new_guardian` in the separate canonical Guardian package; the
+/// management capability restricts the call to the issuer.
+public fun authority_parent<T>(
+    ct: &mut ConfidentialToken<T>,
+    _management_cap: &ManagementCap<T>,
+): &mut UID {
+    &mut ct.id
+}
+
+/// Create an `AuthorityCap<T>` bound to an authority object's ID. Called by
+/// `guardian::new_guardian` in the separate canonical Guardian package; the management
+/// capability restricts the call to the issuer. Creating the capability does not enable the
+/// authority.
+public fun new_authority_cap<T>(
+    authority_uid: &UID,
+    _management_cap: &ManagementCap<T>,
+): AuthorityCap<T> {
+    authority::new_authority_cap<T>(authority_uid.to_inner())
+}
+
+/// Enable an authority. The separate canonical Guardian package calls this from
+/// `guardian::enable` with the Guardian's privately stored `AuthorityCap<T>`; the issuer also
+/// supplies its `ManagementCap<T>`. Enabling a new authority replaces the current authority ID;
+/// enabling the active authority is a no-op.
+public fun enable_authority<T>(
+    ct: &mut ConfidentialToken<T>,
+    _management_cap: &ManagementCap<T>,
+    authority_cap: &AuthorityCap<T>,
+) {
+    authority::enable<T>(&mut ct.inner_mut().authority_id, authority_cap);
+}
+
+/// Disable the enabled authority. The separate canonical Guardian package calls this from
+/// `guardian::disable` with the Guardian's privately stored `AuthorityCap<T>`; the issuer also
+/// supplies its `ManagementCap<T>`. Disabling an already-disabled authority is a no-op.
+public fun disable_authority<T>(
+    ct: &mut ConfidentialToken<T>,
+    _management_cap: &ManagementCap<T>,
+    authority_cap: &AuthorityCap<T>,
+) {
+    authority::disable<T>(&mut ct.inner_mut().authority_id, authority_cap);
+}
+
 // === Auditor flows ===
 
 /// Replace this confidential token's auditor keys. `current_pks` is tried first when verifying a
@@ -1006,16 +1117,12 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
     df::borrow_mut(&mut acc.id, key)
 }
 
-// === Test Helpers ===
-
-#[test_only]
-use contra::twisted_elgamal::Encryption;
-
-#[test_only]
 #[syntax(index)]
 fun borrow<T>(acc: &Account, key: TokenAccountKey<T>): &TokenAccount<T> {
     df::borrow(&acc.id, key)
 }
+
+// === Test Helpers ===
 
 #[test_only]
 public fun dst_ddh_for_testing<T>(account: &Account): vector<u8> {
@@ -1048,12 +1155,30 @@ public fun new_token_registry_for_testing(ctx: &mut TxContext): TokenRegistry {
 }
 
 #[test_only]
+public fun new_management_cap_for_testing<T>(ctx: &mut TxContext): ManagementCap<T> {
+    ManagementCap { id: object::new(ctx) }
+}
+
+/// The account's current key for token `T`.
+#[test_only]
+public fun token_public_key<T>(account: &Account): PublicKey {
+    *account[TokenAccountKey<T>()].pk()
+}
+
+/// The account's active (spendable) balance for token `T`, collapsed to a single ciphertext.
+#[test_only]
 public fun balance<T>(account: &Account): Encryption {
     account[TokenAccountKey<T>()].balance.collapse_active()
 }
 
+/// The account's active balance for token `T` as its exact encrypted limbs.
 #[test_only]
-public(package) fun pending_encrypted_balance<T>(account: &Account): Encryption {
+public fun balance_amount<T>(account: &Account): EncryptedAmount {
+    account[TokenAccountKey<T>()].balance.active_amount()
+}
+
+#[test_only]
+public fun pending_encrypted_balance<T>(account: &Account): Encryption {
     account[TokenAccountKey<T>()].balance.collapse_pending()
 }
 
@@ -1070,9 +1195,4 @@ public(package) fun accepts_deposits<T>(account: &Account): bool {
 #[test_only]
 public(package) fun default_pk(account: &Account): Option<Element<G>> {
     account.inner().default_pk.map!(|pk| *pk.as_element())
-}
-
-#[test_only]
-public(package) fun token_public_key<T>(account: &Account): Element<G> {
-    *account[TokenAccountKey<T>()].pk().as_element()
 }

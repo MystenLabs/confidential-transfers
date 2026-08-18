@@ -143,6 +143,7 @@ fun closed_loop_roundtrip() {
             ristretto255::g_identity(),
             sum_proof,
             option::none(),
+            option::none(),
         )
         .add<PBU>(&mut bob_account, vector[], &deny_list)
         .finalize();
@@ -186,6 +187,7 @@ fun closed_loop_roundtrip() {
         range_proof::new_range_proof_for_testing(),
         50,
         &bob_balance_proof,
+        option::none(),
         scenario.ctx(),
     );
     assert_eq!(pbu_coin_out.value(), 50);
