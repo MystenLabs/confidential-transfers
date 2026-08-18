@@ -83,8 +83,9 @@ public struct EncryptedBalance<phantom T> has store {
 }
 
 /// An `EncryptedAmount` carrying the bound on its limbs: `upper_bound` counts the u16-bounded
-/// values folded into it, so every limb stays below `upper_bound * 2^16` and, while that product
-/// fits the decryption window, the amount stays decryptable.
+/// values folded into it, so every limb is at most `upper_bound * (2^16 - 1)` — nothing folded in
+/// means a limb of exactly zero — and while that product fits the decryption window, the amount
+/// stays decryptable.
 public struct BoundedEncryptedAmount has store {
     amount: EncryptedAmount,
     upper_bound: u16,
@@ -101,9 +102,7 @@ public struct EncryptedCoin<phantom T> {
 public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
     EncryptedBalance {
         pk,
-        // The active balance always holds a value — zero to begin with — so it counts as one
-        // merged value; the pending balance holds none until a deposit lands.
-        active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 1 },
+        active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
         pending: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
         public_balance: 0,
     }
