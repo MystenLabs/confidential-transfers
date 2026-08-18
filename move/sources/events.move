@@ -11,8 +11,11 @@ use sui::{event, group_ops::Element, ristretto255::G};
 /// A new confidential token is created for a token type `T`.
 public struct NewConfidentialTokenEvent<phantom T>() has copy, drop;
 
-/// A policy is updated for a confidential token.
+/// Witness `W` is now required for the listed operations on token `T`.
 public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop;
+
+/// Witness `W` is no longer required for the listed operations on token `T`.
+public struct PolicyUnsetEvent<phantom T, phantom W>(vector<u8>) has copy, drop;
 
 /// A new token account is registered for an account for a token type `T` with a public key `pk`.
 public struct NewRegistrationEvent<phantom T> has copy, drop {
@@ -138,6 +141,10 @@ public(package) fun emit_new_confidential_token<T>() {
 
 public(package) fun emit_policy_update<T, W>(permissioned_operations: vector<u8>) {
     event::emit(PolicyUpdateEvent<T, W>(permissioned_operations));
+}
+
+public(package) fun emit_policy_unset<T, W>(operations: vector<u8>) {
+    event::emit(PolicyUnsetEvent<T, W>(operations));
 }
 
 public(package) fun emit_new_registration<T>(owner: address, pk: PublicKey) {
