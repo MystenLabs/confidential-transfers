@@ -53,6 +53,7 @@ const MAX_UPPER_BOUND: u16 = 0xFFFF;
 /// `public_balance`, the plaintext total of public deposits credited to the pool but not yet merged.
 public struct EncryptedBalance<phantom T> has store {
     pk: PublicKey,
+    session_id: vector<u8>,
     active: BoundedEncryptedAmount,
     pending: BoundedEncryptedAmount,
     public_balance: u64,
@@ -74,10 +75,12 @@ public struct EncryptedCoin<phantom T> {
 
 // === Construction and views ===
 
-/// An empty `EncryptedBalance` with every amount encrypted under `pk`.
-public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
+/// An empty `EncryptedBalance` with every amount encrypted under `pk`, binding every proof it
+/// verifies to `session_id`.
+public(package) fun new<T>(pk: PublicKey, session_id: vector<u8>): EncryptedBalance<T> {
     EncryptedBalance {
         pk,
+        session_id,
         active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
         pending: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
         public_balance: 0,
@@ -87,6 +90,12 @@ public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
 /// The key `self`'s amounts are encrypted under. Senders read it to encrypt a deposit for `self`.
 public(package) fun public_key<T>(self: &EncryptedBalance<T>): &PublicKey {
     &self.pk
+}
+
+/// The session id every proof over `self` is bound to. Callers verifying a proof of their own
+/// against the same balance — the auditor proof of a transfer — derive their DST from it.
+public(package) fun session_id<T>(self: &EncryptedBalance<T>): vector<u8> {
+    self.session_id
 }
 
 // === Deposits ===
@@ -140,18 +149,17 @@ public(package) fun verify_amount<T>(
     amount: EncryptedAmount,
     pok: &ElGamalProof,
     range_proofs: RangeProofs,
-    session_id: vector<u8>,
 ): InRangeVerifiedEncryptedAmount {
     let verified = encrypted_amount::verify_encrypted_amount(
         amount,
         self.pk,
         pok,
-        session_id.dst(DST_ELGAMAL),
+        self.session_id.dst(DST_ELGAMAL),
     );
     let mut in_range = encrypted_amount::verify_in_range(
         vector[verified],
         range_proofs,
-        session_id.dst(DST_RANGE_PROOF_16),
+        self.session_id.dst(DST_RANGE_PROOF_16),
     );
     in_range.pop_back()
 }
@@ -178,7 +186,6 @@ public(package) fun verify_transfer_amounts<T>(
     total_sender_handle: Element<G>,
     sender_encs_pok: ElGamalProof,
     range_proofs: RangeProofs,
-    session_id: vector<u8>,
 ): (VerifiedEncryption, vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount) {
     let n = receiver_amounts.length();
     assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
@@ -189,7 +196,7 @@ public(package) fun verify_transfer_amounts<T>(
             receiver_amounts[i],
             receiver_pks[i],
             &receiver_encs_pok[i],
-            session_id.dst(DST_ELGAMAL),
+            self.session_id.dst(DST_ELGAMAL),
         )
     });
 
@@ -205,7 +212,7 @@ public(package) fun verify_transfer_amounts<T>(
         total,
         self.pk,
         &sender_encs_pok,
-        session_id.dst(DST_ELGAMAL),
+        self.session_id.dst(DST_ELGAMAL),
     );
     verified_amounts.push_back(new_balance);
 
@@ -214,7 +221,7 @@ public(package) fun verify_transfer_amounts<T>(
     let mut receiver_amounts = encrypted_amount::verify_in_range(
         verified_amounts,
         range_proofs,
-        session_id.dst(DST_RANGE_PROOF_16),
+        self.session_id.dst(DST_RANGE_PROOF_16),
     );
     let new_balance = receiver_amounts.pop_back();
     (total_sender, receiver_amounts, new_balance)
@@ -231,13 +238,12 @@ public(package) fun try_withdraw_public<T>(
     amount: u64,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
     pool: &mut UID,
     ctx: &mut TxContext,
 ): Option<Coin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof)) {
         return option::none()
     };
     option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
@@ -260,12 +266,11 @@ public(package) fun try_withdraw_encrypted<T>(
     new_balance: InRangeVerifiedEncryptedAmount,
     total_sender: VerifiedEncryption,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
 ): Option<vector<EncryptedCoin<T>>> {
     assert!(total_sender.pk() == &self.pk, EInvalidPublicKey);
     let mut expected = self.active.collapse();
     expected.sub_assign(total_sender.encryption());
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof)) {
         return option::none()
     };
     option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
@@ -281,10 +286,9 @@ public(package) fun try_update_active<T>(
     self: &mut EncryptedBalance<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
 ): bool {
     let expected = self.active.collapse();
-    self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
+    self.try_replace_active(&new_balance, &expected, balance_proof)
 }
 
 /// Re-key `self` from `self.pk` to `new_pk`: `rekey_proof` shows that `new_handles` re-key the
@@ -300,20 +304,10 @@ public(package) fun try_rekey<T>(
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
-    session_id: vector<u8>,
 ): bool {
     assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
-    if (
-        self
-            .active
-            .try_set_public_key(
-                &self.pk,
-                &new_pk,
-                new_handles,
-                rekey_proof,
-                session_id.dst(DST_BATCH_DDH),
-            )
-    ) {
+    let dst = self.session_id.dst(DST_BATCH_DDH);
+    if (self.active.try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, dst)) {
         self.pk = new_pk;
         true
     } else {
@@ -351,10 +345,9 @@ fun try_replace_active<T>(
     new_balance: &InRangeVerifiedEncryptedAmount,
     expected: &Encryption,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
 ): bool {
     assert!(new_balance.pk() == &self.pk, EInvalidPublicKey);
-    if (new_balance.verify_equal(expected, balance_proof, session_id.dst(DST_DDH))) {
+    if (new_balance.verify_equal(expected, balance_proof, self.session_id.dst(DST_DDH))) {
         self.active.overwrite(new_balance);
         true
     } else {

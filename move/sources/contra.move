@@ -160,7 +160,6 @@ public struct Account has key {
 
 /// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
-    session_id: vector<u8>,
     is_frozen: bool,
     accepts_deposits: bool,
     balance: EncryptedBalance<T>,
@@ -348,10 +347,9 @@ fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vecto
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
-            session_id,
             is_frozen: false,
             accepts_deposits: true,
-            balance: balance::new<T>(pk),
+            balance: balance::new<T>(pk, session_id),
         },
     );
 }
@@ -454,8 +452,7 @@ fun rekey_token_account_internal<T>(
 ): bool {
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let session_id = token_account.session_id;
-    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
+    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof)) {
         events::emit_token_rekeyed<T>(owner, new_pk);
         true
     } else {
@@ -539,7 +536,7 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
-    let session_id = sender.session_id;
+    let session_id = sender.balance.session_id();
 
     let (total_sender, receiver_amounts, new_balance) = sender
         .balance
@@ -551,7 +548,6 @@ public fun batched_transfer<T>(
             total_sender_handle,
             sender_encs_pok,
             range_proofs,
-            session_id,
         );
 
     let auditor_data = ct
@@ -569,7 +565,6 @@ public fun batched_transfer<T>(
             new_balance,
             total_sender,
             &balance_proof,
-            session_id,
         );
 
     if (withdrawn.is_some()) {
@@ -709,12 +704,11 @@ public fun update_active_balance<T>(
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let session_id = token_account.session_id;
     let new_balance = token_account
         .balance
-        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session_id);
+        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs);
     assert!(
-        token_account.balance.try_update_active(new_balance, balance_proof, session_id),
+        token_account.balance.try_update_active(new_balance, balance_proof),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
@@ -813,25 +807,12 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
-    let session_id = account.session_id;
     let new_balance = account
         .balance
-        .verify_amount(
-            new_balance,
-            &new_balance_consistency_proof,
-            new_balance_range_proofs,
-            session_id,
-        );
+        .verify_amount(new_balance, &new_balance_consistency_proof, new_balance_range_proofs);
     let withdrawn = account
         .balance
-        .try_withdraw_public(
-            amount,
-            new_balance,
-            balance_proof,
-            session_id,
-            &mut pool.id,
-            ctx,
-        );
+        .try_withdraw_public(amount, new_balance, balance_proof, &mut pool.id, ctx);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
         (true, withdrawn.destroy_some())
