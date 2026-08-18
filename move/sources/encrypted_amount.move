@@ -174,7 +174,7 @@ public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
 }
 
 /// The two u32-limb `Encryption`s `(l0 + 2^16 l1, l2 + 2^16 l3)` (ciphertext and handle alike).
-public(package) fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
+fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
     let two_16 = scalar_from_u64(1 << 16);
     vector[fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16)]
 }
