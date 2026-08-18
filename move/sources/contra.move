@@ -76,19 +76,13 @@ use contra::{
         destroy,
         new as new_auditors,
     },
-    balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
+    balance::{Self, EncryptedBalance, EncryptedCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
-    encrypted_amount::{
-        Self,
-        EncryptedAmount,
-        InRangeVerifiedEncryptedAmount,
-        VerifiedEncryption,
-        RangeProofs,
-    },
+    encrypted_amount::{EncryptedAmount, RangeProofs},
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    twisted_elgamal::{Self, PublicKey}
+    twisted_elgamal::PublicKey
 };
 use sui::{
     coin::{Self, Coin, TreasuryCap},
@@ -106,18 +100,15 @@ const EAccountAlreadyRegistered: u64 = 0;
 const ETransferDenied: u64 = 1;
 const EAuthorizationError: u64 = 2;
 const ETokenAlreadyRegistered: u64 = 3;
-const EPendingDepositsMustBeMerged: u64 = 4;
 const EBalanceProofFailed: u64 = 5;
 const EAllAmountsMustBeUsed: u64 = 6;
 const EAmountsEqualityProofFailed: u64 = 7;
 const EEmptyTransferBatch: u64 = 8;
 const ETooManyReceivers: u64 = 9;
-const EBalancesFull: u64 = 10;
 const EBatchTooLarge: u64 = 11;
 const EReceiverNotRegistered: u64 = 12;
 const ERegistrationNotPermissionless: u64 = 13;
 const EDefaultPkNotSet: u64 = 14;
-const EMismatchedBatchLength: u64 = 15;
 
 // === Constants ===
 
@@ -129,12 +120,9 @@ const PERMISSIONED_REGISTER: u8 = 0;
 const PERMISSIONED_WRAP: u8 = 1;
 const PERMISSIONED_UNWRAP: u8 = 2;
 
-/// Protocol IDs for Fiat-Shamir domain separation.
-/// Protocol-id `100` is also reserved by the ts-sdk for `PROTOCOL_VERIFIED_DEC`
-const DST_DDH: u8 = 0x01;
-const DST_ELGAMAL: u8 = 0x02;
-const DST_RANGE_PROOF_16: u8 = 0x04;
-const DST_BATCH_DDH: u8 = 0x06;
+/// Protocol ID for Fiat-Shamir domain separation of the auditor proof. The ids of the proofs over
+/// an account's balance belong to `balance`; protocol-id `100` is reserved by the ts-sdk for
+/// `PROTOCOL_VERIFIED_DEC`.
 const DST_AUDITOR_ELGAMAL: u8 = 0x07;
 
 // === Registries ===
@@ -177,13 +165,10 @@ public struct Account has key {
 
 /// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
-    pk: PublicKey,
     session_id: vector<u8>,
     is_frozen: bool,
     accepts_deposits: bool,
-    active: EncryptedBalance<T>,
-    pending: EncryptedBalance<T>,
-    public_balance: PublicCoin<T>,
+    balance: EncryptedBalance<T>,
 }
 
 /// State machine for batched transfers from a single sender to multiple receivers.
@@ -368,13 +353,10 @@ fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vecto
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
-            pk,
             session_id,
             is_frozen: false,
             accepts_deposits: true,
-            active: balance::new<T>(),
-            pending: balance::empty<T>(),
-            public_balance: balance::zero<T>(),
+            balance: balance::new<T>(pk),
         },
     );
 }
@@ -477,14 +459,8 @@ fun rekey_token_account_internal<T>(
 ): bool {
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    assert!(token_account.pending.is_empty(), EPendingDepositsMustBeMerged);
-    let dst = token_account.session_id.dst(DST_BATCH_DDH);
-    if (
-        token_account
-            .active
-            .try_set_public_key(&token_account.pk, &new_pk, new_handles, rekey_proof, dst)
-    ) {
-        token_account.pk = new_pk;
+    let session_id = token_account.session_id;
+    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
         events::emit_token_rekeyed<T>(owner, new_pk);
         true
     } else {
@@ -516,12 +492,7 @@ public fun wrap<T>(
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
-    assert!(acc.public_balance.value() > 0
-        || acc.has_deposit_slot(), EBalancesFull);
-
-    let amount = coin.value();
-    let public_coin = balance::wrap(coin, &pool.id);
-    acc.public_balance.join(public_coin);
+    let amount = acc.balance.deposit_public(coin, &pool.id);
 
     events::emit_wrap<T>(receiver.owner, amount, memo);
 }
@@ -570,37 +541,40 @@ public fun batched_transfer<T>(
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
 
-    let (total_sender, receiver_amounts, new_balance) = sender.verify_transfer_amounts<T>(
-        receiver_pks,
-        receiver_amounts,
-        receiver_encs_pok,
-        new_balance,
-        total_sender_handle,
-        sender_encs_pok,
-        range_proofs,
-    );
-
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
+    let session_id = sender.session_id;
+
+    let (total_sender, receiver_amounts, new_balance) = sender
+        .balance
+        .verify_transfer_amounts(
+            receiver_pks,
+            receiver_amounts,
+            receiver_encs_pok,
+            new_balance,
+            total_sender_handle,
+            sender_encs_pok,
+            range_proofs,
+            session_id,
+        );
 
     let auditor_data = ct
         .auditors
         .verify_transfer(
             &receiver_amounts,
             auditor_package,
-            sender.session_id.dst(DST_AUDITOR_ELGAMAL),
+            session_id.dst(DST_AUDITOR_ELGAMAL),
         );
 
     let withdrawn = sender
-        .active
-        .try_split_batch(
-            &sender.pk,
-            new_balance,
+        .balance
+        .try_withdraw_encrypted(
             receiver_amounts,
+            new_balance,
             total_sender,
             &balance_proof,
-            sender.session_id.dst(DST_DDH),
+            session_id,
         );
 
     if (withdrawn.is_some()) {
@@ -609,7 +583,7 @@ public fun batched_transfer<T>(
         coins.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
-            sender_pk: sender.pk,
+            sender_pk: *sender.pk(),
             coins,
             seed_point,
             next_index: 0,
@@ -656,9 +630,10 @@ public fun add_to_batch<T>(
             let receiver = &mut receiver[TokenAccountKey<T>()];
             assert!(!receiver.is_frozen, ETransferDenied);
             assert!(receiver.accepts_deposits, ETransferDenied);
-            assert!(receiver.has_deposit_slot(), EBalancesFull);
 
             let coin = coins.pop_back();
+            let receiver_pk = *receiver.pk();
+            let amount = receiver.balance.deposit_encrypted(coin);
             let (receiver_auditor_decryption_handles, auditor_pk) = next(&mut auditor_data);
             events::emit_transfer<T>(
                 sender,
@@ -666,13 +641,12 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index,
                 receiver_addr,
-                receiver.pk,
-                *coin.amount().amount(),
+                receiver_pk,
+                amount,
                 receiver_auditor_decryption_handles,
                 auditor_pk,
                 memo,
             );
-            receiver.pending.merge_encrypted(&receiver.pk, coin);
             TransferBatch::Ok {
                 sender,
                 sender_pk,
@@ -721,9 +695,7 @@ public fun finalize<T>(batch: TransferBatch<T>) {
 public fun merge<T>(account: &mut Account, auth: &Auth<T>) {
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    let acc = &mut account[TokenAccountKey<T>()];
-    acc.active.merge_into(&mut acc.pending);
-    acc.active.merge_public(acc.public_balance.take());
+    account[TokenAccountKey<T>()].balance.merge_deposits();
     events::emit_merge_deposits<T>(owner);
 }
 
@@ -742,42 +714,15 @@ public fun update_active_balance<T>(
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let sid = token_account.session_id;
+    let session_id = token_account.session_id;
+    let new_balance = token_account
+        .balance
+        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session_id);
     assert!(
-        token_account.try_update_active(
-            new_balance,
-            new_balance_pok,
-            new_balance_range_proofs,
-            balance_proof,
-            sid,
-        ),
+        token_account.balance.try_update_active(new_balance, balance_proof, session_id),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
-}
-
-/// Re-state `self.active` as the in-range `new_balance` (same key `self.pk`), proven equal in
-/// value by `balance_proof`. Returns whether the proof verified; adds no authorization or event.
-fun try_update_active<T>(
-    self: &mut TokenAccount<T>,
-    new_balance: EncryptedAmount,
-    new_balance_pok: ElGamalProof,
-    new_balance_range_proofs: RangeProofs,
-    balance_proof: &DdhProof,
-    sid: vector<u8>,
-): bool {
-    let verified = encrypted_amount::verify_encrypted_amount(
-        new_balance,
-        self.pk,
-        &new_balance_pok,
-        sid.dst(DST_ELGAMAL),
-    );
-    let mut in_range = encrypted_amount::verify_in_range(
-        vector[verified],
-        new_balance_range_proofs,
-        sid.dst(DST_RANGE_PROOF_16),
-    );
-    self.active.try_update(&self.pk, in_range.pop_back(), balance_proof, sid.dst(DST_DDH))
 }
 
 /// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
@@ -873,31 +818,28 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
-    let sid = account.session_id;
-    let verified = encrypted_amount::verify_encrypted_amount(
-        new_balance,
-        account.pk,
-        &new_balance_consistency_proof,
-        sid.dst(DST_ELGAMAL),
-    );
-    let mut in_range = encrypted_amount::verify_in_range(
-        vector[verified],
-        new_balance_range_proofs,
-        sid.dst(DST_RANGE_PROOF_16),
-    );
+    let session_id = account.session_id;
+    let new_balance = account
+        .balance
+        .verify_amount(
+            new_balance,
+            &new_balance_consistency_proof,
+            new_balance_range_proofs,
+            session_id,
+        );
     let withdrawn = account
-        .active
-        .try_split_to_public(
-            &account.pk,
-            in_range.pop_back(),
+        .balance
+        .try_withdraw_public(
             amount,
+            new_balance,
             balance_proof,
-            sid.dst(DST_DDH),
+            session_id,
+            &mut pool.id,
+            ctx,
         );
     if (withdrawn.is_some()) {
-        let coin = withdrawn.destroy_some().unwrap(&mut pool.id, ctx);
         events::emit_unwrap<T>(owner, amount);
-        (true, coin)
+        (true, withdrawn.destroy_some())
     } else {
         withdrawn.destroy_none();
         (false, coin::zero(ctx))
@@ -924,10 +866,7 @@ public fun set_balance_by_issuer<T>(
     new_balance: EncryptedAmount,
 ) {
     let owner = account.owner;
-    let account = &mut account[TokenAccountKey<T>()];
-    account.active.overwrite_unchecked(t, new_balance);
-    account.pending.clear_unchecked(t);
-    account.public_balance.set_zero_unchecked(t);
+    account[TokenAccountKey<T>()].balance.overwrite_unchecked(t, new_balance);
     events::emit_set_balance_by_issuer<T>(owner, new_balance);
 }
 
@@ -1018,18 +957,14 @@ public fun update_auditors<T>(
 
 // === Helpers ===
 
+/// The key `self`'s balances are encrypted under. Senders read it to encrypt a deposit for `self`.
+fun pk<T>(self: &TokenAccount<T>): &PublicKey {
+    self.balance.public_key()
+}
+
 /// Return whether the given account has registered for the given token type.
 fun has_token<T>(account: &Account): bool {
     df::exists(&account.id, TokenAccountKey<T>())
-}
-
-/// Slots available for new pending deposits. Always reserves one slot for a possible future
-/// `merge_public` bump, so the cap compared against is `max_upper_bound() - 1` rather than
-/// `max_upper_bound()`.
-fun has_deposit_slot<T>(self: &TokenAccount<T>): bool {
-    let cap = balance::max_upper_bound() - 1;
-    let used = self.active.upper_bound() + self.pending.upper_bound();
-    cap > used
 }
 
 /// 20-byte session_id for `account`'s `TokenAccount<T>`.
@@ -1050,65 +985,6 @@ fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
 
 use fun dst as vector.dst;
 
-/// Verify the inputs for a batched transfer from `sender`, returning the sender-keyed transfer total,
-/// the per-receiver verified amounts, and the new balance.
-/// `receiver_amounts[i]` is the transferred value re-encrypted under `receiver_pks[i]` and proven
-/// valid by
-/// `receiver_encs_pok[i]`. `sender_encs_pok` folds the `new_balance` limbs and the
-/// total (under `sender`'s key) into one proof, `range_proofs` range-check every limb, and
-/// `total_sender_handle` is the single sender-keyed decryption handle for the transfer total (its
-/// commitment is reconstructed from the receiver amounts). Verifying against `sender`'s own key and
-/// session is what binds the returned amounts to the caller (`batched_transfer`).
-fun verify_transfer_amounts<T>(
-    sender: &Account,
-    receiver_pks: vector<PublicKey>,
-    receiver_amounts: vector<EncryptedAmount>,
-    receiver_encs_pok: vector<ElGamalProof>,
-    new_balance: EncryptedAmount,
-    total_sender_handle: Element<G>,
-    sender_encs_pok: ElGamalProof,
-    range_proofs: RangeProofs,
-): (VerifiedEncryption, vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount) {
-    let n = receiver_amounts.length();
-    assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
-    let token_account = &sender[TokenAccountKey<T>()];
-
-    // Each receiver amount is proven valid under its own key.
-    let mut verified_amounts = vector::tabulate!(n, |i| {
-        encrypted_amount::verify_encrypted_amount(
-            receiver_amounts[i],
-            receiver_pks[i],
-            &receiver_encs_pok[i],
-            token_account.session_id.dst(DST_ELGAMAL),
-        )
-    });
-
-    // The total's commitment is reconstructed from the receiver commitments and the given handle.
-    let total = twisted_elgamal::new(
-        encrypted_amount::sum_ciphertexts(&receiver_amounts),
-        total_sender_handle,
-    );
-
-    // Sender side: the new-balance limbs and the total are verified under `sender_pk` in one proof.
-    let (new_balance, total_sender) = encrypted_amount::verify_encrypted_amount_and_encryption(
-        new_balance,
-        total,
-        token_account.pk,
-        &sender_encs_pok,
-        token_account.session_id.dst(DST_ELGAMAL),
-    );
-    verified_amounts.push_back(new_balance);
-
-    // One batched range proof over every limb, grouped into the n receivers followed by the new balance.
-    let mut receiver_amounts = encrypted_amount::verify_in_range(
-        verified_amounts,
-        range_proofs,
-        token_account.session_id.dst(DST_RANGE_PROOF_16),
-    );
-    let new_balance = receiver_amounts.pop_back();
-    (total_sender, receiver_amounts, new_balance)
-}
-
 // === Syntactic Sugar ===
 
 #[syntax(index)]
@@ -1127,13 +1003,13 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 use contra::twisted_elgamal::Encryption;
 
 #[test_only]
-public fun protocol_id_ddh(): u8 { DST_DDH }
+public fun protocol_id_ddh(): u8 { balance::protocol_id_ddh() }
 
 #[test_only]
-public fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
+public fun protocol_id_elgamal(): u8 { balance::protocol_id_elgamal() }
 
 #[test_only]
-public fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
+public fun protocol_id_batch_ddh(): u8 { balance::protocol_id_batch_ddh() }
 
 #[test_only]
 public fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
@@ -1150,12 +1026,12 @@ public fun new_token_registry_for_testing(ctx: &mut TxContext): TokenRegistry {
 
 #[test_only]
 public fun balance<T>(account: &Account): Encryption {
-    account[TokenAccountKey<T>()].active.collapse()
+    account[TokenAccountKey<T>()].balance.collapse_active()
 }
 
 #[test_only]
 public fun pending_encrypted_balance<T>(account: &Account): Encryption {
-    account[TokenAccountKey<T>()].pending.collapse()
+    account[TokenAccountKey<T>()].balance.collapse_pending()
 }
 
 #[test_only]
@@ -1177,7 +1053,7 @@ public fun default_pk(account: &Account): Option<Element<G>> {
 
 #[test_only]
 public fun token_public_key<T>(account: &Account): Element<G> {
-    *account[TokenAccountKey<T>()].pk.as_element()
+    *account[TokenAccountKey<T>()].pk().as_element()
 }
 
 #[test_only]

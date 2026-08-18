@@ -168,7 +168,7 @@ export class ContraClient {
 			}
 			const parsed = TokenAccountField.parse(object.content).value;
 			return {
-				pk: pointFromBcs(parsed.pk.element),
+				pk: pointFromBcs(parsed.balance.pk.element),
 				acceptsEncryptedDeposits: parsed.accepts_deposits,
 				isFrozen: parsed.is_frozen,
 			};
@@ -262,23 +262,22 @@ export class ContraClient {
 			throw new TokenAccountDoesNotExistError(tokenAccount.address, object.message);
 		}
 
-		const parsed = TokenAccountField.parse(object.content).value;
-		const balanceCiphertext = EncryptedAmount.fromBcs(parsed.active.amount);
-		const pendingCiphertext = EncryptedAmount.fromBcs(parsed.pending.amount);
+		const { balance } = TokenAccountField.parse(object.content).value;
+		const balanceCiphertext = EncryptedAmount.fromBcs(balance.active.amount);
+		const pendingCiphertext = EncryptedAmount.fromBcs(balance.pending.amount);
 
 		return {
 			balance: {
 				ciphertext: balanceCiphertext,
 				amount: balanceCiphertext.decrypt(sk, this.#table),
-				upperBound: parsed.active.upper_bound,
+				upperBound: balance.active.upper_bound,
 			},
 			pending: {
 				ciphertext: pendingCiphertext,
 				amount: pendingCiphertext.decrypt(sk, this.#table),
-				upperBound: parsed.pending.upper_bound,
+				upperBound: balance.pending.upper_bound,
 			},
-			// `public_balance` is a `PublicCoin` — its `value` is the pending public deposit total.
-			pendingPublicBalance: BigInt(parsed.public_balance.value),
+			pendingPublicBalance: BigInt(balance.public_balance),
 		};
 	}
 
@@ -326,7 +325,9 @@ export class ContraClient {
 			if (object instanceof Error) {
 				return { tokenType: tokenTypes[i], registered: false };
 			}
-			const publicKey = pointFromBcs(TokenAccountField.parse(object.content).value.pk.element);
+			const publicKey = pointFromBcs(
+				TokenAccountField.parse(object.content).value.balance.pk.element,
+			);
 			return { tokenType: tokenTypes[i], registered: true, publicKey };
 		});
 	}

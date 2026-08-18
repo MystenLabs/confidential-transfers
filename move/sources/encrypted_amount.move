@@ -266,6 +266,16 @@ fun fold_encryption(lo: &Encryption, hi: &Encryption, shift: &Element<Scalar>): 
     )
 }
 
+/// The trivial encryption of the public `value`, verified under `pk` by construction: every limb is
+/// a u16 digit of `value` committed with a zero blinding, so the limbs are in range and the
+/// (identity) decryption handles are valid encryptions under any key.
+public(package) fun in_range_verified_from_value(
+    value: u64,
+    pk: PublicKey,
+): InRangeVerifiedEncryptedAmount {
+    InRangeVerifiedEncryptedAmount { amount: from_value(value), pk }
+}
+
 public(package) fun from_value(value: u64): EncryptedAmount {
     let l0 = encrypt_trivial(value & 0xFFFF);
     let l1 = encrypt_trivial((value >> 16) & 0xFFFF);
