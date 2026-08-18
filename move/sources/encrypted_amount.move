@@ -27,7 +27,7 @@ const U16_LIMBS: u64 = 4;
 /// Maximum number of encryptions covered by a single Bulletproof chunk.
 /// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
 /// count at 32 for `LIMB_BITS = 16`, and each encryption contributes one commitment.
-const MAX_BATCH_SIZE: u64 = 32;
+const MAX_RANGE_PROOF_BATCH_SIZE: u64 = 32;
 
 const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
@@ -318,12 +318,12 @@ fun verify_range_proofs(
 }
 
 /// Canonical Bulletproof chunking for `n` encryptions (one commitment each): greedily take as many
-/// `MAX_BATCH_SIZE` chunks as fit, then halve the chunk size and repeat until `n` is exhausted.
-/// Examples (`MAX_BATCH_SIZE = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
+/// `MAX_RANGE_PROOF_BATCH_SIZE` chunks as fit, then halve the chunk size and repeat until `n` is exhausted.
+/// Examples (`MAX_RANGE_PROOF_BATCH_SIZE = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
 fun batch_sizes(n: u64): vector<u64> {
     let mut sizes = vector[];
     let mut remaining = n;
-    let mut chunk = MAX_BATCH_SIZE;
+    let mut chunk = MAX_RANGE_PROOF_BATCH_SIZE;
     while (remaining > 0) {
         while (remaining >= chunk) {
             sizes.push_back(chunk);
