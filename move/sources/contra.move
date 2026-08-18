@@ -88,14 +88,16 @@ use contra::{
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    twisted_elgamal::{Self, PublicKey}
+    twisted_elgamal::{Self, Encryption, PublicKey}
 };
+use std::bcs;
 use sui::{
     coin::{Self, Coin, TreasuryCap},
     deny_list::DenyList,
     derived_object,
     dynamic_field as df,
     group_ops::Element,
+    hash::blake2b256,
     ristretto255::G,
     vec_set::{Self, VecSet}
 };
@@ -128,6 +130,7 @@ const MAX_BATCH_RECIPIENTS: u64 = 255;
 const PERMISSIONED_REGISTER: u8 = 0;
 const PERMISSIONED_WRAP: u8 = 1;
 const PERMISSIONED_UNWRAP: u8 = 2;
+const PERMISSIONED_TRANSFER: u8 = 3;
 
 /// Protocol IDs for Fiat-Shamir domain separation.
 /// Protocol-id `100` is also reserved by the ts-sdk for `PROTOCOL_VERIFIED_DEC`
@@ -155,7 +158,7 @@ public struct ConfidentialToken<phantom T> has key {
     id: UID,
     is_active: bool, // Global freeze capability.
     freeze_admins: VecSet<address>,
-    policy: Option<Policy>,
+    policy: Policy,
     auditors: Auditors,
 }
 
@@ -221,6 +224,25 @@ public struct PoolKey() has copy, drop, store;
 /// Dynamic field key used for storing `TokenAccount`s in `Account`.
 public struct TokenAccountKey<phantom T>() has copy, drop, store;
 
+/// The preimage of a bound `Auth`'s digest. External authorizers
+/// build the same value (`transfer_binding` / `unwrap_binding`)
+/// to compute the digest they bind to.
+public enum Binding has copy, drop {
+    Transfer {
+        sender_pk: PublicKey,
+        receiver_pks: vector<PublicKey>,
+        old_encrypted_balance: Encryption,
+        new_encrypted_balance: Encryption,
+        encrypted_amounts: vector<Encryption>,
+    },
+    Unwrap {
+        sender_pk: PublicKey,
+        old_encrypted_balance: Encryption,
+        new_encrypted_balance: Encryption,
+        amount: u64,
+    },
+}
+
 /// Key used for `Account` UID derivation.
 public struct AccountKey(address) has copy, drop, store;
 
@@ -247,9 +269,9 @@ public fun authorize_as_sender<T>(ct: &ConfidentialToken<T>, ctx: &TxContext): A
     policy::as_sender<T>(&ct.policy, ctx)
 }
 
-/// Create an `Auth<T>` on behalf of `owner` covering the requested `operation`, authorized by
-/// witness `W`. Aborts unless the policy on `ct` is set, its witness type is `W`, and `operation`
-/// is permissioned. The witness-holding contract is fully responsible for authenticating `owner`.
+/// Create an `Auth<T>` on behalf of `owner` for `operation`, endorsed by witness `W`; aborts
+/// unless the policy on `ct` requires `W` for `operation`. The witness-holding contract must
+/// authenticate `owner`, and if further witnesses are required each adds its own with `endorse`.
 public fun authorize_with_witness<T, W: drop>(
     ct: &ConfidentialToken<T>,
     operation: u8,
@@ -257,6 +279,58 @@ public fun authorize_with_witness<T, W: drop>(
     witness: W,
 ): Auth<T> {
     policy::with_witness<T, W>(&ct.policy, operation, owner, witness)
+}
+
+/// Like `authorize_with_witness`, but the `Auth` is bound to `digest`, the blake2b256 of the BCS
+/// `Binding` it approves; `batched_transfer` / `unwrap` recompute it from what they execute and
+/// abort unless it matches. This lets an external authorizer approve one specific transfer or
+/// unwrap.
+public fun authorize_with_witness_bound<T, W: drop>(
+    ct: &ConfidentialToken<T>,
+    operation: u8,
+    owner: address,
+    digest: vector<u8>,
+    witness: W,
+): Auth<T> {
+    policy::with_witness_bound<T, W>(&ct.policy, operation, owner, digest, witness)
+}
+
+/// The `Binding` for `batched_transfer`.
+public fun transfer_binding(
+    sender_pk: PublicKey,
+    receiver_pks: vector<PublicKey>,
+    old_encrypted_balance: Encryption,
+    new_balance: &EncryptedAmount,
+    receiver_amounts: &vector<EncryptedAmount>,
+): Binding {
+    Binding::Transfer {
+        sender_pk,
+        receiver_pks,
+        old_encrypted_balance,
+        new_encrypted_balance: new_balance.collapse(),
+        encrypted_amounts: receiver_amounts.map_ref!(|amount| amount.collapse()),
+    }
+}
+
+/// The unwrap counterpart of `transfer_binding`.
+public fun unwrap_binding(
+    sender_pk: PublicKey,
+    old_encrypted_balance: Encryption,
+    new_balance: &EncryptedAmount,
+    amount: u64,
+): Binding {
+    Binding::Unwrap {
+        sender_pk,
+        old_encrypted_balance,
+        new_encrypted_balance: new_balance.collapse(),
+        amount,
+    }
+}
+
+/// Combine two witnesses' auths for the same owner into one; an operation requiring several
+/// witnesses is allowed once every one of them has endorsed. Aborts if the owners differ.
+public fun join<T>(ct: &ConfidentialToken<T>, a: Auth<T>, b: Auth<T>): Auth<T> {
+    policy::join(&ct.policy, a, b)
 }
 
 /// Create an `Auth<T>` on behalf of an object identified by `uid`, covering every operation the
@@ -562,6 +636,7 @@ public fun batched_transfer<T>(
     auditor_package: Option<AuditorPackage>,
 ): TransferBatch<T> {
     assert!(ct.is_active, ETransferDenied);
+    assert!(auth.is_allowed(PERMISSIONED_TRANSFER), EAuthorizationError);
     assert!(auth.is_authenticated(sender.owner), EAuthorizationError);
     assert!(
         !is_sender_denied<T>(deny_list, sender.owner) && !is_frozen<T>(deny_list),
@@ -583,6 +658,20 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
+    // A bound `Auth` (from an external authorizer) must have committed to exactly this transfer.
+    auth.assert_binding(
+        blake2b256(
+            &bcs::to_bytes(
+                &Binding::Transfer {
+                    sender_pk: sender.pk,
+                    receiver_pks,
+                    old_encrypted_balance: sender.active.collapse(),
+                    new_encrypted_balance: new_balance.amount().collapse(),
+                    encrypted_amounts: receiver_amounts.map_ref!(|a| a.amount().collapse()),
+                },
+            ),
+        ),
+    );
 
     let auditor_data = ct
         .auditors
@@ -873,6 +962,19 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
+    // A bound `Auth` (from an external authorizer) must have committed to exactly this unwrap.
+    auth.assert_binding(
+        blake2b256(
+            &bcs::to_bytes(
+                &Binding::Unwrap {
+                    sender_pk: account.pk,
+                    old_encrypted_balance: account.active.collapse(),
+                    new_encrypted_balance: new_balance.collapse(),
+                    amount,
+                },
+            ),
+        ),
+    );
     let sid = account.session_id;
     let verified = encrypted_amount::verify_encrypted_amount(
         new_balance,
@@ -906,6 +1008,16 @@ fun try_unwrap_internal<T>(
 
 public fun owner(account: &Account): address {
     account.owner
+}
+
+/// The account's key for `T`.
+public fun token_public_key<T>(account: &Account): Element<G> {
+    *account[TokenAccountKey<T>()].pk.as_element()
+}
+
+/// The account's collapsed active balance for `T`.
+public fun balance<T>(account: &Account): Encryption {
+    account[TokenAccountKey<T>()].active.collapse()
 }
 
 // === Admin ===
@@ -986,19 +1098,27 @@ public fun account_unfreeze<T>(_cap: &TreasuryCap<T>, account: &mut Account) {
     events::emit_account_unfreeze<T>(owner);
 }
 
-/// Set a policy for the confidential token.
-/// This allows implementing permissioned operations, but only the witness type is stored here - the
-/// logic must be handled in the corresponding flows.
-/// See `register_permissioned` for an example of how this can be implemented.
-/// Changing the witness type will break all in-flight permissioned calls using the old witness,
-/// and thus highly discouraged.
+/// Require witness `W` for each of `permissioned_operations`, in addition to any witnesses already
+/// required (an operation requiring several accepts only an `Auth` every one has endorsed). Only
+/// the witness type is stored here; the permissioning logic lives in the module owning `W`.
 public fun set_policy<T, W>(
     ct: &mut ConfidentialToken<T>,
     _t: &mut TreasuryCap<T>,
     permissioned_operations: vector<u8>,
 ) {
-    policy::set<W>(&mut ct.policy, permissioned_operations);
+    policy::add<W>(&mut ct.policy, permissioned_operations);
     events::emit_policy_update<T, W>(permissioned_operations);
+}
+
+/// Stop requiring witness `W` for each of `operations`; an operation becomes permissionless once
+/// no witness is required for it.
+public fun unset_policy<T, W>(
+    ct: &mut ConfidentialToken<T>,
+    _t: &mut TreasuryCap<T>,
+    operations: vector<u8>,
+) {
+    policy::remove<W>(&mut ct.policy, operations);
+    events::emit_policy_unset<T, W>(operations);
 }
 
 // === Auditor flows ===
@@ -1124,9 +1244,6 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 // === Test Helpers ===
 
 #[test_only]
-use contra::twisted_elgamal::Encryption;
-
-#[test_only]
 public fun protocol_id_ddh(): u8 { DST_DDH }
 
 #[test_only]
@@ -1149,8 +1266,8 @@ public fun new_token_registry_for_testing(ctx: &mut TxContext): TokenRegistry {
 }
 
 #[test_only]
-public fun balance<T>(account: &Account): Encryption {
-    account[TokenAccountKey<T>()].active.collapse()
+public fun new_management_cap_for_testing<T>(ctx: &mut TxContext): ManagementCap<T> {
+    ManagementCap { id: object::new(ctx) }
 }
 
 #[test_only]
@@ -1173,11 +1290,6 @@ public fun accepts_deposits<T>(account: &Account): bool {
 #[test_only]
 public fun default_pk(account: &Account): Option<Element<G>> {
     account.default_pk.map!(|pk| *pk.as_element())
-}
-
-#[test_only]
-public fun token_public_key<T>(account: &Account): Element<G> {
-    *account[TokenAccountKey<T>()].pk.as_element()
 }
 
 #[test_only]

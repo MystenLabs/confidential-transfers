@@ -2183,11 +2183,14 @@ fun empty_range_proofs_rejected() {
 
 // === Policy tests ===
 
+/// A second witness type, to show two modules' witnesses gating operations.
+public struct OtherWitness has drop {}
+
 #[test]
 fun with_witness_grants_only_the_permissioned_operation() {
     let owner = @0x100;
     let mut policy = policy::permissionless();
-    policy::set<Witness>(&mut policy, vector[0u8, 3u8]);
+    policy::add<Witness>(&mut policy, vector[0u8, 3u8]);
 
     let auth = policy::with_witness<TestCurrency, Witness>(&policy, 3u8, owner, Witness {});
     assert!(auth.is_allowed(3u8));
@@ -2198,9 +2201,8 @@ fun with_witness_grants_only_the_permissioned_operation() {
 #[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
 fun with_witness_rejects_permissionless_operation() {
     let mut policy = policy::permissionless();
-    policy::set<Witness>(&mut policy, vector[0u8, 3u8]);
-
-    // Operation 1 is not in the policy's permissioned set; the witness cannot mint an auth for it.
+    policy::add<Witness>(&mut policy, vector[0u8, 3u8]);
+    // Operation 1 is not gated; the witness cannot mint an auth for it.
     let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 1u8, @0x100, Witness {});
 }
 
@@ -2208,4 +2210,177 @@ fun with_witness_rejects_permissionless_operation() {
 fun with_witness_rejects_empty_policy() {
     let policy = policy::permissionless();
     let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 0u8, @0x100, Witness {});
+}
+
+// Different operations can be gated by different witnesses; each witness authorizes only its
+// own operation, and a plain sender auth is denied both.
+#[test]
+fun per_operation_witnesses_are_independent() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[0u8]);
+    policy::add<OtherWitness>(&mut policy, vector[3u8]);
+
+    let a = policy::with_witness<TestCurrency, Witness>(&policy, 0u8, @0x100, Witness {});
+    let b = policy::with_witness<TestCurrency, OtherWitness>(&policy, 3u8, @0x100, OtherWitness {});
+    assert!(a.is_allowed(0u8) && !a.is_allowed(3u8));
+    assert!(b.is_allowed(3u8) && !b.is_allowed(0u8));
+    let sender = policy::as_sender<TestCurrency>(&policy, &tx_context::dummy());
+    assert!(!sender.is_allowed(0u8) && !sender.is_allowed(3u8) && sender.is_allowed(1u8));
+    // Joining auths for different operations keeps each operation's permission.
+    let both = policy::join(&policy, a, b);
+    assert!(both.is_allowed(0u8) && both.is_allowed(3u8) && !both.is_allowed(1u8));
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
+fun with_witness_rejects_wrong_witness_for_operation() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[0u8]);
+    policy::add<OtherWitness>(&mut policy, vector[3u8]);
+    // `Witness` gates op 0, not op 3.
+    let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 3u8, @0x100, Witness {});
+}
+
+#[test]
+fun remove_makes_operation_permissionless_once_no_witness_remains() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[0u8, 3u8]);
+    policy::add<OtherWitness>(&mut policy, vector[3u8]);
+    policy::remove<Witness>(&mut policy, vector[3u8]);
+    // Op 3 still requires `OtherWitness`; op 0 still requires `Witness`.
+    assert!(!policy::is_permissionless(&policy, 3u8));
+    assert!(!policy::is_permissionless(&policy, 0u8));
+    policy::remove<OtherWitness>(&mut policy, vector[3u8]);
+    assert!(policy::is_permissionless(&policy, 3u8));
+    // Removing a witness that was never required is a no-op.
+    policy::remove<OtherWitness>(&mut policy, vector[0u8, 1u8]);
+    assert!(!policy::is_permissionless(&policy, 0u8));
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EDuplicateOperation)]
+fun add_rejects_same_witness_twice() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[0u8]);
+    policy::add<Witness>(&mut policy, vector[0u8]);
+}
+
+/// A third and fourth witness type, to exceed the per-operation limit.
+public struct ThirdWitness has drop {}
+public struct FourthWitness has drop {}
+
+#[test, expected_failure(abort_code = ::contra::policy::ETooManyWitnesses)]
+fun add_rejects_fourth_witness_for_operation() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[2u8]);
+    policy::add<OtherWitness>(&mut policy, vector[2u8]);
+    policy::add<ThirdWitness>(&mut policy, vector[2u8]);
+    policy::add<FourthWitness>(&mut policy, vector[2u8]);
+}
+
+// An operation requiring two witnesses is allowed only by the join of both auths, in either
+// order; a sender auth never covers it.
+#[test]
+fun multiple_witnesses_must_all_endorse() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[2u8]);
+    policy::add<OtherWitness>(&mut policy, vector[2u8]);
+    let ctx = tx_context::dummy();
+
+    let a = policy::with_witness<TestCurrency, Witness>(&policy, 2u8, @0x100, Witness {});
+    let b = policy::with_witness<TestCurrency, OtherWitness>(&policy, 2u8, @0x100, OtherWitness {});
+    assert!(!a.is_allowed(2u8) && !b.is_allowed(2u8));
+    assert!(policy::join(&policy, a, b).is_allowed(2u8));
+
+    let a = policy::with_witness<TestCurrency, Witness>(&policy, 2u8, @0x100, Witness {});
+    let b = policy::with_witness<TestCurrency, OtherWitness>(&policy, 2u8, @0x100, OtherWitness {});
+    assert!(policy::join(&policy, b, a).is_allowed(2u8));
+    assert!(!policy::as_sender<TestCurrency>(&policy, &ctx).is_allowed(2u8));
+
+    // Dropping one requirement makes the remaining single witness sufficient again.
+    policy::remove<OtherWitness>(&mut policy, vector[2u8]);
+    let single = policy::with_witness<TestCurrency, Witness>(&policy, 2u8, @0x100, Witness {});
+    assert!(single.is_allowed(2u8));
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
+fun join_rejects_different_owners() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[2u8]);
+    policy::add<OtherWitness>(&mut policy, vector[2u8]);
+    let a = policy::with_witness<TestCurrency, Witness>(&policy, 2u8, @0x100, Witness {});
+    let b = policy::with_witness<TestCurrency, OtherWitness>(&policy, 2u8, @0x200, OtherWitness {});
+    let _joined = policy::join(&policy, a, b);
+}
+
+// A joined auth keeps every binding: it passes only the digest both bound witnesses committed
+// to, and an unbound witness does not constrain the arguments.
+#[test]
+fun join_keeps_bindings() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[2u8]);
+    policy::add<OtherWitness>(&mut policy, vector[2u8]);
+    let digest = b"the exact operation".to_string().into_bytes();
+    let a = policy::with_witness_bound<TestCurrency, Witness>(
+        &policy,
+        2u8,
+        @0x100,
+        digest,
+        Witness {},
+    );
+    let b = policy::with_witness<TestCurrency, OtherWitness>(&policy, 2u8, @0x100, OtherWitness {});
+    policy::join(&policy, a, b).assert_binding(digest);
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
+fun conflicting_bindings_fail_at_the_gate() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[2u8]);
+    policy::add<OtherWitness>(&mut policy, vector[2u8]);
+    let a = policy::with_witness_bound<TestCurrency, Witness>(
+        &policy,
+        2u8,
+        @0x100,
+        b"approved op".to_string().into_bytes(),
+        Witness {},
+    );
+    let b = policy::with_witness_bound<TestCurrency, OtherWitness>(
+        &policy,
+        2u8,
+        @0x100,
+        b"a different op".to_string().into_bytes(),
+        OtherWitness {},
+    );
+    policy::join(&policy, a, b).assert_binding(b"approved op".to_string().into_bytes());
+}
+
+#[test]
+fun binding_matches_committed_digest_if_present() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[3u8]);
+    let digest = b"the exact operation".to_string().into_bytes();
+    let bounded_auth = policy::with_witness_bound<TestCurrency, Witness>(
+        &policy,
+        3u8,
+        @0x100,
+        digest,
+        Witness {},
+    );
+    bounded_auth.assert_binding(b"the exact operation".to_string().into_bytes());
+
+    // If unbound, the digest is not checked.
+    let unbound = policy::with_witness<TestCurrency, Witness>(&policy, 3u8, @0x100, Witness {});
+    unbound.assert_binding(b"anything at all".to_string().into_bytes());
+}
+
+#[test, expected_failure(abort_code = ::contra::policy::EAuthorizationError)]
+fun binding_rejects_a_different_operation() {
+    let mut policy = policy::permissionless();
+    policy::add<Witness>(&mut policy, vector[3u8]);
+    let bound = policy::with_witness_bound<TestCurrency, Witness>(
+        &policy,
+        3u8,
+        @0x100,
+        b"approved op".to_string().into_bytes(),
+        Witness {},
+    );
+    bound.assert_binding(b"a different op".to_string().into_bytes());
 }
