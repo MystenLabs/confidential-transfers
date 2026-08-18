@@ -49,7 +49,7 @@ public struct WrapEvent<phantom T> has copy, drop {
 }
 
 /// A confidential transfer is made from a sender to a receiver. The transferred amount is the
-/// well-formed four-limb encryption `encrypted_amount_receiver` (four range-proven u16 limbs) under
+/// in-range four-limb encryption `encrypted_amount_receiver` (four range-proven u16 limbs) under
 /// `receiver_pk`; the full amount is `Σ_k n_k · 2^{16k}`. The sender does not send a separate
 /// sender-keyed amount: it recovers its own outgoing value from these commitments (the sender and
 /// receiver commitments are identical) by re-deriving the per-transfer blinding from
@@ -92,7 +92,7 @@ public struct UnwrapEvent<phantom T> has copy, drop {
     amount: u64,
 }
 
-/// An account updates its active balance to be well-formed (e.g. after merging deposits).
+/// An account updates its active balance to be in range (e.g. after merging deposits).
 public struct UpdateBalanceEvent<phantom T> has copy, drop {
     account: address,
 }

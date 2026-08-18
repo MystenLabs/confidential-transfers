@@ -24,16 +24,16 @@ const LIMB_BITS: u8 = 16;
 
 const U16_LIMBS: u64 = 4;
 
-/// Maximum number of amounts covered by a single Bulletproof chunk.
+/// Maximum number of encryptions covered by a single Bulletproof chunk.
 /// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
-/// count at 32 for `LIMB_BITS = 16`, and each amount contributes 4 limb commitments, so a single proof
-/// covers at most `32 / 4 = 8` amounts.
-const MAX_BATCH_SIZE: u64 = 8;
+/// count at 32 for `LIMB_BITS = 16`, and each encryption contributes one commitment.
+const MAX_RANGE_PROOF_BATCH_SIZE: u64 = 32;
 
 const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
-const EWellFormedProofFailed: u64 = 4;
-const ERangeProofRequired: u64 = 5;
+const EEncryptionProofFailed: u64 = 4;
+const ERangeProofFailed: u64 = 5;
+const ERangeProofRequired: u64 = 6;
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -45,21 +45,40 @@ public struct EncryptedAmount has copy, drop, store {
     l3: Encryption,
 }
 
-/// A wrapper around EncryptedAmount that has been verified to have the following properties:
-/// 1) The plaintexts for all limbs are at most 2^16.
-/// 2) All limbs are valid encryptions with respect to the given public key (in the Proof of Knowledge sense).
-public struct WellFormedEncryptedAmount has copy, drop {
+/// An `Encryption` proven (via an `ElGamalProof`) to be a valid twisted-ElGamal encryption under
+/// `pk` — knowledge of the blinding and message.
+public struct VerifiedEncryption has drop {
+    encryption: Encryption,
+    pk: PublicKey,
+}
+
+/// A four-limb `EncryptedAmount` whose limbs are proven (via an `ElGamalProof`) to be valid
+/// twisted-ElGamal encryptions under `pk` — knowledge of each limb's blinding and message.
+public struct VerifiedEncryptedAmount has drop {
     amount: EncryptedAmount,
     pk: PublicKey,
 }
 
-/// Well-formedness proof: one Bulletproof per chunk of the canonical partition of
-/// `consistency_proofs.length()` (see `batch_sizes`; e.g. N=7 → [4, 2, 1], N=20 → [8, 8, 4]),
-/// plus one per-amount ElGamal consistency proof. An empty `range_proofs` vector skips the range
-/// check entirely — only reachable via the `#[test_only]` constructor.
-public struct WellFormedProof has drop {
-    range_proofs: vector<vector<u8>>,
-    consistency_proofs: vector<ElGamalProof>,
+/// A wrapper around EncryptedAmount that has been verified to have the following properties:
+/// 1) The plaintexts for all limbs are at most 2^16.
+/// 2) All limbs are valid encryptions with respect to the given public key (in the Proof of Knowledge sense).
+public struct InRangeVerifiedEncryptedAmount has drop {
+    amount: EncryptedAmount,
+    pk: PublicKey,
+}
+
+/// The Bulletproof range proofs for a range-check batch (one per `batch_sizes` chunk). The only
+/// production constructor (`new_range_proofs`) rejects an empty set, and PTBs can't fabricate a
+/// struct, so a batch verified on chain can never silently skip its range check. Move tests, which
+/// can't produce Bulletproof bytes, use the `#[test_only]` `assume_range_checked` instead.
+public struct RangeProofs has drop {
+    proofs: vector<vector<u8>>,
+}
+
+/// Wrap `proofs` into `RangeProofs`; rejects an empty set so the range check can't be skipped on chain.
+public fun new_range_proofs(proofs: vector<vector<u8>>): RangeProofs {
+    assert!(!proofs.is_empty() && proofs.all!(|p| !p.is_empty()), ERangeProofRequired);
+    RangeProofs { proofs }
 }
 
 public fun new_encrypted_amount(
@@ -71,87 +90,72 @@ public fun new_encrypted_amount(
     EncryptedAmount { l0, l1, l2, l3 }
 }
 
-/// Bundle range proofs and consistency proofs into a `WellFormedProof`. Pass one consistency
-/// proof per amount and one range proof per `batch_sizes(consistency_proofs.length())` chunk,
-/// where each chunk's range proof covers that chunk's amounts (4 limbs each). Aborts on length
-/// mismatch or empty `range_proofs[i]`; proofs are not verified here — callers must call
-/// `verify`.
-public fun new_well_formed_proof(
-    range_proofs: vector<vector<u8>>,
-    consistency_proofs: vector<ElGamalProof>,
-): WellFormedProof {
-    assert!(
-        range_proofs.length() == batch_sizes(consistency_proofs.length()).length(),
-        EMismatchedBatchLength,
-    );
-    assert!(range_proofs.all!(|rp| !rp.is_empty()), ERangeProofRequired);
-    WellFormedProof { range_proofs, consistency_proofs }
-}
-
-/// Check `proof` against `amounts` under `pks`: every limb of every amount is u16 (range proof,
-/// bound to `range_dst`) and each amount is a valid ElGamal encryption to its matching `pks[i]`
-/// (consistency proof, bound to `elgamal_dst`). The two DSTs are distinct so a range proof can't be
-/// replayed as a consistency proof. Returns `false` on any verification failure; aborts only on
-/// length mismatch between `amounts`, `pks`, and `proof.consistency_proofs`. An empty
-/// `proof.range_proofs` skips the range check entirely — only reachable via the `#[test_only]`
-/// constructor; `new_well_formed_proof` rejects empty input.
-public(package) fun verify(
-    proof: &WellFormedProof,
-    elgamal_dst: vector<u8>,
-    range_dst: vector<u8>,
-    amounts: &vector<EncryptedAmount>,
-    pks: &vector<PublicKey>,
-): bool {
-    let n = amounts.length();
-    assert!(pks.length() == n, EMismatchedBatchLength);
-    assert!(proof.consistency_proofs.length() == n, EMismatchedBatchLength);
-    assert!(
-        proof.range_proofs.is_empty() || proof.range_proofs.length() == batch_sizes(n).length(),
-        EMismatchedBatchLength,
-    );
-    verify_well_formed_range_proofs(amounts, &proof.range_proofs, range_dst)
-    && verify_well_formed_knowledge(amounts, &proof.consistency_proofs, pks, elgamal_dst)
-}
-
-/// Verify `proof` (a batch-of-1 `WellFormedProof`) against `amount` under `pk`, `elgamal_dst`
-/// (consistency), and `range_dst` (range), and wrap into a `WellFormedEncryptedAmount`. Aborts
-/// with `EWellFormedProofFailed` on failure.
-public(package) fun into_well_formed(
+/// Verify `amount`'s four limbs are valid encryptions under `pk` (one folded proof).
+public(package) fun verify_encrypted_amount(
     amount: EncryptedAmount,
-    elgamal_dst: vector<u8>,
-    range_dst: vector<u8>,
     pk: PublicKey,
-    proof: WellFormedProof,
-): WellFormedEncryptedAmount {
-    assert!(
-        proof.verify(elgamal_dst, range_dst, &vector[amount], &vector[pk]),
-        EWellFormedProofFailed,
-    );
-    WellFormedEncryptedAmount { amount, pk }
+    proof: &ElGamalProof,
+    dst: vector<u8>,
+): VerifiedEncryptedAmount {
+    assert!(proof.verify_elgamal(dst, &pk, &amount.limbs()), EEncryptionProofFailed);
+    VerifiedEncryptedAmount { amount, pk }
 }
 
-/// Verify `proof` against `amounts` under `pks`, `elgamal_dst` (consistency), and `range_dst`
-/// (range) — one aggregate proof for the whole batch — and wrap each `amounts[i]` into a
-/// `WellFormedEncryptedAmount { amount, pk: pks[i] }`. Aborts with `EWellFormedProofFailed` on
-/// failure.
-public(package) fun batch_into_well_formed(
-    amounts: vector<EncryptedAmount>,
-    elgamal_dst: vector<u8>,
-    range_dst: vector<u8>,
-    pks: vector<PublicKey>,
-    proof: WellFormedProof,
-): vector<WellFormedEncryptedAmount> {
-    assert!(proof.verify(elgamal_dst, range_dst, &amounts, &pks), EWellFormedProofFailed);
-    amounts.zip_map!(pks, |amount, pk| WellFormedEncryptedAmount { amount, pk })
+/// Verify `amount`'s four limbs together with the extra `encryption` under `pk` in one folded proof,
+/// returning the amount and the extra separately.
+public(package) fun verify_encrypted_amount_and_encryption(
+    amount: EncryptedAmount,
+    encryption: Encryption,
+    pk: PublicKey,
+    proof: &ElGamalProof,
+    dst: vector<u8>,
+): (VerifiedEncryptedAmount, VerifiedEncryption) {
+    let mut ciphertexts = amount.limbs();
+    ciphertexts.push_back(encryption);
+    assert!(proof.verify_elgamal(dst, &pk, &ciphertexts), EEncryptionProofFailed);
+    (VerifiedEncryptedAmount { amount, pk }, VerifiedEncryption { encryption, pk })
 }
+
+/// Range-check every limb of `amounts` (each committed value to `[0, 2^16)`) in one batch and
+/// promote each to a `InRangeVerifiedEncryptedAmount`. The amounts are returned in input order.
+public(package) fun verify_in_range(
+    amounts: vector<VerifiedEncryptedAmount>,
+    range_proofs: RangeProofs,
+    dst: vector<u8>,
+): vector<InRangeVerifiedEncryptedAmount> {
+    let RangeProofs { proofs } = range_proofs;
+    // Collect every limb commitment for the single batched range proof.
+    let mut commitments = vector<Element<G>>[];
+    amounts.do_ref!(|a| U16_LIMBS.do!(|i| commitments.push_back(*a.amount[i].ciphertext())));
+    assert!(verify_range_proofs(&commitments, &proofs, dst), ERangeProofFailed);
+    amounts.map!(|a| {
+        let VerifiedEncryptedAmount { amount, pk } = a;
+        InRangeVerifiedEncryptedAmount { amount, pk }
+    })
+}
+
+/// The four limbs of `ea`, in order.
+public(package) fun limbs(ea: &EncryptedAmount): vector<Encryption> {
+    vector[ea.l0, ea.l1, ea.l2, ea.l3]
+}
+
+public(package) fun encryption(self: &VerifiedEncryption): &Encryption {
+    &self.encryption
+}
+
+public(package) fun encryption_pk(self: &VerifiedEncryption): &PublicKey {
+    &self.pk
+}
+
+public use fun encryption_pk as VerifiedEncryption.pk;
 
 /// The verified encrypted amount carried by `self`.
-public(package) fun amount(self: &WellFormedEncryptedAmount): &EncryptedAmount {
+public(package) fun amount(self: &InRangeVerifiedEncryptedAmount): &EncryptedAmount {
     &self.amount
 }
 
 /// The public key `self.amount()` is encrypted under.
-public(package) fun pk(self: &WellFormedEncryptedAmount): &PublicKey {
+public(package) fun pk(self: &InRangeVerifiedEncryptedAmount): &PublicKey {
     &self.pk
 }
 
@@ -170,7 +174,7 @@ public(package) fun limb(ea: &EncryptedAmount, i: u64): &Encryption {
 }
 
 /// The two u32-limb `Encryption`s `(l0 + 2^16 l1, l2 + 2^16 l3)` (ciphertext and handle alike).
-public(package) fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
+fun collapse_to_u32(ea: &EncryptedAmount): vector<Encryption> {
     let two_16 = scalar_from_u64(1 << 16);
     vector[fold_encryption(&ea.l0, &ea.l1, &two_16), fold_encryption(&ea.l2, &ea.l3, &two_16)]
 }
@@ -183,7 +187,7 @@ public(package) fun collapse(ea: &EncryptedAmount): Encryption {
 
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
 public(package) fun verify_equal(
-    ea1: &WellFormedEncryptedAmount,
+    ea1: &InRangeVerifiedEncryptedAmount,
     ea2: &Encryption,
     proof: &DdhProof,
     dst: vector<u8>,
@@ -230,11 +234,11 @@ public(package) fun try_rekey(
     }
 }
 
-/// Sum of the collapsed Pedersen commitments of `amounts` (ciphertext components only).
-public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>): Element<G> {
+/// Sum of the collapsed ciphertexts of `amounts` (the `r*g + m*h` component, not the handles).
+public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<G> {
     let mut cs = vector::tabulate!(U16_LIMBS, |_| g_identity());
-    amounts.do_ref!(|wfea| U16_LIMBS.do!(|j| {
-        let sum = g_add(&cs[j], wfea.amount[j].ciphertext());
+    amounts.do_ref!(|ea| U16_LIMBS.do!(|j| {
+        let sum = g_add(&cs[j], ea[j].ciphertext());
         *cs.borrow_mut(j) = sum;
     }));
     let two_16 = scalar_from_u64(1 << 16);
@@ -243,9 +247,9 @@ public(package) fun sum_commitments(amounts: &vector<WellFormedEncryptedAmount>)
     fold(&lo, &hi, &scalar_from_u64(1 << 32))
 }
 
-/// This amount's two u32-limb ciphertext commitments (`Ǎ_l = C_{2l} + 2^16 C_{2l+1}`) — the shared,
-/// key-independent commitments an auditor pairs with its own decryption handles.
-public(package) fun commitments_u32(self: &WellFormedEncryptedAmount): vector<Element<G>> {
+/// This amount's two u32-limb ciphertexts (`Ǎ_l = C_{2l} + 2^16 C_{2l+1}`) — the shared,
+/// key-independent components an auditor pairs with its own decryption handles.
+public(package) fun ciphertexts_u32(self: &InRangeVerifiedEncryptedAmount): vector<Element<G>> {
     self.amount.collapse_to_u32().map!(|e| *e.ciphertext())
 }
 
@@ -287,16 +291,17 @@ public(package) fun add_assign(a: &mut EncryptedAmount, b: &EncryptedAmount) {
     a.l3 = a[3].add(&b[3]);
 }
 
-/// Verify every limb is in `[0, 2^16)` via one Bulletproof per chunk of `batch_sizes`. An empty
-/// `range_proofs` vector skips the range check entirely (test sentinel).
-fun verify_well_formed_range_proofs(
-    amounts: &vector<EncryptedAmount>,
+/// Verify every `commitment` opens to a value in `[0, 2^16)` via one Bulletproof per chunk of
+/// `batch_sizes`. An empty `range_proofs` skips the check — only reachable via the `#[test_only]`
+/// `assume_range_checked`, since `new_range_proofs` rejects empty input in production.
+fun verify_range_proofs(
+    commitments: &vector<Element<G>>,
     range_proofs: &vector<vector<u8>>,
     dst: vector<u8>,
 ): bool {
-    // For testing only: no range proofs skips the range check.
     if (range_proofs.is_empty()) return true;
-    let sizes = batch_sizes(amounts.length());
+    let sizes = batch_sizes(commitments.length());
+    if (range_proofs.length() != sizes.length()) return false;
     let mut offset = 0;
     sizes.zip_map_ref!(range_proofs, |chunk, range_proof| {
         let chunk = *chunk;
@@ -305,23 +310,20 @@ fun verify_well_formed_range_proofs(
         rangeproofs::verify_bulletproofs_with_dst_ristretto255(
             range_proof,
             LIMB_BITS,
-            &vector::tabulate!(
-                U16_LIMBS * chunk,
-                |j| *amounts[start + j / U16_LIMBS][j % U16_LIMBS].ciphertext(),
-            ),
+            &vector::tabulate!(chunk, |j| commitments[start + j]),
             &dst,
             BULLETPROOFS_VERSION,
         )
     }).all!(|ok| *ok)
 }
 
-/// Canonical Bulletproof chunking for `n` amounts: greedily take as many `MAX_BATCH_SIZE` chunks
-/// as fit, then halve the chunk size and repeat until `n` is exhausted. Examples: n=7 → [4, 2, 1];
-/// n=8 → [8]; n=16 → [8, 8]; n=20 → [8, 8, 4]; n=0 → [].
+/// Canonical Bulletproof chunking for `n` encryptions (one commitment each): greedily take as many
+/// `MAX_RANGE_PROOF_BATCH_SIZE` chunks as fit, then halve the chunk size and repeat until `n` is exhausted.
+/// Examples (`MAX_RANGE_PROOF_BATCH_SIZE = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
 fun batch_sizes(n: u64): vector<u64> {
     let mut sizes = vector[];
     let mut remaining = n;
-    let mut chunk = MAX_BATCH_SIZE;
+    let mut chunk = MAX_RANGE_PROOF_BATCH_SIZE;
     while (remaining > 0) {
         while (remaining >= chunk) {
             sizes.push_back(chunk);
@@ -332,65 +334,19 @@ fun batch_sizes(n: u64): vector<u64> {
     sizes
 }
 
-/// Verify each limb of each `amounts[i]` is a valid ElGamal encryption under `pks[i]`.
-fun verify_well_formed_knowledge(
-    amounts: &vector<EncryptedAmount>,
-    proofs: &vector<ElGamalProof>,
-    pks: &vector<PublicKey>,
-    dst: vector<u8>,
-): bool {
-    let n = amounts.length();
-    let mut i = 0;
-    while (i < n) {
-        let ea = &amounts[i];
-        let limbs = vector[ea[0], ea[1], ea[2], ea[3]];
-        if (!proofs[i].verify_elgamal(dst, &pks[i], &limbs)) return false;
-        i = i + 1;
-    };
-    true
-}
-
 #[test_only]
 use contra::nizk::prove_elgamal;
-#[test_only]
-use contra::twisted_elgamal::encrypt_trivial_for_testing;
 
+/// `RangeProofs` that skips the range check — Move tests can't produce Bulletproof bytes, so they
+/// assume the range instead of proving it. Not reachable from production (`new_range_proofs` rejects
+/// the empty set this holds).
 #[test_only]
-public fun total_consistency_proof_for_testing(
-    dst: vector<u8>,
-    value: u64,
-    r: u64,
-    pk: &Element<G>,
-): ElGamalProof {
-    let enc = encrypt_trivial_for_testing(value, pk, r);
-    prove_elgamal(
-        dst,
-        pk,
-        &vector[enc],
-        &vector[value],
-        &vector[r],
-        &scalar_from_u64(1234),
-        &scalar_from_u64(5678),
-    )
+public fun assume_range_checked(): RangeProofs {
+    RangeProofs { proofs: vector[] }
 }
 
-/// Test-only `WellFormedProof` with no range proofs — an empty `range_proofs` vector is the
-/// sentinel that tells `verify` to skip the range check. Move tests can't produce real
-/// Bulletproof bytes; they bound limbs out of band.
-#[test_only]
-public fun new_well_formed_proof_for_testing(
-    consistency_proofs: vector<ElGamalProof>,
-): WellFormedProof {
-    WellFormedProof { range_proofs: vector[], consistency_proofs }
-}
-
-#[test_only]
-public fun new_well_formed_proof_singleton_for_testing(
-    consistency_proof: ElGamalProof,
-): WellFormedProof {
-    new_well_formed_proof_for_testing(vector[consistency_proof])
-}
-
+/// Collapsed single-`Encryption` view of `ea` — the `public(package)` `collapse` exposed to
+/// downstream test packages.
 #[test_only]
 public fun collapse_for_testing(ea: &EncryptedAmount): Encryption {
     ea.collapse()
@@ -430,6 +386,35 @@ public fun consistency_proof_for_testing(
         &vector[e0, e1, e2, e3],
         &vector[amount as u64, 0, 0, 0],
         &vector[blinding, b1, b2, b3],
+        &scalar_from_u64(1111),
+        &scalar_from_u64(2222),
+    )
+}
+
+#[test_only]
+public fun sender_consistency_proof_for_testing(
+    dst: vector<u8>,
+    new_balance: &EncryptedAmount,
+    new_balance_amount: u16,
+    new_balance_blinding: u64,
+    total: &Encryption,
+    total_value: u64,
+    total_blinding: u64,
+    pk: &Element<G>,
+): ElGamalProof {
+    let e0 = new_balance[0];
+    let e1 = new_balance[1];
+    let e2 = new_balance[2];
+    let e3 = new_balance[3];
+    let b1 = if (*e1.decryption_handle() == g_identity()) 0 else new_balance_blinding;
+    let b2 = if (*e2.decryption_handle() == g_identity()) 0 else new_balance_blinding;
+    let b3 = if (*e3.decryption_handle() == g_identity()) 0 else new_balance_blinding;
+    prove_elgamal(
+        dst,
+        pk,
+        &vector[e0, e1, e2, e3, *total],
+        &vector[new_balance_amount as u64, 0, 0, 0, total_value],
+        &vector[new_balance_blinding, b1, b2, b3, total_blinding],
         &scalar_from_u64(1111),
         &scalar_from_u64(2222),
     )

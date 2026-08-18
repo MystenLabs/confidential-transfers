@@ -736,11 +736,12 @@ export interface BatchedTransferArguments {
 	ct: RawTransactionArgument<string>;
 	receiverPks: TransactionArgument;
 	receiverAmounts: TransactionArgument;
-	wellFormedProofs: TransactionArgument;
-	totalSenderHandle: TransactionArgument;
-	consistencyProof: TransactionArgument;
-	seedPoint: TransactionArgument;
+	receiverEncsPok: TransactionArgument;
 	newBalance: TransactionArgument;
+	totalSenderHandle: TransactionArgument;
+	senderEncsPok: TransactionArgument;
+	rangeProofs: TransactionArgument;
+	seedPoint: TransactionArgument;
 	balanceProof: TransactionArgument;
 	auditorPackage: TransactionArgument;
 }
@@ -754,37 +755,40 @@ export interface BatchedTransferOptions {
 				ct: RawTransactionArgument<string>,
 				receiverPks: TransactionArgument,
 				receiverAmounts: TransactionArgument,
-				wellFormedProofs: TransactionArgument,
-				totalSenderHandle: TransactionArgument,
-				consistencyProof: TransactionArgument,
-				seedPoint: TransactionArgument,
+				receiverEncsPok: TransactionArgument,
 				newBalance: TransactionArgument,
+				totalSenderHandle: TransactionArgument,
+				senderEncsPok: TransactionArgument,
+				rangeProofs: TransactionArgument,
+				seedPoint: TransactionArgument,
 				balanceProof: TransactionArgument,
 				auditorPackage: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
 /**
- * Start a batched transfer from `sender`. `receiver_amounts[i]` is the transferred
- * value re-encrypted under `receiver_pks[i]`. `well_formed_proofs` is a single
- * batched `WellFormedProof` covering `receiver_amounts ++ [new_balance]` under
- * `receiver_pks ++ [sender_pk]` — one aggregate Bulletproof for the whole
- * transfer. `total_sender_handle` is the single sender-keyed decryption handle for
- * the transfer total; `consistency_proof` proves it well-formed and
- * `balance_proof` proves the sender's balance drops by exactly that total (see
- * `balance::try_split_batch`). `seed_point` (= `P`) is forwarded to the events so
- * the sender can re-derive each transfer's blinding and recover its outgoing
- * amounts; it is not otherwise verified on chain.
+ * Initiate a batched transfer from `sender` to multiple receivers.
+ *
+ * `receiver_amounts[i]` is the transferred value re-encrypted under
+ * `receiver_pks[i]` and proven valid by `receiver_encs_pok[i]`; `sender_encs_pok`
+ * folds the `new_balance` limbs and the transfer total (under `sender`'s key) into
+ * one proof; `range_proofs` range-check every limb; and `total_sender_handle` is
+ * the single sender-keyed decryption handle for the total (its commitment is
+ * reconstructed on chain from the receiver amounts). The amounts are verified
+ * against `sender`'s own key and session (see `verify_transfer_amounts`), so they
+ * are bound to this transfer by construction. `balance_proof` proves the sender's
+ * balance drops by exactly the transfer total (see `balance::try_split_batch`).
+ * `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
+ * transfer's blinding and recover its outgoing amounts; it is not otherwise
+ * verified on chain.
  *
  * Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package`
- * must be `some` and carry one entry per auditor key. See
- * `auditors::verify_transfer` for details.
+ * must be `some`. See `auditors::verify_transfer` for details.
  *
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
- * `BalanceProofFailed`. Aborts if `well_formed_proofs`, the auditor requirement,
- * or `consistency_proof` fails. Call `add` once per receiver, in
- * `receiver_amounts` order, then `finalize`. Authorized by any `Auth<T>` for
- * `sender.owner`.
+ * `BalanceProofFailed`. Aborts if a proof or the auditor requirement fails. Call
+ * `add` once per receiver, in `receiver_amounts` order, then `finalize`.
+ * Authorized by any `Auth<T>` for `sender.owner`.
  */
 export function batchedTransfer(options: BatchedTransferOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -793,6 +797,7 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		null,
 		null,
 		'0x2::deny_list::DenyList',
+		'vector<null>',
 		'vector<null>',
 		'vector<null>',
 		null,
@@ -809,11 +814,12 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'ct',
 		'receiverPks',
 		'receiverAmounts',
-		'wellFormedProofs',
-		'totalSenderHandle',
-		'consistencyProof',
-		'seedPoint',
+		'receiverEncsPok',
 		'newBalance',
+		'totalSenderHandle',
+		'senderEncsPok',
+		'rangeProofs',
+		'seedPoint',
 		'balanceProof',
 		'auditorPackage',
 	];
@@ -953,7 +959,8 @@ export interface UpdateActiveBalanceArguments {
 	account: RawTransactionArgument<string>;
 	auth: TransactionArgument;
 	newBalance: TransactionArgument;
-	newBalanceProof: TransactionArgument;
+	newBalancePok: TransactionArgument;
+	newBalanceRangeProofs: TransactionArgument;
 	balanceProof: TransactionArgument;
 }
 export interface UpdateActiveBalanceOptions {
@@ -964,7 +971,8 @@ export interface UpdateActiveBalanceOptions {
 				account: RawTransactionArgument<string>,
 				auth: TransactionArgument,
 				newBalance: TransactionArgument,
-				newBalanceProof: TransactionArgument,
+				newBalancePok: TransactionArgument,
+				newBalanceRangeProofs: TransactionArgument,
 				balanceProof: TransactionArgument,
 		  ];
 	typeArguments: [string];
@@ -977,8 +985,15 @@ export interface UpdateActiveBalanceOptions {
  */
 export function updateActiveBalance(options: UpdateActiveBalanceOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
-	const argumentsTypes = [null, null, null, null, null] satisfies (string | null)[];
-	const parameterNames = ['account', 'auth', 'newBalance', 'newBalanceProof', 'balanceProof'];
+	const argumentsTypes = [null, null, null, null, null, null] satisfies (string | null)[];
+	const parameterNames = [
+		'account',
+		'auth',
+		'newBalance',
+		'newBalancePok',
+		'newBalanceRangeProofs',
+		'balanceProof',
+	];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,
@@ -994,7 +1009,8 @@ export interface UnwrapArguments {
 	ct: RawTransactionArgument<string>;
 	pool: RawTransactionArgument<string>;
 	newBalance: TransactionArgument;
-	newBalanceProof: TransactionArgument;
+	newBalanceConsistencyProof: TransactionArgument;
+	newBalanceRangeProofs: TransactionArgument;
 	amount: RawTransactionArgument<number | bigint>;
 	balanceProof: TransactionArgument;
 }
@@ -1008,7 +1024,8 @@ export interface UnwrapOptions {
 				ct: RawTransactionArgument<string>,
 				pool: RawTransactionArgument<string>,
 				newBalance: TransactionArgument,
-				newBalanceProof: TransactionArgument,
+				newBalanceConsistencyProof: TransactionArgument,
+				newBalanceRangeProofs: TransactionArgument,
 				amount: RawTransactionArgument<number | bigint>,
 				balanceProof: TransactionArgument,
 		  ];
@@ -1035,6 +1052,7 @@ export function unwrap(options: UnwrapOptions) {
 		null,
 		null,
 		null,
+		null,
 		'u64',
 		null,
 	] satisfies (string | null)[];
@@ -1044,7 +1062,8 @@ export function unwrap(options: UnwrapOptions) {
 		'ct',
 		'pool',
 		'newBalance',
-		'newBalanceProof',
+		'newBalanceConsistencyProof',
+		'newBalanceRangeProofs',
 		'amount',
 		'balanceProof',
 	];
@@ -1063,7 +1082,8 @@ export interface TryUnwrapArguments {
 	ct: RawTransactionArgument<string>;
 	pool: RawTransactionArgument<string>;
 	newBalance: TransactionArgument;
-	newBalanceProof: TransactionArgument;
+	newBalanceConsistencyProof: TransactionArgument;
+	newBalanceRangeProofs: TransactionArgument;
 	amount: RawTransactionArgument<number | bigint>;
 	balanceProof: TransactionArgument;
 }
@@ -1077,7 +1097,8 @@ export interface TryUnwrapOptions {
 				ct: RawTransactionArgument<string>,
 				pool: RawTransactionArgument<string>,
 				newBalance: TransactionArgument,
-				newBalanceProof: TransactionArgument,
+				newBalanceConsistencyProof: TransactionArgument,
+				newBalanceRangeProofs: TransactionArgument,
 				amount: RawTransactionArgument<number | bigint>,
 				balanceProof: TransactionArgument,
 		  ];
@@ -1097,6 +1118,7 @@ export function tryUnwrap(options: TryUnwrapOptions) {
 		null,
 		null,
 		null,
+		null,
 		'u64',
 		null,
 	] satisfies (string | null)[];
@@ -1106,7 +1128,8 @@ export function tryUnwrap(options: TryUnwrapOptions) {
 		'ct',
 		'pool',
 		'newBalance',
-		'newBalanceProof',
+		'newBalanceConsistencyProof',
+		'newBalanceRangeProofs',
 		'amount',
 		'balanceProof',
 	];
@@ -1162,7 +1185,7 @@ export interface SetBalanceByIssuerOptions {
  * confidential tokens in circulation does not match the amount of coins in the
  * pool. It is the responsibility of the caller to ensure consistency is maintained
  * when using this function. The `upper_bound` is set to 1, so the caller is
- * responsible for ensuring that the `EncryptedAmount` is well-formed.
+ * responsible for ensuring that the `EncryptedAmount` is in range.
  */
 export function setBalanceByIssuer(options: SetBalanceByIssuerOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

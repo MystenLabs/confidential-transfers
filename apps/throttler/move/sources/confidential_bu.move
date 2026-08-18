@@ -19,8 +19,8 @@ module throttler::confidential_bu;
 
 use contra::{
     contra::{Self, Account, ConfidentialToken, ManagementCap, Pool, TokenRegistry},
-    encrypted_amount::{EncryptedAmount, WellFormedProof},
-    nizk::DdhProof
+    encrypted_amount::{EncryptedAmount, RangeProofs},
+    nizk::{DdhProof, ElGamalProof}
 };
 use sui::{
     balance::{Self, Balance},
@@ -162,7 +162,8 @@ public fun unwrap(
     contra_pool: &mut Pool<BU>,
     pool: &mut ThrottledPool,
     new_balance: EncryptedAmount,
-    new_balance_proof: WellFormedProof,
+    new_balance_consistency_proof: ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
     clock: &Clock,
@@ -178,7 +179,8 @@ public fun unwrap(
         deny_list,
         contra_pool,
         new_balance,
-        new_balance_proof,
+        new_balance_consistency_proof,
+        new_balance_range_proofs,
         amount,
         balance_proof,
         ctx,

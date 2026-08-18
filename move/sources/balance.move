@@ -10,12 +10,12 @@ use contra::{
     encrypted_amount::{
         Self,
         EncryptedAmount,
-        WellFormedEncryptedAmount,
+        VerifiedEncryption,
+        InRangeVerifiedEncryptedAmount,
         from_value,
-        sum_commitments,
     },
-    nizk::{DdhProof, ElGamalProof, verify_elgamal},
-    twisted_elgamal::{Self, Encryption, PublicKey}
+    nizk::DdhProof,
+    twisted_elgamal::{Encryption, PublicKey}
 };
 use sui::{
     balance::withdraw_funds_from_object,
@@ -26,10 +26,8 @@ use sui::{
 
 // === Errors ===
 
-/// `try_split_batch`: consistency proof failed.
-const EConsistencyProofFailed: u64 = 0;
 /// A value carried into the balance was encrypted under a different key.
-const EInvalidPublicKey: u64 = 1;
+const EInvalidPublicKey: u64 = 0;
 
 // === Structs ===
 
@@ -47,7 +45,7 @@ public struct PublicCoin<phantom T> has store {
 
 /// Linear wrapper around a verified encrypted amount.
 public struct EncryptedCoin<phantom T> {
-    amount: WellFormedEncryptedAmount,
+    amount: InRangeVerifiedEncryptedAmount,
 }
 
 // === PublicCoin / EncryptedCoin ===
@@ -89,7 +87,7 @@ public(package) fun value<T>(self: &PublicCoin<T>): u64 {
 }
 
 /// The verified encrypted amount carried by `coin`.
-public(package) fun amount<T>(coin: &EncryptedCoin<T>): &WellFormedEncryptedAmount {
+public(package) fun amount<T>(coin: &EncryptedCoin<T>): &InRangeVerifiedEncryptedAmount {
     &coin.amount
 }
 
@@ -160,7 +158,7 @@ public(package) fun merge_public<T>(self: &mut EncryptedBalance<T>, coin: Public
 public(package) fun try_split_to_public<T>(
     self: &mut EncryptedBalance<T>,
     sender_pk: &PublicKey,
-    new_balance: WellFormedEncryptedAmount,
+    new_balance: InRangeVerifiedEncryptedAmount,
     value: u64,
     proof: &DdhProof,
     dst: vector<u8>,
@@ -176,45 +174,28 @@ public(package) fun try_split_to_public<T>(
     }
 }
 
-/// Split receiver-keyed coins off `self` for a batched transfer. Returns `some(coins)` on a
-/// verifying balance proof, else `none`. Aborts if `new_balance.pk() != sender_pk` or the
-/// consistency proof fails.
+/// Split receiver-keyed coins off `self` for a batched transfer. `receiver_amounts` are the
+/// per-receiver amounts and `total_sender` is the sender-keyed transfer total. Returns `some(coins)`
+/// on a verifying balance proof, else `none`. Aborts if `new_balance` or `total_sender` is not keyed
+/// to `sender_pk`.
 ///
-/// The transferred total's commitment is reconstructed from `receiver_amounts` (sender and receiver
-/// commitments match). Only its handle `total_sender_handle` is sent, proven by `consistency_proof`.
-///
-/// TODO: fold `consistency_proof` and the sender's new-balance limb consistency (both under
-/// `sender_pk`) into one 5-ciphertext `ElGamalProof`, saving a constant `2G+2F`
-/// + 5 muls + 1 FS hash per transfer.
+/// `total_sender`'s commitment must equal the sum of the receiver commitments — the invariant that
+/// binds the amount leaving `self` to what the receivers get. This is **not** checked here - the caller
+/// (`verify_transfer_amounts`) builds `total_sender` from the receiver sum, so it holds by construction.
+/// TODO: consider enforcing this structurally so `try_split_batch` need not trust the caller.
 public(package) fun try_split_batch<T>(
     self: &mut EncryptedBalance<T>,
     sender_pk: &PublicKey,
-    new_balance: WellFormedEncryptedAmount,
-    receiver_amounts: vector<WellFormedEncryptedAmount>,
-    total_sender_handle: Element<G>,
-    consistency_proof: ElGamalProof,
-    consistency_dst: vector<u8>,
+    new_balance: InRangeVerifiedEncryptedAmount,
+    receiver_amounts: vector<InRangeVerifiedEncryptedAmount>,
+    total_sender: VerifiedEncryption,
     balance_proof: &DdhProof,
     balance_dst: vector<u8>,
 ): Option<vector<EncryptedCoin<T>>> {
-    assert!(new_balance.pk() == sender_pk, EInvalidPublicKey);
-
-    let total_sender = twisted_elgamal::new(
-        sum_commitments(&receiver_amounts),
-        total_sender_handle,
-    );
-    assert!(
-        // Check that the total sender is a valid ElGamal encryption under the sender public key.
-        consistency_proof.verify_elgamal(
-            consistency_dst,
-            sender_pk,
-            &vector[total_sender],
-        ),
-        EConsistencyProofFailed,
-    );
+    assert!(new_balance.pk() == sender_pk && total_sender.pk() == sender_pk, EInvalidPublicKey);
 
     let mut expected = self.collapse();
-    expected.sub_assign(&total_sender);
+    expected.sub_assign(total_sender.encryption());
     if (new_balance.verify_equal(&expected, balance_proof, balance_dst)) {
         self.overwrite(&new_balance);
         option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
@@ -228,7 +209,7 @@ public(package) fun try_split_batch<T>(
 public(package) fun try_update<T>(
     self: &mut EncryptedBalance<T>,
     sender_pk: &PublicKey,
-    new_balance: WellFormedEncryptedAmount,
+    new_balance: InRangeVerifiedEncryptedAmount,
     proof: &DdhProof,
     dst: vector<u8>,
 ): bool {
@@ -289,7 +270,7 @@ public(package) fun set_zero_unchecked<T>(self: &mut PublicCoin<T>, _t: &mut Tre
 // === Private functions ===
 
 /// Overwrite `self` with the verified amount `new`.
-fun overwrite<T>(self: &mut EncryptedBalance<T>, new: &WellFormedEncryptedAmount) {
+fun overwrite<T>(self: &mut EncryptedBalance<T>, new: &InRangeVerifiedEncryptedAmount) {
     self.amount = *new.amount();
     self.upper_bound = 1;
 }

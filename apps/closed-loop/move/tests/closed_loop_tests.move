@@ -100,13 +100,6 @@ fun closed_loop_roundtrip() {
     // commitment from the receiver amounts; only the single decryption handle is sent.
     let total_sender_enc = encrypt_trivial_for_testing(50, &pk_alice, r);
     let total_sender_handle = total_sender_enc.decryption_handle_for_testing();
-    // Single consistency proof on the collapsed sender total (value 50, blinding r) under pk_alice.
-    let consistency_proof = encrypted_amount::total_consistency_proof_for_testing(
-        alice_account.derive_dst_for_testing<PBU>(protocol_id_elgamal()),
-        50,
-        r,
-        &pk_alice,
-    );
     let new_balance_encryption = new_balance.collapse_for_testing();
     let alice_old_balance = alice_account.balance<PBU>();
     let sum_proof = nizk::sum_proof_for_testing(
@@ -118,10 +111,20 @@ fun closed_loop_roundtrip() {
     );
 
     let alice_elgamal_dst = alice_account.derive_dst_for_testing<PBU>(protocol_id_elgamal());
-    let well_formed_proofs = encrypted_amount::new_well_formed_proof_for_testing(vector[
+    // One folded proof per receiver, plus one folding the new-balance limbs and the total.
+    let receiver_encs_pok = vector[
         consistency_proof_for_testing(alice_elgamal_dst, 50, &taken_amount, r, &pk_bob),
-        consistency_proof_for_testing(alice_elgamal_dst, 50, &new_balance, 10097, &pk_alice),
-    ]);
+    ];
+    let sender_encs_pok = encrypted_amount::sender_consistency_proof_for_testing(
+        alice_elgamal_dst,
+        &new_balance,
+        50,
+        10097,
+        &total_sender_enc,
+        50,
+        r,
+        &pk_alice,
+    );
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     alice_account
@@ -131,11 +134,12 @@ fun closed_loop_roundtrip() {
             &deny_list,
             vector[twisted_elgamal::public_key(pk_bob)],
             vector[taken_amount],
-            well_formed_proofs,
-            total_sender_handle,
-            consistency_proof,
-            ristretto255::g_identity(),
+            receiver_encs_pok,
             new_balance,
+            total_sender_handle,
+            sender_encs_pok,
+            encrypted_amount::assume_range_checked(),
+            ristretto255::g_identity(),
             sum_proof,
             option::none(),
         )
@@ -164,14 +168,12 @@ fun closed_loop_roundtrip() {
         &unwrap_amount_trivial,
         &sk_bob,
     );
-    let new_bob_balance_proof = encrypted_amount::new_well_formed_proof_singleton_for_testing(
-        consistency_proof_for_testing(
-            bob_account.derive_dst_for_testing<PBU>(protocol_id_elgamal()),
-            0,
-            &new_bob_balance,
-            0,
-            &pk_bob,
-        ),
+    let new_bob_balance_pok = consistency_proof_for_testing(
+        bob_account.derive_dst_for_testing<PBU>(protocol_id_elgamal()),
+        0,
+        &new_bob_balance,
+        0,
+        &pk_bob,
     );
     let pbu_coin_out = bob_account.unwrap(
         &auth,
@@ -179,7 +181,8 @@ fun closed_loop_roundtrip() {
         &deny_list,
         &mut contra_pool,
         new_bob_balance,
-        new_bob_balance_proof,
+        new_bob_balance_pok,
+        encrypted_amount::assume_range_checked(),
         50,
         &bob_balance_proof,
         scenario.ctx(),

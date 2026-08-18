@@ -4,7 +4,7 @@
 module contra::auditors;
 
 use contra::{
-    encrypted_amount::{WellFormedEncryptedAmount, commitments_u32},
+    encrypted_amount::{InRangeVerifiedEncryptedAmount, ciphertexts_u32},
     nizk::{ElGamalProof, verify_elgamal},
     twisted_elgamal::{Self, PublicKey, Encryption}
 };
@@ -85,7 +85,7 @@ public(package) fun update(
 /// key that accepted them, or `none` when the transfer carries no auditor data.
 public(package) fun verify_transfer(
     auditors: &Auditors,
-    receiver_amounts: &vector<WellFormedEncryptedAmount>,
+    receiver_amounts: &vector<InRangeVerifiedEncryptedAmount>,
     auditor_package: Option<AuditorPackage>,
     dst: vector<u8>,
 ): Option<VerifiedAuditorHandles> {
@@ -151,11 +151,11 @@ fun verify_under(
 
 fun build_auditor_encryptions(
     handles: &vector<vector<Element<G>>>,
-    receiver_amounts: &vector<WellFormedEncryptedAmount>,
+    receiver_amounts: &vector<InRangeVerifiedEncryptedAmount>,
 ): vector<Encryption> {
     let mut encryptions = vector<Encryption>[];
     receiver_amounts.length().do!(|r| {
-        let commitments = receiver_amounts[r].commitments_u32();
+        let commitments = receiver_amounts[r].ciphertexts_u32();
         U32_LIMBS.do!(
             |l| encryptions.push_back(twisted_elgamal::new(commitments[l], handles[r][l])),
         );
