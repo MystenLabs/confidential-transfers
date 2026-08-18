@@ -120,11 +120,6 @@ const PERMISSIONED_REGISTER: u8 = 0;
 const PERMISSIONED_WRAP: u8 = 1;
 const PERMISSIONED_UNWRAP: u8 = 2;
 
-/// Protocol ID for Fiat-Shamir domain separation of the auditor proof. The ids of the proofs over
-/// an account's balance belong to `balance`; protocol-id `100` is reserved by the ts-sdk for
-/// `PROTOCOL_VERIFIED_DEC`.
-const DST_AUDITOR_ELGAMAL: u8 = 0x07;
-
 // === Registries ===
 
 /// Registry of tokens for confidential transactions. Each `ConfidentialToken`'s
@@ -564,7 +559,7 @@ public fun batched_transfer<T>(
         .verify_transfer(
             &receiver_amounts,
             auditor_package,
-            session_id.dst(DST_AUDITOR_ELGAMAL),
+            session_id,
         );
 
     let withdrawn = sender
@@ -976,15 +971,6 @@ fun session_id<T>(account: &Account): vector<u8> {
     derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>()).to_bytes().take(20)
 }
 
-/// 21-byte Fiat-Shamir DST `session_id || protocol_id`.
-fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
-    let mut bytes = session_id;
-    bytes.push_back(protocol_id);
-    bytes
-}
-
-use fun dst as vector.dst;
-
 // === Syntactic Sugar ===
 
 #[syntax(index)]
@@ -1000,7 +986,7 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 // === Test Helpers ===
 
 #[test_only]
-use contra::twisted_elgamal::Encryption;
+use contra::{auditors, twisted_elgamal::Encryption};
 
 #[test_only]
 public fun protocol_id_ddh(): u8 { balance::protocol_id_ddh() }
@@ -1012,7 +998,7 @@ public fun protocol_id_elgamal(): u8 { balance::protocol_id_elgamal() }
 public fun protocol_id_batch_ddh(): u8 { balance::protocol_id_batch_ddh() }
 
 #[test_only]
-public fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
+public fun protocol_id_auditor_elgamal(): u8 { auditors::protocol_id_auditor_elgamal() }
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {
@@ -1058,5 +1044,7 @@ public fun token_public_key<T>(account: &Account): Element<G> {
 
 #[test_only]
 public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
-    account.session_id<T>().dst(protocol_id)
+    let mut bytes = account.session_id<T>();
+    bytes.push_back(protocol_id);
+    bytes
 }
