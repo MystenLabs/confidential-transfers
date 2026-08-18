@@ -184,6 +184,7 @@ public fun unwrap(
         new_balance_range_proofs,
         amount,
         balance_proof,
+        option::none(), // No approval authority is configured for this token.
         ctx,
     );
     assert!(coin.value() == amount, EAmountMismatch);
