@@ -24,6 +24,11 @@ use sui::{
 #[test_only]
 use sui::ristretto255::scalar_add;
 
+// === Errors ===
+
+/// `verify_elgamal`: an empty batch is a vacuous statement, so it is never a valid one to verify.
+const EEmptyBatch: u64 = 0;
+
 /// A shared-witness DDH proof of knowledge: one `w` with `images[k] = w * bases[k]` for all `k`.
 public struct DdhProof has drop {
     commitments: vector<Element<G>>,
@@ -78,16 +83,20 @@ public(package) fun verify_elgamal(
     pk: &PublicKey,
     encryptions: &vector<Encryption>,
 ): bool {
+    let n = encryptions.length();
+    assert!(n > 0, EEmptyBatch);
+
     let pk = pk.as_element();
     let g = twisted_elgamal::g();
     let h = twisted_elgamal::h();
     // Can skip hashing fixed g, h (left as a defense in depth)
     let c = challenge_elgamal(dst, &g, &h, pk, encryptions, &proof.a, &proof.b);
 
-    let mut agg_c = g_identity();
-    let mut agg_d = g_identity();
-    let mut power = scalar_from_u64(1);
-    encryptions.do_ref!(|e| {
+    let mut agg_c = *encryptions[0].ciphertext();
+    let mut agg_d = *encryptions[0].decryption_handle();
+    let mut power = c;
+    (n - 1).do!(|k| {
+        let e = &encryptions[k + 1];
         agg_c = g_add(&agg_c, &g_mul(&power, e.ciphertext()));
         agg_d = g_add(&agg_d, &g_mul(&power, e.decryption_handle()));
         power = scalar_mul(&power, &c);
