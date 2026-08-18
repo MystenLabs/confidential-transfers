@@ -536,9 +536,8 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
-    let session_id = sender.balance.session_id();
 
-    let (total_sender, receiver_amounts, new_balance) = sender
+    let transfer = sender
         .balance
         .verify_transfer_amounts(
             receiver_pks,
@@ -553,19 +552,12 @@ public fun batched_transfer<T>(
     let auditor_data = ct
         .auditors
         .verify_transfer(
-            &receiver_amounts,
+            transfer.receiver_amounts(),
             auditor_package,
-            session_id,
+            sender.balance.session_id(),
         );
 
-    let withdrawn = sender
-        .balance
-        .try_withdraw_encrypted(
-            receiver_amounts,
-            new_balance,
-            total_sender,
-            &balance_proof,
-        );
+    let withdrawn = sender.balance.try_withdraw_encrypted(transfer, &balance_proof);
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();

@@ -73,6 +73,16 @@ public struct EncryptedCoin<phantom T> {
     amount: InRangeVerifiedEncryptedAmount,
 }
 
+/// A batched transfer out of an `EncryptedBalance<T>`, verified and ready to execute. Built only by
+/// `verify_transfer_amounts` and consumed only by `try_withdraw_encrypted`; holding no abilities, it
+/// can be neither stored nor dropped nor taken apart, so `total_sender` can only ever reach the
+/// withdrawal paired with the receiver amounts it was summed from.
+public struct VerifiedTransfer<phantom T> {
+    receiver_amounts: vector<InRangeVerifiedEncryptedAmount>,
+    new_balance: InRangeVerifiedEncryptedAmount,
+    total_sender: VerifiedEncryption,
+}
+
 // === Construction and views ===
 
 /// An empty `EncryptedBalance` with every amount encrypted under `pk`, binding every proof it
@@ -176,7 +186,8 @@ public(package) fun verify_amount<T>(
 /// is supplied; that is what binds the amount leaving `self` to what the receivers are credited.
 ///
 /// Split from `try_withdraw_encrypted` so the caller can inspect the verified receiver amounts —
-/// e.g. to check a transfer's auditor data against them — before the balance is touched.
+/// e.g. to check a transfer's auditor data against them — before the balance is touched. The result
+/// carries no abilities, so the caller must hand it straight back to `try_withdraw_encrypted`.
 public(package) fun verify_transfer_amounts<T>(
     self: &EncryptedBalance<T>,
     receiver_pks: vector<PublicKey>,
@@ -186,7 +197,7 @@ public(package) fun verify_transfer_amounts<T>(
     total_sender_handle: Element<G>,
     sender_encs_pok: ElGamalProof,
     range_proofs: RangeProofs,
-): (VerifiedEncryption, vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount) {
+): VerifiedTransfer<T> {
     let n = receiver_amounts.length();
     assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
 
@@ -224,7 +235,15 @@ public(package) fun verify_transfer_amounts<T>(
         self.session_id.dst(DST_RANGE_PROOF_16),
     );
     let new_balance = receiver_amounts.pop_back();
-    (total_sender, receiver_amounts, new_balance)
+    VerifiedTransfer { receiver_amounts, new_balance, total_sender }
+}
+
+/// The verified receiver amounts of `self`, for a caller with its own check to run against them —
+/// the per-transfer auditor data — before the transfer is executed.
+public(package) fun receiver_amounts<T>(
+    self: &VerifiedTransfer<T>,
+): &vector<InRangeVerifiedEncryptedAmount> {
+    &self.receiver_amounts
 }
 
 // === Withdrawals ===
@@ -249,24 +268,21 @@ public(package) fun try_withdraw_public<T>(
     option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
 }
 
-/// Split the receiver-keyed coins of a batched transfer off the active balance. Returns
+/// Execute a `VerifiedTransfer`, splitting its receiver-keyed coins off the active balance. Returns
 /// `some(coins)` — one per receiver amount, in the same order — on a verifying balance proof, and
-/// `none` (leaving `self` untouched) otherwise. All three verified inputs come from
-/// `verify_transfer_amounts`; aborts with `EInvalidPublicKey` if `new_balance` or `total_sender` was
-/// verified under another key.
+/// `none` (leaving `self` untouched) otherwise.
 ///
-/// `total_sender`'s commitment must equal the sum of the receiver commitments — the invariant that
-/// binds the amount leaving `self` to what the receivers get. This is **not** re-checked here:
-/// `verify_transfer_amounts` builds `total_sender` from the receiver sum, so it holds by
-/// construction.
-/// TODO: consider enforcing this structurally so this function need not trust its caller.
+/// The transfer total's commitment is the sum of the receiver commitments, which is what binds the
+/// amount leaving `self` to what the receivers get. That holds because `VerifiedTransfer` is built
+/// nowhere but `verify_transfer_amounts`, which sums them itself, and cannot be taken apart in
+/// between. What is still checked here is identity, not composition: a transfer verified against a
+/// sibling balance of the same token aborts with `EInvalidPublicKey`.
 public(package) fun try_withdraw_encrypted<T>(
     self: &mut EncryptedBalance<T>,
-    receiver_amounts: vector<InRangeVerifiedEncryptedAmount>,
-    new_balance: InRangeVerifiedEncryptedAmount,
-    total_sender: VerifiedEncryption,
+    transfer: VerifiedTransfer<T>,
     balance_proof: &DdhProof,
 ): Option<vector<EncryptedCoin<T>>> {
+    let VerifiedTransfer { receiver_amounts, new_balance, total_sender } = transfer;
     assert!(total_sender.pk() == &self.pk, EInvalidPublicKey);
     let mut expected = self.active.collapse();
     expected.sub_assign(total_sender.encryption());
