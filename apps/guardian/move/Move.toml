@@ -1,0 +1,9 @@
+[package]
+name = "guardian"
+edition = "2024"
+
+[dependencies]
+contra = { local = "../../../move" }
+
+[environments]
+devnet = "80d3582e"
