@@ -134,12 +134,8 @@ public(package) fun next(
 
 /// Consume the auditor data once every receiver's handles have been popped by `next`. Aborts if any
 /// are left, which would mean a receiver was audited but never credited.
-public(package) fun destroy_empty(auditor_data: Option<VerifiedAuditorHandles>) {
-    if (auditor_data.is_none()) {
-        auditor_data.destroy_none();
-        return
-    };
-    let VerifiedAuditorHandles { handles, pk: _ } = auditor_data.destroy_some();
+public(package) fun destroy_empty(auditor_data: VerifiedAuditorHandles) {
+    let VerifiedAuditorHandles { handles, pk: _ } = auditor_data;
     handles.destroy_empty();
 }
 

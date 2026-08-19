@@ -650,7 +650,7 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
         TransferBatch::Ok { coins, auditor_data, .. } => {
             assert!(coins.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
-            destroy_empty(auditor_data);
+            auditor_data.destroy!(|a| a.destroy_empty());
             true
         },
     }
