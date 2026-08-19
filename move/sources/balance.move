@@ -253,7 +253,7 @@ public(package) fun try_withdraw_public<T>(
 /// nowhere but `verify_transfer_amounts`, which sums them itself, and cannot be taken apart in
 /// between. What is still checked here is identity, not composition: a transfer verified against a
 /// sibling balance of the same token aborts with `EInvalidPublicKey`.
-public(package) fun try_withdraw_encrypted<T>(
+public(package) fun try_withdraw_batch<T>(
     self: &mut EncryptedBalance<T>,
     transfer: VerifiedTransfer<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
