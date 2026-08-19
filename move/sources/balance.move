@@ -170,17 +170,6 @@ public(package) fun verify_amount<T>(
 /// Verify the amounts of a batched transfer out of `self`, returning the receiver amounts paired
 /// with the sender-keyed total they sum to, and the sender's new balance alongside — what
 /// `try_withdraw_encrypted` takes.
-///
-/// `receiver_amounts[i]` is the transferred value re-encrypted under `receiver_pks[i]` and proven a
-/// valid encryption by `receiver_encs_pok[i]`. `sender_encs_pok` folds the `new_balance` limbs and
-/// the transfer total into one proof under `self.pk`, and `range_proofs` range-check every limb of
-/// the receiver amounts and the new balance in one batch. The total's commitment is reconstructed
-/// here from the receiver amounts, so only its sender-keyed decryption handle `total_sender_handle`
-/// is supplied; that is what binds the amount leaving `self` to what the receivers are credited.
-///
-/// Split from `try_withdraw_encrypted` so the caller can inspect the verified receiver amounts —
-/// e.g. to check a transfer's auditor data against them — before the balance is touched. The result
-/// carries no abilities, so the caller must hand it straight back to `try_withdraw_encrypted`.
 public(package) fun verify_transfer_amounts<T>(
     self: &EncryptedBalance<T>,
     receiver_pks: vector<PublicKey>,
