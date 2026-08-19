@@ -4,8 +4,7 @@
 /// An account's confidential holdings of one token, all under one key: the spendable `active`
 /// balance, the `pending` deposits, and the plaintext `public_balance` of wrapped-but-unmerged
 /// coins — deposits land aside and are folded in by `merge_deposits`, so they never mutate the
-/// balance a concurrent transfer is proving against. The module is closed over its own key and
-/// transcript: every amount is checked against `pk`, every proof against a DST it derives itself.
+/// balance a concurrent transfer is proving against.
 module contra::balance;
 
 use contra::{
@@ -31,8 +30,6 @@ const EMismatchedBatchLength: u64 = 3;
 
 // === Constants ===
 
-/// Protocol IDs for Fiat-Shamir domain separation, appended to the caller's session id to form the
-/// transcript of each proof this module verifies. Shared with the ts-sdk.
 const DST_DDH: u8 = 0x01;
 const DST_ELGAMAL: u8 = 0x02;
 const DST_RANGE_PROOF_16: u8 = 0x04;

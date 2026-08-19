@@ -7,9 +7,7 @@
  * spendable `active` balance, the `pending` deposits, and the plaintext
  * `public_balance` of wrapped-but-unmerged coins — deposits land aside and are
  * folded in by `merge_deposits`, so they never mutate the balance a concurrent
- * transfer is proving against. The module is closed over its own key and
- * transcript: every amount is checked against `pk`, every proof against a DST it
- * derives itself.
+ * transfer is proving against.
  */
 
 import { bcs } from '@mysten/sui/bcs';
