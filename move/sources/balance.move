@@ -134,8 +134,7 @@ fun verify_amount<T>(
 
 /// On a verifying `balance_proof` that the active balance is `new_balance` plus `amount`, lower the
 /// active balance to `new_balance` and return `amount` paid out of `pool`; on a failing proof
-/// leave `self` untouched and return `none`. `new_balance` comes from `verify_amount`; aborts with
-/// `EInvalidPublicKey` if it was verified under another key.
+/// leave `self` untouched and return `none`. Aborts if `new_balance` fails to verify.
 public(package) fun try_withdraw_public<T>(
     self: &mut EncryptedBalance<T>,
     amount: u64,
@@ -208,8 +207,7 @@ public(package) fun amount<T>(coin: &EncryptedCoin<T>): &InRangeVerifiedEncrypte
 
 /// Re-state the active balance as a verified re-encryption of the same value, resetting the number
 /// of merges it counts as. Returns whether the balance proof verified; on failure `self` is
-/// untouched. `new_balance` comes from `verify_amount`; aborts with `EInvalidPublicKey` if it was
-/// verified under another key.
+/// untouched. Aborts if `new_balance` fails to verify.
 public(package) fun try_update_active<T>(
     self: &mut EncryptedBalance<T>,
     new_balance: EncryptedAmount,
@@ -328,7 +326,6 @@ fun try_replace_active<T>(
     balance_proof: &DdhProof,
     session_id: SessionId,
 ): bool {
-    assert!(new_balance.pk() == &self.pk, EInvalidPublicKey);
     if (new_balance.verify_equal(expected, balance_proof, session_id.ddh())) {
         self.active.overwrite(new_balance);
         true
