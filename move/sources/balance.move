@@ -117,7 +117,6 @@ public(package) fun deposit_encrypted<T>(
 ): EncryptedAmount {
     assert!(self.has_deposit_slot(), EBalanceFull);
     let EncryptedCoin { amount } = coin;
-    // Mixing keys would make the balance undecryptable by its owner.
     assert!(amount.pk() == &self.pk, EInvalidPublicKey);
     self.pending.add_assign(&amount);
     *amount.amount()
@@ -128,7 +127,6 @@ public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
     self.active.merge_into(&mut self.pending);
     let value = self.public_balance;
     self.public_balance = 0;
-    // A zero-valued public deposit is a no-op, so it consumes no slot.
     if (value > 0) self.active.add_assign(&in_range_verified_from_value(value, self.pk));
 }
 
