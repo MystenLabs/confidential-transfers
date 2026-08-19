@@ -484,12 +484,12 @@ public fun wrap<T>(
         ETransferDenied,
     );
     assert!(receiver.has_token<T>(), EReceiverNotRegistered);
+    let owner = receiver.owner;
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
-    let amount = acc.balance.deposit_public(coin, &pool.id);
-
-    events::emit_wrap<T>(receiver.owner, amount, memo);
+    events::emit_wrap<T>(owner, coin.value(), memo);
+    acc.balance.deposit_public(coin, &pool.id);
 }
 
 /// Initiate a batched transfer from `sender` to multiple receivers.
@@ -611,7 +611,6 @@ public fun add_to_batch<T>(
             assert!(receiver.accepts_deposits, ETransferDenied);
 
             let coin = coins.pop_back();
-            let amount = receiver.balance.deposit_encrypted(coin);
             let (receiver_auditor_decryption_handles, auditor_pk) = next(&mut auditor_data);
             events::emit_transfer<T>(
                 sender,
@@ -620,11 +619,12 @@ public fun add_to_batch<T>(
                 next_index,
                 receiver_addr,
                 *receiver.pk(),
-                amount,
+                *coin.amount().amount(),
                 receiver_auditor_decryption_handles,
                 auditor_pk,
                 memo,
             );
+            receiver.balance.deposit_encrypted(coin);
             TransferBatch::Ok {
                 sender,
                 sender_pk,
