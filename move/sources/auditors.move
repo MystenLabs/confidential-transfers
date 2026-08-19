@@ -132,13 +132,15 @@ public(package) fun next(
     (verified.handles.pop_back(), option::some(verified.pk))
 }
 
-/// Consume the auditor data. This also works if not all handles were popped.
-public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
+/// Consume the auditor data once every receiver's handles have been popped by `next`. Aborts if any
+/// are left, which would mean a receiver was audited but never credited.
+public(package) fun destroy_empty(auditor_data: Option<VerifiedAuditorHandles>) {
     if (auditor_data.is_none()) {
         auditor_data.destroy_none();
         return
     };
-    let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
+    let VerifiedAuditorHandles { handles, pk: _ } = auditor_data.destroy_some();
+    handles.destroy_empty();
 }
 
 /// Whether the batched `ElGamalProof` verifies for the single key in `pks` over the pre-built `2N`

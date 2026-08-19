@@ -73,7 +73,7 @@ use contra::{
         AuditorPackage,
         VerifiedAuditorHandles,
         next,
-        destroy,
+        destroy_empty,
         new as new_auditors,
     },
     balance::{Self, EncryptedBalance, EncryptedCoin},
@@ -650,7 +650,7 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
         TransferBatch::Ok { coins, auditor_data, .. } => {
             assert!(coins.is_empty(), EAllAmountsMustBeUsed);
             coins.destroy_empty();
-            destroy(auditor_data);
+            destroy_empty(auditor_data);
             true
         },
     }

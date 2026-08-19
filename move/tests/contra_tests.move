@@ -792,7 +792,7 @@ fun auditor_disabled_accepts_no_data() {
         session::new(b"dst"),
     );
     assert!(handles.is_none());
-    auditors::destroy(handles);
+    auditors::destroy_empty(handles);
     amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
@@ -802,7 +802,7 @@ fun auditor_disabled_accepts_no_data() {
 fun auditor_enabled_requires_data() {
     let auditor = auditors::new(vector[test_key()]);
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
-    auditors::destroy(
+    auditors::destroy_empty(
         auditors::verify_transfer(&auditor, &amounts, option::none(), session::new(b"dst")),
     );
     amounts.destroy_empty();
@@ -816,7 +816,7 @@ fun auditor_disabled_forbids_data() {
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
     // A trivial (empty) package suffices: the presence check aborts before the proof is inspected.
     let package = auditors::new_auditor_package(vector[], nizk::default_elgamal_proof());
-    auditors::destroy(
+    auditors::destroy_empty(
         auditors::verify_transfer(&auditor, &amounts, option::some(package), session::new(b"dst")),
     );
     amounts.destroy_empty();
@@ -838,7 +838,7 @@ fun auditor_disable_grace_accepts_no_data() {
         session::new(b"dst"),
     );
     assert!(handles.is_none());
-    auditors::destroy(handles);
+    auditors::destroy_empty(handles);
     amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
