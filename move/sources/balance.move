@@ -286,14 +286,9 @@ public(package) fun try_update_active<T>(
     self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
 }
 
-/// Re-key `self` from `self.pk` to `new_pk`: `rekey_proof` shows that `new_handles` re-key the
-/// active balance — each limb's commitment kept, its decryption handle mapped by a shared witness —
-/// which leaves the encrypted values, and so `upper_bound`, unchanged. Returns whether the proof
-/// verified; on failure `self` keeps its old key and amounts.
-///
-/// Aborts with `EPendingDepositsMustBeMerged` if there are pending deposits: those are under the
-/// old key and `rekey_proof` does not cover them. The public deposits need no re-keying, being
-/// plaintext.
+/// Re-key `self` to `new_pk`, swapping each limb's decryption handle for the matching
+/// `new_handles[i]` on a verifying `rekey_proof`. Aborts if there are pending deposits: those are
+/// under the old key and the proof does not cover them.
 public(package) fun try_rekey<T>(
     self: &mut EncryptedBalance<T>,
     new_pk: PublicKey,
