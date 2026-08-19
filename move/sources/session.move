@@ -5,6 +5,17 @@
 /// separator of each protocol proven against it.
 module contra::session;
 
+// === Constants ===
+
+// Protocol tags, shared with the ts-sdk, which reserves `100` for `PROTOCOL_VERIFIED_DEC`.
+const DST_DDH: u8 = 0x01;
+const DST_ELGAMAL: u8 = 0x02;
+const DST_RANGE_PROOF_16: u8 = 0x04;
+const DST_BATCH_DDH: u8 = 0x06;
+const DST_AUDITOR_ELGAMAL: u8 = 0x07;
+
+// === Structs ===
+
 /// A domain separator unique to one account's holdings of one token.
 public struct Session has copy, drop, store {
     id: vector<u8>,
@@ -14,18 +25,17 @@ public(package) fun new(id: vector<u8>): Session {
     Session { id }
 }
 
-// The Fiat-Shamir DST binding a proof of each protocol to `self`. The tags are shared with the
-// ts-sdk, which reserves `100` for `PROTOCOL_VERIFIED_DEC`.
+// The Fiat-Shamir DST binding a proof of each protocol to `self`.
 
-public(package) fun ddh(self: &Session): vector<u8> { self.dst(0x01) }
+public(package) fun ddh(self: &Session): vector<u8> { self.dst(DST_DDH) }
 
-public(package) fun elgamal(self: &Session): vector<u8> { self.dst(0x02) }
+public(package) fun elgamal(self: &Session): vector<u8> { self.dst(DST_ELGAMAL) }
 
-public(package) fun range_proof_16(self: &Session): vector<u8> { self.dst(0x04) }
+public(package) fun range_proof_16(self: &Session): vector<u8> { self.dst(DST_RANGE_PROOF_16) }
 
-public(package) fun batch_ddh(self: &Session): vector<u8> { self.dst(0x06) }
+public(package) fun batch_ddh(self: &Session): vector<u8> { self.dst(DST_BATCH_DDH) }
 
-public(package) fun auditor_elgamal(self: &Session): vector<u8> { self.dst(0x07) }
+public(package) fun auditor_elgamal(self: &Session): vector<u8> { self.dst(DST_AUDITOR_ELGAMAL) }
 
 fun dst(self: &Session, tag: u8): vector<u8> {
     let mut bytes = self.id;
@@ -36,16 +46,16 @@ fun dst(self: &Session, tag: u8): vector<u8> {
 // === Test Helpers ===
 
 #[test_only]
-public(package) fun protocol_id_ddh(): u8 { 0x01 }
+public(package) fun protocol_id_ddh(): u8 { DST_DDH }
 
 #[test_only]
-public(package) fun protocol_id_elgamal(): u8 { 0x02 }
+public(package) fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
 
 #[test_only]
-public(package) fun protocol_id_batch_ddh(): u8 { 0x06 }
+public(package) fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 
 #[test_only]
-public(package) fun protocol_id_auditor_elgamal(): u8 { 0x07 }
+public(package) fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
 
 #[test_only]
 public(package) fun dst_with_tag(self: &Session, tag: u8): vector<u8> {
