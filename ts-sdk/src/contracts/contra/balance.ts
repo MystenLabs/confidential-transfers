@@ -30,7 +30,6 @@ export const EncryptedBalance = new MoveStruct({
 	name: `${$moduleName}::EncryptedBalance<phantom T>`,
 	fields: {
 		pk: twisted_elgamal.PublicKey,
-		session_id: bcs.vector(bcs.u8()),
 		active: BoundedEncryptedAmount,
 		pending: BoundedEncryptedAmount,
 		public_balance: bcs.u64(),
