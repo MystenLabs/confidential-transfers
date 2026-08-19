@@ -813,10 +813,10 @@ fun try_unwrap_internal<T>(
         );
     let withdrawn = account
         .balance
-        .try_withdraw_public(amount, new_balance, balance_proof, session, &mut pool.id, ctx);
+        .try_withdraw_public(amount, new_balance, balance_proof, session);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
-        (true, withdrawn.destroy_some())
+        (true, pool.redeem(withdrawn.destroy_some(), ctx))
     } else {
         withdrawn.destroy_none();
         (false, coin::zero(ctx))
@@ -940,6 +940,11 @@ fun deposit<T>(pool: &Pool<T>, coin: Coin<T>): PublicCoin<T> {
     let value = coin.value();
     send_funds(coin, pool.id.to_address());
     balance::new_public_coin<T>(value)
+}
+
+/// Redeem a claim issued by a balance, paying its value out of the pool.
+fun redeem<T>(pool: &mut Pool<T>, claim: PublicCoin<T>, ctx: &mut TxContext): Coin<T> {
+    claim.redeem_public_coin(&mut pool.id, ctx)
 }
 
 // === Helpers ===

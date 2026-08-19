@@ -98,6 +98,18 @@ public(package) fun new_public_coin<T>(value: u64): PublicCoin<T> {
     PublicCoin { value }
 }
 
+/// Redeem a claim against `pool`, paying its value out as a `Coin<T>`. The only way to consume a
+/// claim other than crediting it to a balance, and it can only produce the coin — no bare value
+/// comes back that a caller could drop.
+public(package) fun redeem_public_coin<T>(
+    coin: PublicCoin<T>,
+    pool: &mut UID,
+    ctx: &mut TxContext,
+): Coin<T> {
+    let PublicCoin { value } = coin;
+    redeem_funds(withdraw_funds_from_object<T>(pool, value), ctx)
+}
+
 // === Deposits ===
 
 /// Add a `PublicCoin` to `self`.
@@ -219,7 +231,7 @@ public(package) fun receiver_amounts<T>(
 // === Withdrawals ===
 
 /// On a verifying `balance_proof` that the active balance is `new_balance` plus `amount`, lower the
-/// active balance to `new_balance` and return `amount` redeemed from `pool`; on a failing proof
+/// active balance to `new_balance` and return a claim on the pool for `amount`; on a failing proof
 /// leave `self` untouched and return `none`. `new_balance` comes from `verify_amount`; aborts with
 /// `EInvalidPublicKey` if it was verified under another key.
 public(package) fun try_withdraw_public<T>(
@@ -228,15 +240,13 @@ public(package) fun try_withdraw_public<T>(
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
     session: SessionId,
-    pool: &mut UID,
-    ctx: &mut TxContext,
-): Option<Coin<T>> {
+): Option<PublicCoin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
     if (!self.try_replace_active(&new_balance, &expected, balance_proof, session)) {
         return option::none()
     };
-    option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
+    option::some(PublicCoin { value: amount })
 }
 
 /// Execute a `VerifiedTransfer`, splitting its receiver-keyed coins off the active balance. Returns
