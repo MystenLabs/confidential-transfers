@@ -105,31 +105,6 @@ public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
     if (value > 0) self.active.add_assign(&in_range_verified_from_value(value, self.pk));
 }
 
-// === Verification ===
-
-/// Verify `amount` under `self.pk`: `pok` shows its four limbs are valid encryptions and
-/// `range_proofs` that each limb's plaintext is a u16. Aborts if either proof fails.
-fun verify_amount<T>(
-    self: &EncryptedBalance<T>,
-    amount: EncryptedAmount,
-    pok: &ElGamalProof,
-    range_proofs: RangeProofs,
-    session_id: SessionId,
-): InRangeVerifiedEncryptedAmount {
-    let verified = encrypted_amount::verify_encrypted_amount(
-        amount,
-        self.pk,
-        pok,
-        session_id.elgamal(),
-    );
-    let mut in_range = encrypted_amount::verify_in_range(
-        vector[verified],
-        range_proofs,
-        session_id.range_proof_16(),
-    );
-    in_range.pop_back()
-}
-
 // === Withdrawals ===
 
 /// On a verifying `balance_proof` that the active balance is `new_balance` plus `amount`, lower the
@@ -315,6 +290,27 @@ fun verify_transfer_amounts<T>(
     );
     let new_balance = receiver_amounts.pop_back();
     (receiver_amounts, new_balance, total_sender)
+}
+
+fun verify_amount<T>(
+    self: &EncryptedBalance<T>,
+    amount: EncryptedAmount,
+    pok: &ElGamalProof,
+    range_proofs: RangeProofs,
+    session_id: SessionId,
+): InRangeVerifiedEncryptedAmount {
+    let verified = encrypted_amount::verify_encrypted_amount(
+        amount,
+        self.pk,
+        pok,
+        session_id.elgamal(),
+    );
+    let mut in_range = encrypted_amount::verify_in_range(
+        vector[verified],
+        range_proofs,
+        session_id.range_proof_16(),
+    );
+    in_range.pop_back()
 }
 
 /// Replace the active balance with `new_balance` if `balance_proof` shows it encrypts the same value
