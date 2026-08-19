@@ -277,7 +277,7 @@ export class ContraClient {
 				amount: pendingCiphertext.decrypt(sk, this.#table),
 				upperBound: balance.pending.upper_bound,
 			},
-			pendingPublicBalance: BigInt(balance.public_balance),
+			pendingPublicBalance: BigInt(balance.public_balance.value),
 		};
 	}
 
