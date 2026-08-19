@@ -75,7 +75,7 @@ export function newSessionId(
 /**
  * Deterministic per-`(account, tokenType)` address used only as the Fiat-Shamir
  * session-id tag. It is `derived_object::derive_address(Account UID,
- * TokenAccountKey<tokenType>())`, matching on-chain `contra::session_id`.
+ * TokenAccountKey<tokenType>())`, matching the id the on-chain `contra::session` wraps.
  */
 export function getTokenAccountUniqueId(
 	packageConfig: ContraPackageConfig,

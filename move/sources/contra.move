@@ -400,8 +400,8 @@ fun set_default_pk_internal(account: &mut Account, default_pk: Option<PublicKey>
     events::emit_default_pk_rotated(account.owner, default_pk);
 }
 
-/// Re-key token `T`'s active balance from its current `TokenAccount.pk` to `new_pk`, swapping each
-/// limb's decryption handle for the matching `new_handles[i]` (proven by `rekey_proof`). `new_pk` is
+/// Re-key token `T`'s balance from its current key to `new_pk`, swapping each limb's decryption
+/// handle for the matching `new_handles[i]` (proven by `rekey_proof`). `new_pk` is
 /// explicit and independent of the account's default key. Aborts if the token has unmerged pending
 /// deposits (which are under the old key, so they must be merged first) or the proof fails.
 /// Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
@@ -444,10 +444,9 @@ public fun try_rekey_token_account_and_unpause<T>(
     };
 }
 
-/// Shared re-key: Assert the token's pending is empty, then re-key its active balance from
-/// `TokenAccount.pk` to `new_pk`. On a verifying proof, commits the new handles,
-/// sets `token.pk = new_pk`, emits `TokenRekeyedEvent`, and returns `true`. Otherwise leaves the token
-/// unchanged and returns `false`.
+/// Shared re-key: re-key the token's balance to `new_pk` (see `balance::try_rekey`). On a verifying
+/// proof, emits `TokenRekeyedEvent` and returns `true`; otherwise leaves the token unchanged and
+/// returns `false`. Aborts if the token has unmerged pending deposits.
 fun rekey_token_account_internal<T>(
     account: &mut Account,
     new_pk: PublicKey,

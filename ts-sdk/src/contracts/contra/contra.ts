@@ -617,13 +617,12 @@ export interface RekeyTokenAccountOptions {
 	typeArguments: [string];
 }
 /**
- * Re-key token `T`'s active balance from its current `TokenAccount.pk` to
- * `new_pk`, swapping each limb's decryption handle for the matching
- * `new_handles[i]` (proven by `rekey_proof`). `new_pk` is explicit and independent
- * of the account's default key. Aborts if the token has unmerged pending deposits
- * (which are under the old key, so they must be merged first) or the proof fails.
- * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation
- * and for `account.owner`.
+ * Re-key token `T`'s balance from its current key to `new_pk`, swapping each
+ * limb's decryption handle for the matching `new_handles[i]` (proven by
+ * `rekey_proof`). `new_pk` is explicit and independent of the account's default
+ * key. Aborts if the token has unmerged pending deposits (which are under the old
+ * key, so they must be merged first) or the proof fails. Authorized by `auth`,
+ * which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
  */
 export function rekeyTokenAccount(options: RekeyTokenAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

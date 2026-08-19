@@ -901,7 +901,7 @@ export class ContraClient {
 
 	/**
 	 * Emit the `rekey_token_account` (or `try_rekey_token_account_and_unpause`) Move call re-keying the token's active balance
-	 * from its current `TokenAccount.pk` to `newPk` (explicit and independent of the account's default
+	 * from its current key to `newPk` (explicit and independent of the account's default
 	 * key). Shared by `rekeyTokenAccount` and `tryRekeyTokenAccount`.
 	 */
 	#rekeyTokenAccountCall(
@@ -1142,10 +1142,11 @@ export class ContraClient {
 		// commitments alone — no sender-keyed decryption handles are sent.
 		const randomness = sampleTransferRandomness(senderPk);
 
-		// Each transfer amount under its receiver's key, with the seed-derived blindings and a
-		// `WellFormedProof` (range + consistency), bound to the sender's ELGAMAL DST. No sender-keyed
-		// amount is sent — its commitments equal the receiver's, which the chain sums for the transfer
-		// total (see `try_split_batch`); `add_to_batch` checks each coin's pk against the receiver.
+		// Each transfer amount under its receiver's key, with the seed-derived blindings and its
+		// ElGamal proof of knowledge, bound to the sender's ELGAMAL DST. No sender-keyed amount is
+		// sent — its commitments equal the receiver's, which the chain sums for the transfer total
+		// (see `balance::verify_transfer_amounts`); `add_to_batch` checks each coin's pk against the
+		// receiver.
 		const prepared = recipients.map((recipient, i) => {
 			const receiverPk = receiverStates[i].pk;
 			const encAmountReceiver = intoLimbs(recipient.amount).map((value, j) => ({
