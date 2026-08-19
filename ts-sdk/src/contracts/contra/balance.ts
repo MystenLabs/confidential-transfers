@@ -4,8 +4,8 @@
 
 /**
  * An account's confidential holdings of one token, all under one key: the
- * spendable `active` balance, the `pending` deposits, and the `public_balance`
- * claim on wrapped-but-unmerged coins — deposits land aside and are folded in by
+ * spendable `active` balance, the `pending` deposits, and the `public_balance` of
+ * wrapped-but-unmerged coins — deposits land aside and are folded in by
  * `merge_deposits`, so they never mutate the balance a concurrent transfer is
  * proving against.
  */
@@ -24,19 +24,13 @@ export const BoundedEncryptedAmount = new MoveStruct({
 		upper_bound: bcs.u16(),
 	},
 });
-export const PublicCoin = new MoveStruct({
-	name: `${$moduleName}::PublicCoin<phantom T>`,
-	fields: {
-		value: bcs.u64(),
-	},
-});
 export const EncryptedBalance = new MoveStruct({
 	name: `${$moduleName}::EncryptedBalance<phantom T>`,
 	fields: {
 		pk: twisted_elgamal.PublicKey,
 		active: BoundedEncryptedAmount,
 		pending: BoundedEncryptedAmount,
-		public_balance: PublicCoin,
+		public_balance: bcs.u64(),
 	},
 });
 export const EncryptedCoin = new MoveStruct({

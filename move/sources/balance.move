@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// An account's confidential holdings of one token, all under one key: the spendable `active`
-/// balance, the `pending` deposits, and the `public_balance` claim on wrapped-but-unmerged
+/// balance, the `pending` deposits, and the `public_balance` of wrapped-but-unmerged
 /// coins — deposits land aside and are folded in by `merge_deposits`, so they never mutate the
 /// balance a concurrent transfer is proving against.
 module contra::balance;
@@ -43,23 +43,18 @@ const MAX_UPPER_BOUND: u16 = 0xFFFF;
 // === Structs ===
 
 /// One account's holdings of token `T`: the encrypted amounts, all under `pk`, plus
-/// `public_balance`, the claim on the pool for public deposits not yet merged.
+/// `public_balance`, the plaintext total of public deposits held in the pool but not yet merged.
 public struct EncryptedBalance<phantom T> has store {
     pk: PublicKey,
     active: BoundedEncryptedAmount,
     pending: BoundedEncryptedAmount,
-    public_balance: PublicCoin<T>,
+    public_balance: u64,
 }
 
 /// An `EncryptedAmount` with a bound on its limbs: each is at most `upper_bound * (2^16 - 1)`.
 public struct BoundedEncryptedAmount has store {
     amount: EncryptedAmount,
     upper_bound: u16,
-}
-
-/// Linear wrapper around a publicly-known `u64`.
-public struct PublicCoin<phantom T> has store {
-    value: u64,
 }
 
 /// Linear wrapper around a verified encrypted amount.
@@ -82,7 +77,7 @@ public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
         pk,
         active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 1 },
         pending: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
-        public_balance: PublicCoin { value: 0 },
+        public_balance: 0,
     }
 }
 
@@ -91,30 +86,19 @@ public(package) fun public_key<T>(self: &EncryptedBalance<T>): &PublicKey {
     &self.pk
 }
 
-// === PublicCoin ===
-
-/// Send `coin`'s funds to `pool` and issue the matching claim, the only way to make one.
-public(package) fun wrap<T>(coin: Coin<T>, pool: &UID): PublicCoin<T> {
-    let value = coin.value();
-    send_funds(coin, pool.to_address());
-    PublicCoin { value }
-}
-
-/// Consume a claim, paying its value out of `pool` as a `Coin<T>`. Together with crediting one to a
-/// balance this is the only way to spend a claim, and neither hands back a bare value to drop.
-public(package) fun unwrap<T>(coin: PublicCoin<T>, pool: &mut UID, ctx: &mut TxContext): Coin<T> {
-    let PublicCoin { value } = coin;
-    redeem_funds(withdraw_funds_from_object<T>(pool, value), ctx)
-}
-
 // === Deposits ===
 
-/// Add a `PublicCoin` to `self`.
-public(package) fun deposit_public<T>(self: &mut EncryptedBalance<T>, coin: PublicCoin<T>): u64 {
+/// Send `coin`'s funds to `pool` and credit their value to `self`'s public deposits, returning it.
+public(package) fun deposit_public<T>(
+    self: &mut EncryptedBalance<T>,
+    coin: Coin<T>,
+    pool: &UID,
+): u64 {
     // A non-zero public balance already holds a merge slot, so topping it up needs no new one.
-    assert!(self.public_balance.value > 0 || self.has_deposit_slot(), EBalanceFull);
-    let PublicCoin { value } = coin;
-    self.public_balance.value = self.public_balance.value + value;
+    assert!(self.public_balance > 0 || self.has_deposit_slot(), EBalanceFull);
+    let value = coin.value();
+    send_funds(coin, pool.to_address());
+    self.public_balance = self.public_balance + value;
     value
 }
 
@@ -133,8 +117,8 @@ public(package) fun deposit_encrypted<T>(
 /// Fold both kinds of pending deposit into the active balance, freeing their slots.
 public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
     self.active.merge_into(&mut self.pending);
-    let value = self.public_balance.value;
-    self.public_balance.value = 0;
+    let value = self.public_balance;
+    self.public_balance = 0;
     if (value > 0) self.active.add_assign(&in_range_verified_from_value(value, self.pk));
 }
 
@@ -228,7 +212,7 @@ public(package) fun receiver_amounts<T>(
 // === Withdrawals ===
 
 /// On a verifying `balance_proof` that the active balance is `new_balance` plus `amount`, lower the
-/// active balance to `new_balance` and return a claim on the pool for `amount`; on a failing proof
+/// active balance to `new_balance` and return `amount` paid out of `pool`; on a failing proof
 /// leave `self` untouched and return `none`. `new_balance` comes from `verify_amount`; aborts with
 /// `EInvalidPublicKey` if it was verified under another key.
 public(package) fun try_withdraw_public<T>(
@@ -237,13 +221,15 @@ public(package) fun try_withdraw_public<T>(
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
     session: SessionId,
-): Option<PublicCoin<T>> {
+    pool: &mut UID,
+    ctx: &mut TxContext,
+): Option<Coin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
     if (!self.try_replace_active(&new_balance, &expected, balance_proof, session)) {
         return option::none()
     };
-    option::some(PublicCoin { value: amount })
+    option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
 }
 
 /// Execute a `VerifiedTransfer`, splitting its receiver-keyed coins off the active balance. Returns
@@ -321,7 +307,7 @@ public(package) fun overwrite_unchecked<T>(self: &mut EncryptedBalance<T>, new: 
     self.active.amount = new;
     self.active.upper_bound = 1;
     self.pending.set_empty();
-    self.public_balance.value = 0;
+    self.public_balance = 0;
 }
 
 // === Private functions ===

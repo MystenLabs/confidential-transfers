@@ -487,7 +487,7 @@ public fun wrap<T>(
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
-    let amount = acc.balance.deposit_public(balance::wrap(coin, &pool.id));
+    let amount = acc.balance.deposit_public(coin, &pool.id);
 
     events::emit_wrap<T>(receiver.owner, amount, memo);
 }
@@ -813,10 +813,10 @@ fun try_unwrap_internal<T>(
         );
     let withdrawn = account
         .balance
-        .try_withdraw_public(amount, new_balance, balance_proof, session);
+        .try_withdraw_public(amount, new_balance, balance_proof, session, &mut pool.id, ctx);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
-        (true, withdrawn.destroy_some().unwrap(&mut pool.id, ctx))
+        (true, withdrawn.destroy_some())
     } else {
         withdrawn.destroy_none();
         (false, coin::zero(ctx))
