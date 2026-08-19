@@ -108,9 +108,8 @@ public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
 // === Verification ===
 
 /// Verify `amount` under `self.pk`: `pok` shows its four limbs are valid encryptions and
-/// `range_proofs` that each limb's plaintext is a u16. The result is what `try_withdraw_public` and
-/// `try_update_active` take. Aborts if either proof fails.
-public(package) fun verify_amount<T>(
+/// `range_proofs` that each limb's plaintext is a u16. Aborts if either proof fails.
+fun verify_amount<T>(
     self: &EncryptedBalance<T>,
     amount: EncryptedAmount,
     pok: &ElGamalProof,
@@ -140,12 +139,20 @@ public(package) fun verify_amount<T>(
 public(package) fun try_withdraw_public<T>(
     self: &mut EncryptedBalance<T>,
     amount: u64,
-    new_balance: InRangeVerifiedEncryptedAmount,
+    new_balance: EncryptedAmount,
+    new_balance_pok: &ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
     session_id: SessionId,
     pool: &mut UID,
     ctx: &mut TxContext,
 ): Option<Coin<T>> {
+    let new_balance = self.verify_amount(
+        new_balance,
+        new_balance_pok,
+        new_balance_range_proofs,
+        session_id,
+    );
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
     if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
@@ -205,10 +212,18 @@ public(package) fun amount<T>(coin: &EncryptedCoin<T>): &InRangeVerifiedEncrypte
 /// verified under another key.
 public(package) fun try_update_active<T>(
     self: &mut EncryptedBalance<T>,
-    new_balance: InRangeVerifiedEncryptedAmount,
+    new_balance: EncryptedAmount,
+    new_balance_pok: &ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
     session_id: SessionId,
 ): bool {
+    let new_balance = self.verify_amount(
+        new_balance,
+        new_balance_pok,
+        new_balance_range_proofs,
+        session_id,
+    );
     let expected = self.active.collapse();
     self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
 }

@@ -693,11 +693,16 @@ public fun update_active_balance<T>(
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
-    let new_balance = token_account
-        .balance
-        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session_id);
     assert!(
-        token_account.balance.try_update_active(new_balance, balance_proof, session_id),
+        token_account
+            .balance
+            .try_update_active(
+                new_balance,
+                &new_balance_pok,
+                new_balance_range_proofs,
+                balance_proof,
+                session_id,
+            ),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
@@ -796,18 +801,18 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
-    let session_id = account.session_id;
-    let new_balance = account
+    let withdrawn = account
         .balance
-        .verify_amount(
+        .try_withdraw_public(
+            amount,
             new_balance,
             &new_balance_consistency_proof,
             new_balance_range_proofs,
-            session_id,
+            balance_proof,
+            account.session_id,
+            &mut pool.id,
+            ctx,
         );
-    let withdrawn = account
-        .balance
-        .try_withdraw_public(amount, new_balance, balance_proof, session_id, &mut pool.id, ctx);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
         (true, withdrawn.destroy_some())
