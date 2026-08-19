@@ -76,7 +76,7 @@ use contra::{
         destroy,
         new as new_auditors,
     },
-    balance::{Self, EncryptedBalance, EncryptedCoin},
+    balance::{Self, EncryptedBalance, EncryptedCoin, PublicCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{EncryptedAmount, RangeProofs},
     events,
@@ -85,7 +85,8 @@ use contra::{
     twisted_elgamal::PublicKey
 };
 use sui::{
-    coin::{Self, Coin, TreasuryCap},
+    balance::withdraw_funds_from_object,
+    coin::{Self, Coin, TreasuryCap, send_funds, redeem_funds},
     deny_list::DenyList,
     derived_object,
     dynamic_field as df,
@@ -487,7 +488,7 @@ public fun wrap<T>(
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen, ETransferDenied);
     assert!(acc.accepts_deposits, ETransferDenied);
-    let amount = acc.balance.deposit_public(coin, &pool.id);
+    let amount = acc.balance.deposit_public(pool.deposit(coin));
 
     events::emit_wrap<T>(receiver.owner, amount, memo);
 }
@@ -812,17 +813,10 @@ fun try_unwrap_internal<T>(
         );
     let withdrawn = account
         .balance
-        .try_withdraw_public(
-            amount,
-            new_balance,
-            balance_proof,
-            session_id,
-            &mut pool.id,
-            ctx,
-        );
+        .try_withdraw_public(amount, new_balance, balance_proof, session_id);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
-        (true, withdrawn.destroy_some())
+        (true, pool.redeem(withdrawn.destroy_some(), ctx))
     } else {
         withdrawn.destroy_none();
         (false, coin::zero(ctx))
@@ -936,6 +930,22 @@ public fun update_auditors<T>(
 ) {
     ct.auditors.update(current_pks, previous_pks);
     events::emit_update_auditors<T>(current_pks, previous_pks);
+}
+
+// === Pool ===
+
+/// Take `coin`'s funds into the pool and issue the matching claim. The claim is abilityless, so the
+/// caller must credit it to a balance.
+fun deposit<T>(pool: &Pool<T>, coin: Coin<T>): PublicCoin<T> {
+    let value = coin.value();
+    send_funds(coin, pool.id.to_address());
+    balance::new_public_coin<T>(value)
+}
+
+/// Redeem a claim issued by a balance, paying its amount out of the pool.
+fun redeem<T>(pool: &mut Pool<T>, claim: PublicCoin<T>, ctx: &mut TxContext): Coin<T> {
+    let value = claim.redeem_public_coin();
+    redeem_funds(withdraw_funds_from_object<T>(&mut pool.id, value), ctx)
 }
 
 // === Helpers ===

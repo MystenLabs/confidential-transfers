@@ -20,12 +20,7 @@ use contra::{
     nizk::{DdhProof, ElGamalProof},
     twisted_elgamal::{Self, Encryption, PublicKey}
 };
-use sui::{
-    balance::withdraw_funds_from_object,
-    coin::{Coin, TreasuryCap, send_funds, redeem_funds},
-    group_ops::Element,
-    ristretto255::G
-};
+use sui::{coin::TreasuryCap, group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
@@ -67,6 +62,14 @@ public struct BoundedEncryptedAmount has store {
     upper_bound: u16,
 }
 
+/// A claim on token `T`'s pool for a publicly known amount. Abilityless, so it cannot be copied,
+/// stored or quietly dropped: whoever holds one must either credit it to a balance or redeem it
+/// against the pool, and each side only issues one against value it has just given up — the pool
+/// against funds paid in, a balance against value proven out of it.
+public struct PublicCoin<phantom T> {
+    value: u64,
+}
+
 /// Linear wrapper around a verified encrypted amount.
 public struct EncryptedCoin<phantom T> {
     amount: InRangeVerifiedEncryptedAmount,
@@ -97,20 +100,27 @@ public(package) fun public_key<T>(self: &EncryptedBalance<T>): &PublicKey {
     &self.pk
 }
 
+// === PublicCoin ===
+
+/// Issue a claim for `value`. The caller must have just moved matching funds into `T`'s pool.
+public(package) fun new_public_coin<T>(value: u64): PublicCoin<T> {
+    PublicCoin { value }
+}
+
+/// Consume a claim, returning the amount to pay out of `T`'s pool.
+public(package) fun redeem_public_coin<T>(coin: PublicCoin<T>): u64 {
+    let PublicCoin { value } = coin;
+    value
+}
+
 // === Deposits ===
 
-/// Deposit `coin`'s public value, sending its funds to `pool` and crediting the value to `self`'s
-/// public deposits. Returns the deposited value. Aborts with `EBalanceFull` if `self` cannot absorb
-/// the deposit.
-public(package) fun deposit_public<T>(
-    self: &mut EncryptedBalance<T>,
-    coin: Coin<T>,
-    pool: &UID,
-): u64 {
+/// Credit a pool claim to `self`'s public deposits, returning the value credited. Aborts with
+/// `EBalanceFull` if `self` cannot absorb the deposit.
+public(package) fun deposit_public<T>(self: &mut EncryptedBalance<T>, coin: PublicCoin<T>): u64 {
     // A non-zero public balance already holds a merge slot, so topping it up needs no new one.
     assert!(self.public_balance > 0 || self.has_deposit_slot(), EBalanceFull);
-    let value = coin.value();
-    send_funds(coin, pool.to_address());
+    let PublicCoin { value } = coin;
     self.public_balance = self.public_balance + value;
     value
 }
@@ -240,24 +250,22 @@ public(package) fun receiver_amounts<T>(
 // === Withdrawals ===
 
 /// On a verifying `balance_proof` that the active balance is `new_balance` plus `amount`, lower the
-/// active balance to `new_balance` and return `amount` withdrawn from `pool` as a `Coin<T>`; on a
-/// failing proof leave `self` untouched and return `none`. `new_balance` comes from `verify_amount`;
-/// aborts with `EInvalidPublicKey` if it was verified under another key.
+/// active balance to `new_balance` and return a claim on the pool for `amount`; on a failing proof
+/// leave `self` untouched and return `none`. `new_balance` comes from `verify_amount`; aborts with
+/// `EInvalidPublicKey` if it was verified under another key.
 public(package) fun try_withdraw_public<T>(
     self: &mut EncryptedBalance<T>,
     amount: u64,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
     session_id: vector<u8>,
-    pool: &mut UID,
-    ctx: &mut TxContext,
-): Option<Coin<T>> {
+): Option<PublicCoin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
     if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
         return option::none()
     };
-    option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
+    option::some(PublicCoin { value: amount })
 }
 
 /// Execute a `VerifiedTransfer`, splitting its receiver-keyed coins off the active balance. Returns

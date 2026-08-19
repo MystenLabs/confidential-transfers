@@ -35,6 +35,12 @@ export const EncryptedBalance = new MoveStruct({
 		public_balance: bcs.u64(),
 	},
 });
+export const PublicCoin = new MoveStruct({
+	name: `${$moduleName}::PublicCoin<phantom T>`,
+	fields: {
+		value: bcs.u64(),
+	},
+});
 export const EncryptedCoin = new MoveStruct({
 	name: `${$moduleName}::EncryptedCoin<phantom T>`,
 	fields: {

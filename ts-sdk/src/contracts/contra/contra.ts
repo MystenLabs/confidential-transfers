@@ -774,10 +774,10 @@ export interface BatchedTransferOptions {
  * reconstructed on chain from the receiver amounts). The amounts are verified
  * against `sender`'s own key and session (see `verify_transfer_amounts`), so they
  * are bound to this transfer by construction. `balance_proof` proves the sender's
- * balance drops by exactly the transfer total (see `balance::try_split_batch`).
- * `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
- * transfer's blinding and recover its outgoing amounts; it is not otherwise
- * verified on chain.
+ * balance drops by exactly the transfer total (see
+ * `balance::try_withdraw_encrypted`). `seed_point` (= `P`) is forwarded to the
+ * events so the sender can re-derive each transfer's blinding and recover its
+ * outgoing amounts; it is not otherwise verified on chain.
  *
  * Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package`
  * must be `some`. See `auditors::verify_transfer` for details.
