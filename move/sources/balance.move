@@ -17,7 +17,7 @@ use contra::{
         in_range_verified_from_value,
     },
     nizk::{DdhProof, ElGamalProof},
-    session::Session,
+    session::SessionId,
     twisted_elgamal::{Self, Encryption, PublicKey}
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -140,7 +140,7 @@ public(package) fun verify_amount<T>(
     amount: EncryptedAmount,
     pok: &ElGamalProof,
     range_proofs: RangeProofs,
-    session: Session,
+    session: SessionId,
 ): InRangeVerifiedEncryptedAmount {
     let verified = encrypted_amount::verify_encrypted_amount(
         amount,
@@ -167,7 +167,7 @@ public(package) fun verify_transfer_amounts<T>(
     total_sender_handle: Element<G>,
     sender_encs_pok: ElGamalProof,
     range_proofs: RangeProofs,
-    session: Session,
+    session: SessionId,
 ): (VerifiedTransfer<T>, InRangeVerifiedEncryptedAmount) {
     let n = receiver_amounts.length();
     assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
@@ -228,7 +228,7 @@ public(package) fun try_withdraw_public<T>(
     amount: u64,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session: Session,
+    session: SessionId,
 ): Option<PublicCoin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
@@ -252,7 +252,7 @@ public(package) fun try_withdraw_batch<T>(
     transfer: VerifiedTransfer<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session: Session,
+    session: SessionId,
 ): Option<vector<EncryptedCoin<T>>> {
     let VerifiedTransfer { receiver_amounts, total_sender } = transfer;
     assert!(total_sender.pk() == &self.pk, EInvalidPublicKey);
@@ -274,7 +274,7 @@ public(package) fun try_update_active<T>(
     self: &mut EncryptedBalance<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session: Session,
+    session: SessionId,
 ): bool {
     let expected = self.active.collapse();
     self.try_replace_active(&new_balance, &expected, balance_proof, session)
@@ -288,7 +288,7 @@ public(package) fun try_rekey<T>(
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
-    session: Session,
+    session: SessionId,
 ): bool {
     assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
     if (
@@ -325,7 +325,7 @@ fun try_replace_active<T>(
     new_balance: &InRangeVerifiedEncryptedAmount,
     expected: &Encryption,
     balance_proof: &DdhProof,
-    session: Session,
+    session: SessionId,
 ): bool {
     assert!(new_balance.pk() == &self.pk, EInvalidPublicKey);
     if (new_balance.verify_equal(expected, balance_proof, session.ddh())) {

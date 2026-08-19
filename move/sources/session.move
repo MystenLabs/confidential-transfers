@@ -17,27 +17,27 @@ const DST_AUDITOR_ELGAMAL: u8 = 0x07;
 // === Structs ===
 
 /// A domain separator unique to one account's holdings of one token.
-public struct Session has copy, drop, store {
+public struct SessionId has copy, drop, store {
     id: vector<u8>,
 }
 
-public(package) fun new(id: vector<u8>): Session {
-    Session { id }
+public(package) fun new(id: vector<u8>): SessionId {
+    SessionId { id }
 }
 
 // The Fiat-Shamir DST binding a proof of each protocol to `self`.
 
-public(package) fun ddh(self: &Session): vector<u8> { self.dst(DST_DDH) }
+public(package) fun ddh(self: &SessionId): vector<u8> { self.dst(DST_DDH) }
 
-public(package) fun elgamal(self: &Session): vector<u8> { self.dst(DST_ELGAMAL) }
+public(package) fun elgamal(self: &SessionId): vector<u8> { self.dst(DST_ELGAMAL) }
 
-public(package) fun range_proof_16(self: &Session): vector<u8> { self.dst(DST_RANGE_PROOF_16) }
+public(package) fun range_proof_16(self: &SessionId): vector<u8> { self.dst(DST_RANGE_PROOF_16) }
 
-public(package) fun batch_ddh(self: &Session): vector<u8> { self.dst(DST_BATCH_DDH) }
+public(package) fun batch_ddh(self: &SessionId): vector<u8> { self.dst(DST_BATCH_DDH) }
 
-public(package) fun auditor_elgamal(self: &Session): vector<u8> { self.dst(DST_AUDITOR_ELGAMAL) }
+public(package) fun auditor_elgamal(self: &SessionId): vector<u8> { self.dst(DST_AUDITOR_ELGAMAL) }
 
-fun dst(self: &Session, tag: u8): vector<u8> {
+fun dst(self: &SessionId, tag: u8): vector<u8> {
     let mut bytes = self.id;
     bytes.push_back(tag);
     bytes
@@ -58,7 +58,7 @@ public(package) fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 public(package) fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
 
 #[test_only]
-public(package) fun dst_with_tag(self: &Session, tag: u8): vector<u8> {
+public(package) fun dst_with_tag(self: &SessionId, tag: u8): vector<u8> {
     let mut bytes = self.id;
     bytes.push_back(tag);
     bytes

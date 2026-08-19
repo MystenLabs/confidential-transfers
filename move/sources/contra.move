@@ -82,7 +82,7 @@ use contra::{
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    session::{Self, Session},
+    session::{Self, SessionId},
     twisted_elgamal::PublicKey
 };
 use sui::{
@@ -162,7 +162,7 @@ public struct Account has key {
 
 /// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
-    session: Session,
+    session: SessionId,
     is_frozen: bool,
     accepts_deposits: bool,
     balance: EncryptedBalance<T>,
@@ -343,7 +343,7 @@ public fun try_register_with_default_pk<T>(account: &mut Account, ct: &Confident
 
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
 /// registered. The caller is responsible for any authorization.
-fun add_token_account<T>(account: &mut Account, pk: PublicKey, session: Session) {
+fun add_token_account<T>(account: &mut Account, pk: PublicKey, session: SessionId) {
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     events::emit_new_registration<T>(account.owner, pk);
     df::add(
@@ -959,8 +959,8 @@ fun has_token<T>(account: &Account): bool {
     df::exists(&account.id, TokenAccountKey<T>())
 }
 
-/// The `Session` binding proofs to `account`'s `TokenAccount<T>`, derived from a 20-byte id.
-fun session<T>(account: &Account): Session {
+/// The `SessionId` binding proofs to `account`'s `TokenAccount<T>`, derived from a 20-byte id.
+fun session<T>(account: &Account): SessionId {
     // `derive_address` hashes the account ID together with the full `TokenAccountKey<T>` type
     // tag. The account ID is itself derived from the `AccountRegistry`, which is unique per
     // standalone deployment of contra.

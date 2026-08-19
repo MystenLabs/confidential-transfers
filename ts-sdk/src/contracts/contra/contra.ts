@@ -139,7 +139,7 @@ export const Account = new MoveStruct({
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
-		session: session.Session,
+		session: session.SessionId,
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
 		balance: balance.EncryptedBalance,

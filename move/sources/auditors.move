@@ -6,7 +6,7 @@ module contra::auditors;
 use contra::{
     encrypted_amount::{InRangeVerifiedEncryptedAmount, ciphertexts_u32},
     nizk::{ElGamalProof, verify_elgamal},
-    session::Session,
+    session::SessionId,
     twisted_elgamal::{Self, PublicKey, Encryption}
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -84,12 +84,12 @@ public(package) fun update(
 /// carries none). The batched `ElGamalProof` over all `2N` auditor ciphertexts must verify against
 /// `current_pks`, else against `previous_pks`. Returns the verified handles tagged with the auditor
 /// key that accepted them, or `none` when the transfer carries no auditor data. The proof's
-/// transcript is derived here from the transfer's `Session`.
+/// transcript is derived here from the transfer's `SessionId`.
 public(package) fun verify_transfer(
     auditors: &Auditors,
     receiver_amounts: &vector<InRangeVerifiedEncryptedAmount>,
     auditor_package: Option<AuditorPackage>,
-    session: Session,
+    session: SessionId,
 ): Option<VerifiedAuditorHandles> {
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
