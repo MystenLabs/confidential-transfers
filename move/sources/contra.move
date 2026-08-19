@@ -618,7 +618,6 @@ public fun add_to_batch<T>(
             assert!(receiver.accepts_deposits, ETransferDenied);
 
             let coin = coins.pop_back();
-            let receiver_pk = *receiver.pk();
             let amount = receiver.balance.deposit_encrypted(coin);
             let (receiver_auditor_decryption_handles, auditor_pk) = next(&mut auditor_data);
             events::emit_transfer<T>(
@@ -627,7 +626,7 @@ public fun add_to_batch<T>(
                 seed_point,
                 next_index,
                 receiver_addr,
-                receiver_pk,
+                *receiver.pk(),
                 amount,
                 receiver_auditor_decryption_handles,
                 auditor_pk,
@@ -840,12 +839,12 @@ public fun owner(account: &Account): address {
 /// The `upper_bound` is set to 1, so the caller is responsible for ensuring that the
 /// `EncryptedAmount` is in range.
 public fun set_balance_by_issuer<T>(
-    t: &mut TreasuryCap<T>,
+    _t: &mut TreasuryCap<T>,
     account: &mut Account,
     new_balance: EncryptedAmount,
 ) {
     let owner = account.owner;
-    account[TokenAccountKey<T>()].balance.overwrite_unchecked(t, new_balance);
+    account[TokenAccountKey<T>()].balance.overwrite_unchecked(new_balance);
     events::emit_set_balance_by_issuer<T>(owner, new_balance);
 }
 

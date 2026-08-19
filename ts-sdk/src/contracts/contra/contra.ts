@@ -1159,7 +1159,7 @@ export function owner(options: OwnerOptions) {
 		});
 }
 export interface SetBalanceByIssuerArguments {
-	t: RawTransactionArgument<string>;
+	T: RawTransactionArgument<string>;
 	account: RawTransactionArgument<string>;
 	newBalance: TransactionArgument;
 }
@@ -1168,7 +1168,7 @@ export interface SetBalanceByIssuerOptions {
 	arguments:
 		| SetBalanceByIssuerArguments
 		| [
-				t: RawTransactionArgument<string>,
+				T: RawTransactionArgument<string>,
 				account: RawTransactionArgument<string>,
 				newBalance: TransactionArgument,
 		  ];
@@ -1187,7 +1187,7 @@ export interface SetBalanceByIssuerOptions {
 export function setBalanceByIssuer(options: SetBalanceByIssuerOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['t', 'account', 'newBalance'];
+	const parameterNames = ['T', 'account', 'newBalance'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

@@ -20,7 +20,7 @@ use contra::{
     nizk::{DdhProof, ElGamalProof},
     twisted_elgamal::{Self, Encryption, PublicKey}
 };
-use sui::{coin::TreasuryCap, group_ops::Element, ristretto255::G};
+use sui::{group_ops::Element, ristretto255::G};
 
 // === Errors ===
 
@@ -170,8 +170,7 @@ public(package) fun verify_amount<T>(
 }
 
 /// Verify the amounts of a batched transfer out of `self`, returning the receiver amounts paired
-/// with the sender-keyed total they sum to, and the sender's new balance alongside — what
-/// `try_withdraw_encrypted` takes.
+/// with the sender-keyed total they sum to, and the sender's new balance alongside.
 public(package) fun verify_transfer_amounts<T>(
     self: &EncryptedBalance<T>,
     receiver_pks: vector<PublicKey>,
@@ -324,13 +323,10 @@ public(package) fun try_rekey<T>(
 /// Overwrite `self` with `new` as its whole active balance, dropping every pending deposit. `new`
 /// is not range-checked and is counted as a single merge.
 ///
-/// WARNING: an issuer override gated by `TreasuryCap`. It may break consistency between the tokens
-/// in circulation and the funds in the pool; the issuer is responsible for restoring it.
-public(package) fun overwrite_unchecked<T>(
-    self: &mut EncryptedBalance<T>,
-    _t: &mut TreasuryCap<T>,
-    new: EncryptedAmount,
-) {
+/// WARNING: unchecked. The caller must restrict this to the token issuer, and it may break
+/// consistency between the tokens in circulation and the funds in the pool; the issuer is
+/// responsible for restoring it.
+public(package) fun overwrite_unchecked<T>(self: &mut EncryptedBalance<T>, new: EncryptedAmount) {
     self.active.amount = new;
     self.active.upper_bound = 1;
     self.pending.set_empty();
