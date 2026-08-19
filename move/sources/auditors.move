@@ -7,7 +7,7 @@ use contra::{
     balance::EncryptedCoin,
     encrypted_amount::ciphertexts_u32,
     nizk::{ElGamalProof, verify_elgamal},
-    session::SessionId,
+    session_id::SessionId,
     twisted_elgamal::{Self, PublicKey, Encryption}
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -90,7 +90,7 @@ public(package) fun verify_transfer<T>(
     auditors: &Auditors,
     receiver_coins: &vector<EncryptedCoin<T>>,
     auditor_package: Option<AuditorPackage>,
-    session: SessionId,
+    session_id: SessionId,
 ): Option<VerifiedAuditorHandles> {
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
@@ -107,11 +107,11 @@ public(package) fun verify_transfer<T>(
     // Build the auditor ciphertexts once; `verify_under` reuses them for both key sets.
     let encryptions = build_auditor_encryptions(&handles, receiver_coins);
     let pk = if (
-        verify_under(&encryptions, &proof, &auditors.current_pks, session.auditor_elgamal())
+        verify_under(&encryptions, &proof, &auditors.current_pks, session_id.auditor_elgamal())
     ) {
         auditors.current_pks[0]
     } else if (
-        verify_under(&encryptions, &proof, &auditors.previous_pks, session.auditor_elgamal())
+        verify_under(&encryptions, &proof, &auditors.previous_pks, session_id.auditor_elgamal())
     ) {
         auditors.previous_pks[0]
     } else {

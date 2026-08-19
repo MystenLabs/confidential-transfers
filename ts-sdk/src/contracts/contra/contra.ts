@@ -96,7 +96,7 @@ import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
 import * as policy from './policy.js';
-import * as session from './session.js';
+import * as session_id from './session_id.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::contra';
@@ -139,7 +139,7 @@ export const Account = new MoveStruct({
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
-		session: session.SessionId,
+		session_id: session_id.SessionId,
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
 		balance: balance.EncryptedBalance,
@@ -772,12 +772,11 @@ export interface BatchedTransferOptions {
  * one proof; `range_proofs` range-check every limb; and `total_sender_handle` is
  * the single sender-keyed decryption handle for the total (its commitment is
  * reconstructed on chain from the receiver amounts). The amounts are verified
- * against `sender`'s own key and session (see `verify_transfer_amounts`), so they
- * are bound to this transfer by construction. `balance_proof` proves the sender's
- * balance drops by exactly the transfer total (see `balance::try_withdraw_batch`).
- * `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
- * transfer's blinding and recover its outgoing amounts; it is not otherwise
- * verified on chain.
+ * against `sender`'s own key and session id, so they are bound to this transfer by
+ * construction. `balance_proof` proves the sender's balance drops by exactly the
+ * transfer total (see `balance::try_withdraw_batch`). `seed_point` (= `P`) is
+ * forwarded to the events so the sender can re-derive each transfer's blinding and
+ * recover its outgoing amounts; it is not otherwise verified on chain.
  *
  * Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package`
  * must be `some`. See `auditors::verify_transfer` for details.

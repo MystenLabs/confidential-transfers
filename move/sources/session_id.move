@@ -3,7 +3,7 @@
 
 /// The Fiat-Shamir transcript of one token account: the session it is bound to, and the domain
 /// separator of each protocol proven against it.
-module contra::session;
+module contra::session_id;
 
 // === Constants ===
 
@@ -38,27 +38,6 @@ public(package) fun batch_ddh(self: &SessionId): vector<u8> { self.dst(DST_BATCH
 public(package) fun auditor_elgamal(self: &SessionId): vector<u8> { self.dst(DST_AUDITOR_ELGAMAL) }
 
 fun dst(self: &SessionId, tag: u8): vector<u8> {
-    let mut bytes = self.id;
-    bytes.push_back(tag);
-    bytes
-}
-
-// === Test Helpers ===
-
-#[test_only]
-public(package) fun protocol_id_ddh(): u8 { DST_DDH }
-
-#[test_only]
-public(package) fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
-
-#[test_only]
-public(package) fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
-
-#[test_only]
-public(package) fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
-
-#[test_only]
-public(package) fun dst_with_tag(self: &SessionId, tag: u8): vector<u8> {
     let mut bytes = self.id;
     bytes.push_back(tag);
     bytes

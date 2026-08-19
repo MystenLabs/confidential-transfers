@@ -82,7 +82,7 @@ use contra::{
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
-    session::{Self, SessionId},
+    session_id::{Self, SessionId},
     twisted_elgamal::PublicKey
 };
 use sui::{
@@ -161,7 +161,7 @@ public struct Account has key {
 
 /// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
-    session: SessionId,
+    session_id: SessionId,
     is_frozen: bool,
     accepts_deposits: bool,
     balance: EncryptedBalance<T>,
@@ -318,8 +318,8 @@ public fun share_account(account: Account) {
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    let session = account.session<T>();
-    account.add_token_account<T>(pk, session);
+    let session_id = account.derive_session_id<T>();
+    account.add_token_account<T>(pk, session_id);
 }
 
 /// Permissionless `register`: create a `TokenAccount<T>` keyed under the account's `default_pk`,
@@ -331,8 +331,8 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
         ERegistrationNotPermissionless,
     );
     let pk = *account.default_pk.borrow();
-    let session = account.session<T>();
-    account.add_token_account<T>(pk, session);
+    let session_id = account.derive_session_id<T>();
+    account.add_token_account<T>(pk, session_id);
 }
 
 /// Like `register_with_default_pk`, but a no-op if `account` already has a `TokenAccount<T>`.
@@ -342,14 +342,14 @@ public fun try_register_with_default_pk<T>(account: &mut Account, ct: &Confident
 
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
 /// registered. The caller is responsible for any authorization.
-fun add_token_account<T>(account: &mut Account, pk: PublicKey, session: SessionId) {
+fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: SessionId) {
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     events::emit_new_registration<T>(account.owner, pk);
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
-            session,
+            session_id,
             is_frozen: false,
             accepts_deposits: true,
             balance: balance::new<T>(pk),
@@ -454,8 +454,8 @@ fun rekey_token_account_internal<T>(
 ): bool {
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let session = token_account.session;
-    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session)) {
+    let session_id = token_account.session_id;
+    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
         events::emit_token_rekeyed<T>(owner, new_pk);
         true
     } else {
@@ -499,7 +499,7 @@ public fun wrap<T>(
 /// transfer total (under `sender`'s key) into one proof; `range_proofs` range-check every limb; and
 /// `total_sender_handle` is the single sender-keyed decryption handle for the total (its commitment is
 /// reconstructed on chain from the receiver amounts). The amounts are verified against `sender`'s own
-/// key and session (see `verify_transfer_amounts`), so they are bound to this transfer by construction.
+/// key and session id, so they are bound to this transfer by construction.
 /// `balance_proof` proves the sender's balance drops by exactly the transfer total (see
 /// `balance::try_withdraw_batch`). `seed_point` (= `P`) is forwarded to the events so the sender can
 /// re-derive each transfer's blinding and recover its outgoing amounts; it is not otherwise verified on
@@ -550,12 +550,12 @@ public fun batched_transfer<T>(
             sender_encs_pok,
             range_proofs,
             &balance_proof,
-            sender.session,
+            sender.session_id,
         );
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
-        let auditor_data = ct.auditors.verify_transfer(&coins, auditor_package, sender.session);
+        let auditor_data = ct.auditors.verify_transfer(&coins, auditor_package, sender.session_id);
         // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order.
         coins.reverse();
         TransferBatch::Ok {
@@ -690,12 +690,12 @@ public fun update_active_balance<T>(
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let session = token_account.session;
+    let session_id = token_account.session_id;
     let new_balance = token_account
         .balance
-        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session);
+        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session_id);
     assert!(
-        token_account.balance.try_update_active(new_balance, balance_proof, session),
+        token_account.balance.try_update_active(new_balance, balance_proof, session_id),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
@@ -794,18 +794,18 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
-    let session = account.session;
+    let session_id = account.session_id;
     let new_balance = account
         .balance
         .verify_amount(
             new_balance,
             &new_balance_consistency_proof,
             new_balance_range_proofs,
-            session,
+            session_id,
         );
     let withdrawn = account
         .balance
-        .try_withdraw_public(amount, new_balance, balance_proof, session, &mut pool.id, ctx);
+        .try_withdraw_public(amount, new_balance, balance_proof, session_id, &mut pool.id, ctx);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
         (true, withdrawn.destroy_some())
@@ -936,12 +936,12 @@ fun has_token<T>(account: &Account): bool {
 }
 
 /// The `SessionId` binding proofs to `account`'s `TokenAccount<T>`, derived from a 20-byte id.
-fun session<T>(account: &Account): SessionId {
+fun derive_session_id<T>(account: &Account): SessionId {
     // `derive_address` hashes the account ID together with the full `TokenAccountKey<T>` type
     // tag. The account ID is itself derived from the `AccountRegistry`, which is unique per
     // standalone deployment of contra.
     // TODO: Once contra is added to the framework, verify session ids stay chain-unique.
-    session::new(derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>())
+    session_id::new(derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>())
         .to_bytes()
         .take(20))
 }
@@ -964,16 +964,24 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 use contra::twisted_elgamal::Encryption;
 
 #[test_only]
-public fun protocol_id_ddh(): u8 { session::protocol_id_ddh() }
+public fun dst_ddh_for_testing<T>(account: &Account): vector<u8> {
+    account.derive_session_id<T>().ddh()
+}
 
 #[test_only]
-public fun protocol_id_elgamal(): u8 { session::protocol_id_elgamal() }
+public fun dst_elgamal_for_testing<T>(account: &Account): vector<u8> {
+    account.derive_session_id<T>().elgamal()
+}
 
 #[test_only]
-public fun protocol_id_batch_ddh(): u8 { session::protocol_id_batch_ddh() }
+public fun dst_batch_ddh_for_testing<T>(account: &Account): vector<u8> {
+    account.derive_session_id<T>().batch_ddh()
+}
 
 #[test_only]
-public fun protocol_id_auditor_elgamal(): u8 { session::protocol_id_auditor_elgamal() }
+public fun dst_auditor_elgamal_for_testing<T>(account: &Account): vector<u8> {
+    account.derive_session_id<T>().auditor_elgamal()
+}
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {
@@ -1015,9 +1023,4 @@ public fun default_pk(account: &Account): Option<Element<G>> {
 #[test_only]
 public fun token_public_key<T>(account: &Account): Element<G> {
     *account[TokenAccountKey<T>()].pk().as_element()
-}
-
-#[test_only]
-public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
-    account.session<T>().dst_with_tag(protocol_id)
 }

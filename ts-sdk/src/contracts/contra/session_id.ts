@@ -11,7 +11,7 @@ import { bcs } from '@mysten/sui/bcs';
 
 import { MoveStruct } from '../utils/index.js';
 
-const $moduleName = '@local-pkg/contra::session';
+const $moduleName = '@local-pkg/contra::session_id';
 export const SessionId = new MoveStruct({
 	name: `${$moduleName}::SessionId`,
 	fields: {

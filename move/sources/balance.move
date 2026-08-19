@@ -17,7 +17,7 @@ use contra::{
         in_range_verified_from_value,
     },
     nizk::{DdhProof, ElGamalProof},
-    session::SessionId,
+    session_id::SessionId,
     twisted_elgamal::{Self, Encryption, PublicKey}
 };
 use sui::{
@@ -125,73 +125,20 @@ public(package) fun verify_amount<T>(
     amount: EncryptedAmount,
     pok: &ElGamalProof,
     range_proofs: RangeProofs,
-    session: SessionId,
+    session_id: SessionId,
 ): InRangeVerifiedEncryptedAmount {
     let verified = encrypted_amount::verify_encrypted_amount(
         amount,
         self.pk,
         pok,
-        session.elgamal(),
+        session_id.elgamal(),
     );
     let mut in_range = encrypted_amount::verify_in_range(
         vector[verified],
         range_proofs,
-        session.range_proof_16(),
+        session_id.range_proof_16(),
     );
     in_range.pop_back()
-}
-
-/// Verify the amounts of a batched transfer out of `self`: the receiver amounts, the sender's new
-/// balance, and the sender-keyed total the receivers sum to.
-fun verify_transfer_amounts<T>(
-    self: &EncryptedBalance<T>,
-    receiver_pks: vector<PublicKey>,
-    receiver_amounts: vector<EncryptedAmount>,
-    receiver_encs_pok: vector<ElGamalProof>,
-    new_balance: EncryptedAmount,
-    total_sender_handle: Element<G>,
-    sender_encs_pok: ElGamalProof,
-    range_proofs: RangeProofs,
-    session: SessionId,
-): (vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount, VerifiedEncryption) {
-    let n = receiver_amounts.length();
-    assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
-
-    // Each receiver amount is proven a valid encryption under its own key.
-    let mut verified_amounts = vector::tabulate!(n, |i| {
-        encrypted_amount::verify_encrypted_amount(
-            receiver_amounts[i],
-            receiver_pks[i],
-            &receiver_encs_pok[i],
-            session.elgamal(),
-        )
-    });
-
-    // The total's commitment is reconstructed from the receiver commitments and the given handle.
-    let total = twisted_elgamal::new(
-        encrypted_amount::sum_ciphertexts(&receiver_amounts),
-        total_sender_handle,
-    );
-
-    // Sender side: the new-balance limbs and the total are verified under `self.pk` in one proof.
-    let (new_balance, total_sender) = encrypted_amount::verify_encrypted_amount_and_encryption(
-        new_balance,
-        total,
-        self.pk,
-        &sender_encs_pok,
-        session.elgamal(),
-    );
-    verified_amounts.push_back(new_balance);
-
-    // One batched range proof over every limb, grouped into the n receivers followed by the new
-    // balance.
-    let mut receiver_amounts = encrypted_amount::verify_in_range(
-        verified_amounts,
-        range_proofs,
-        session.range_proof_16(),
-    );
-    let new_balance = receiver_amounts.pop_back();
-    (receiver_amounts, new_balance, total_sender)
 }
 
 // === Withdrawals ===
@@ -205,13 +152,13 @@ public(package) fun try_withdraw_public<T>(
     amount: u64,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session: SessionId,
+    session_id: SessionId,
     pool: &mut UID,
     ctx: &mut TxContext,
 ): Option<Coin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session)) {
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
         return option::none()
     };
     option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
@@ -234,7 +181,7 @@ public(package) fun try_withdraw_batch<T>(
     sender_encs_pok: ElGamalProof,
     range_proofs: RangeProofs,
     balance_proof: &DdhProof,
-    session: SessionId,
+    session_id: SessionId,
 ): Option<vector<EncryptedCoin<T>>> {
     let (receiver_amounts, new_balance, total_sender) = self.verify_transfer_amounts(
         receiver_pks,
@@ -244,11 +191,11 @@ public(package) fun try_withdraw_batch<T>(
         total_sender_handle,
         sender_encs_pok,
         range_proofs,
-        session,
+        session_id,
     );
     let mut expected = self.active.collapse();
     expected.sub_assign(total_sender.encryption());
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session)) {
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
         return option::none()
     };
     option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
@@ -270,10 +217,10 @@ public(package) fun try_update_active<T>(
     self: &mut EncryptedBalance<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session: SessionId,
+    session_id: SessionId,
 ): bool {
     let expected = self.active.collapse();
-    self.try_replace_active(&new_balance, &expected, balance_proof, session)
+    self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
 }
 
 /// Re-key `self` to `new_pk`, swapping each limb's decryption handle for the matching
@@ -284,13 +231,13 @@ public(package) fun try_rekey<T>(
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
-    session: SessionId,
+    session_id: SessionId,
 ): bool {
     assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
     if (
         self
             .active
-            .try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, session.batch_ddh())
+            .try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, session_id.batch_ddh())
     ) {
         self.pk = new_pk;
         true
@@ -314,6 +261,59 @@ public(package) fun overwrite_unchecked<T>(self: &mut EncryptedBalance<T>, new: 
 
 // === Private functions ===
 
+/// Verify the amounts of a batched transfer out of `self`: the receiver amounts, the sender's new
+/// balance, and the sender-keyed total the receivers sum to.
+fun verify_transfer_amounts<T>(
+    self: &EncryptedBalance<T>,
+    receiver_pks: vector<PublicKey>,
+    receiver_amounts: vector<EncryptedAmount>,
+    receiver_encs_pok: vector<ElGamalProof>,
+    new_balance: EncryptedAmount,
+    total_sender_handle: Element<G>,
+    sender_encs_pok: ElGamalProof,
+    range_proofs: RangeProofs,
+    session_id: SessionId,
+): (vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount, VerifiedEncryption) {
+    let n = receiver_amounts.length();
+    assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
+
+    // Each receiver amount is proven a valid encryption under its own key.
+    let mut verified_amounts = vector::tabulate!(n, |i| {
+        encrypted_amount::verify_encrypted_amount(
+            receiver_amounts[i],
+            receiver_pks[i],
+            &receiver_encs_pok[i],
+            session_id.elgamal(),
+        )
+    });
+
+    // The total's commitment is reconstructed from the receiver commitments and the given handle.
+    let total = twisted_elgamal::new(
+        encrypted_amount::sum_ciphertexts(&receiver_amounts),
+        total_sender_handle,
+    );
+
+    // Sender side: the new-balance limbs and the total are verified under `self.pk` in one proof.
+    let (new_balance, total_sender) = encrypted_amount::verify_encrypted_amount_and_encryption(
+        new_balance,
+        total,
+        self.pk,
+        &sender_encs_pok,
+        session_id.elgamal(),
+    );
+    verified_amounts.push_back(new_balance);
+
+    // One batched range proof over every limb, grouped into the n receivers followed by the new
+    // balance.
+    let mut receiver_amounts = encrypted_amount::verify_in_range(
+        verified_amounts,
+        range_proofs,
+        session_id.range_proof_16(),
+    );
+    let new_balance = receiver_amounts.pop_back();
+    (receiver_amounts, new_balance, total_sender)
+}
+
 /// Replace the active balance with `new_balance` if `balance_proof` shows it encrypts the same value
 /// as `expected`.
 fun try_replace_active<T>(
@@ -321,10 +321,10 @@ fun try_replace_active<T>(
     new_balance: &InRangeVerifiedEncryptedAmount,
     expected: &Encryption,
     balance_proof: &DdhProof,
-    session: SessionId,
+    session_id: SessionId,
 ): bool {
     assert!(new_balance.pk() == &self.pk, EInvalidPublicKey);
-    if (new_balance.verify_equal(expected, balance_proof, session.ddh())) {
+    if (new_balance.verify_equal(expected, balance_proof, session_id.ddh())) {
         self.active.overwrite(new_balance);
         true
     } else {

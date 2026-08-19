@@ -11,7 +11,7 @@ use contra::{
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
     policy,
-    session,
+    session_id,
     twisted_elgamal::{encrypt_trivial_for_testing, encrypt_zero, public_key, PublicKey, Encryption}
 };
 use std::unit_test::{Self, assert_eq};
@@ -148,14 +148,14 @@ fun test_simple_flow() {
         encrypt_zero(),
     );
     let r = 32533; // Randomness for the trivial encryptions of the transferred amount below.
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
     let receiver_amount = amount_for_testing(50, &pk_2, r);
     let sender_amount = amount_for_testing(50, &pk_1, r);
     let total_sender = sender_amount.collapse();
 
     let old_balance = account_1.balance<TestCurrency>();
     let sum_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance.collapse(),
         &total_sender,
@@ -213,13 +213,11 @@ fun test_simple_flow() {
     zero.add_assign_u64(taken_amount);
     zero.sub_assign(&account_2.balance<TestCurrency>());
     let sum_proof = nizk::zero_proof_for_testing(
-        account_2.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_2.dst_ddh_for_testing<TestCurrency>(),
         &zero,
         &sk_2,
     );
-    let elgamal_dst_2 = account_2.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_elgamal(),
-    );
+    let elgamal_dst_2 = account_2.dst_elgamal_for_testing<TestCurrency>();
     let new_balance_consistency_proof = consistency_proof_for_testing(
         elgamal_dst_2,
         20,
@@ -347,7 +345,7 @@ fun test_batched_transfer() {
     );
     let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
     let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
 
     // One batched range proof covering [receiver_a, receiver_b, new_balance] under
     // [pk_2, pk_3, pk_1], constructed by the sender under their ELGAMAL DST.
@@ -375,7 +373,7 @@ fun test_batched_transfer() {
         &pk_1,
     );
     let balance_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance_ea.collapse(),
         &total_sender,
@@ -513,7 +511,7 @@ fun test_batched_transfer_with_auditor() {
     );
     let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
     let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
     let receiver_consistency_proofs = vector[
         consistency_proof_for_testing(elgamal_dst, 30, &taken_a_ea, r_a, &pk_2),
         consistency_proof_for_testing(elgamal_dst, 20, &taken_b_ea, r_b, &pk_3),
@@ -534,7 +532,7 @@ fun test_batched_transfer_with_auditor() {
         &pk_1,
     );
     let balance_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance_ea.collapse(),
         &total_sender,
@@ -543,9 +541,7 @@ fun test_batched_transfer_with_auditor() {
 
     // The auditor's handles + one witness-folded ElGamal proof over all auditor ciphertexts, for the
     // two receiver amounts (both limb-0-only). `verify_transfer` checks the single proof.
-    let auditor_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_auditor_elgamal(),
-    );
+    let auditor_dst = account_1.dst_auditor_elgamal_for_testing<TestCurrency>();
     let (handles, proof) = build_auditor_data(
         vector[30, 20],
         vector[r_a, r_b],
@@ -689,7 +685,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
     );
     let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
     let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
     let receiver_consistency_proofs = vector[
         consistency_proof_for_testing(elgamal_dst, 30, &taken_a_ea, r_a, &pk_2),
         consistency_proof_for_testing(elgamal_dst, 20, &taken_b_ea, r_b, &pk_3),
@@ -710,7 +706,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
         &pk_1,
     );
     let balance_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance_ea.collapse(),
         &total_sender,
@@ -723,7 +719,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
         vector[30, 20],
         vector[r_a, r_b],
         &auditor_pk,
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_auditor_elgamal()),
+        account_1.dst_auditor_elgamal_for_testing<TestCurrency>(),
     );
     let auditor_package = auditors::new_auditor_package(auditor_handles, auditor_proof);
 
@@ -789,7 +785,7 @@ fun auditor_disabled_accepts_no_data() {
         &auditor,
         &amounts,
         option::none(),
-        session::new(b"dst"),
+        session_id::new(b"dst"),
     );
     assert!(handles.is_none());
     handles.destroy!(|a| a.destroy_empty());
@@ -802,7 +798,7 @@ fun auditor_disabled_accepts_no_data() {
 fun auditor_enabled_requires_data() {
     let auditor = auditors::new(vector[test_key()]);
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
-    auditors::verify_transfer(&auditor, &amounts, option::none(), session::new(b"dst")).destroy!(
+    auditors::verify_transfer(&auditor, &amounts, option::none(), session_id::new(b"dst")).destroy!(
         |a| a.destroy_empty(),
     );
     amounts.destroy_empty();
@@ -820,7 +816,7 @@ fun auditor_disabled_forbids_data() {
         &auditor,
         &amounts,
         option::some(package),
-        session::new(b"dst"),
+        session_id::new(b"dst"),
     ).destroy!(|a| a.destroy_empty());
     amounts.destroy_empty();
     unit_test::destroy(auditor);
@@ -838,7 +834,7 @@ fun auditor_disable_grace_accepts_no_data() {
         &auditor,
         &amounts,
         option::none(),
-        session::new(b"dst"),
+        session_id::new(b"dst"),
     );
     assert!(handles.is_none());
     handles.destroy!(|a| a.destroy_empty());
@@ -1066,9 +1062,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 
     // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate: set the
     // account key (target), then `rekey_token_account` catches the token's balance up from token.pk to it.
-    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
+    let batch_ddh_dst = account_1.dst_batch_ddh_for_testing<TestCurrency>();
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
     let id = ristretto255::g_identity();
@@ -1177,9 +1171,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
 
     // A re-key proof built with the wrong witness -- verification fails, standing in for a raced
     // balance the client's handles no longer match.
-    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
+    let batch_ddh_dst = account_1.dst_batch_ddh_for_testing<TestCurrency>();
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
     let wrong_w = ristretto255::scalar_from_u64(7);
     let id = ristretto255::g_identity();
@@ -1280,9 +1272,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
 
-    let batch_ddh_dst = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_batch_ddh(),
-    );
+    let batch_ddh_dst = account_1.dst_batch_ddh_for_testing<TestCurrency>();
     let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
     let id = ristretto255::g_identity();
     let good_proof = nizk::prove_ddh(
@@ -1610,13 +1600,13 @@ fun test_account_freeze_blocks_batched_transfer() {
         encrypt_zero(),
         encrypt_zero(),
     );
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
     let receiver_amount = amount_for_testing(50, &pk_2, r);
     let sender_amount = amount_for_testing(50, &pk_1, r);
     let total_sender = sender_amount.collapse();
     let old_balance = account_1.balance<TestCurrency>();
     let sum_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance_ea.collapse(),
         &total_sender,
@@ -1735,13 +1725,13 @@ fun test_account_freeze_blocks_add_to_batch() {
         encrypt_zero(),
         encrypt_zero(),
     );
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
     let receiver_amount = amount_for_testing(50, &pk_2, r);
     let sender_amount = amount_for_testing(50, &pk_1, r);
     let total_sender = sender_amount.collapse();
     let old_balance = account_1.balance<TestCurrency>();
     let sum_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance_ea.collapse(),
         &total_sender,
@@ -1863,13 +1853,13 @@ fun test_transfer_after_register_with_default_pk() {
         encrypt_zero(),
         encrypt_zero(),
     );
-    let elgamal_dst = account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_elgamal());
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
     let receiver_amount = amount_for_testing(50, &pk_2, r);
     let sender_amount = amount_for_testing(50, &pk_1, r);
     let total_sender = sender_amount.collapse();
     let old_balance = account_1.balance<TestCurrency>();
     let sum_proof = nizk::sum_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &old_balance,
         &new_balance_ea.collapse(),
         &total_sender,
@@ -2093,13 +2083,11 @@ fun test_account_freeze_blocks_unwrap() {
     zero.add_assign_u64(taken_amount);
     zero.sub_assign(&account_1.balance<TestCurrency>());
     let sum_proof = nizk::zero_proof_for_testing(
-        account_1.derive_dst_for_testing<TestCurrency>(contra::protocol_id_ddh()),
+        account_1.dst_ddh_for_testing<TestCurrency>(),
         &zero,
         &sk_1,
     );
-    let elgamal_dst_1 = account_1.derive_dst_for_testing<TestCurrency>(
-        contra::protocol_id_elgamal(),
-    );
+    let elgamal_dst_1 = account_1.dst_elgamal_for_testing<TestCurrency>();
     let new_balance_consistency_proof = consistency_proof_for_testing(
         elgamal_dst_1,
         70,
