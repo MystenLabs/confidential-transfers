@@ -127,7 +127,9 @@ public(package) fun deposit_encrypted<T>(
 ): EncryptedAmount {
     assert!(self.has_deposit_slot(), EBalanceFull);
     let EncryptedCoin { amount } = coin;
-    self.pending.merge_one(&self.pk, &amount);
+    // Mixing keys would make the balance undecryptable by its owner.
+    assert!(amount.pk() == &self.pk, EInvalidPublicKey);
+    self.pending.add_assign(&amount);
     *amount.amount()
 }
 
@@ -138,7 +140,7 @@ public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
     let value = self.public_balance;
     self.public_balance = 0;
     // A zero-valued public deposit is a no-op, so it consumes no slot.
-    if (value > 0) self.active.merge_one(&self.pk, &in_range_verified_from_value(value, self.pk));
+    if (value > 0) self.active.add_assign(&in_range_verified_from_value(value, self.pk));
 }
 
 // === Verification ===
@@ -384,15 +386,9 @@ fun merge_into(self: &mut BoundedEncryptedAmount, other: &mut BoundedEncryptedAm
     other.set_empty();
 }
 
-/// Fold one u16-bounded, range-proven `amount` into `self`, the single point where value enters a
-/// balance. Aborts with `EInvalidPublicKey` unless `amount` is encrypted under `pk`, the key `self`
-/// is kept under: mixing keys would make the balance undecryptable by its owner.
-fun merge_one(
-    self: &mut BoundedEncryptedAmount,
-    pk: &PublicKey,
-    amount: &InRangeVerifiedEncryptedAmount,
-) {
-    assert!(amount.pk() == pk, EInvalidPublicKey);
+/// Fold one u16-bounded, range-proven `amount` into `self`. The caller is responsible for it being
+/// under the same key.
+fun add_assign(self: &mut BoundedEncryptedAmount, amount: &InRangeVerifiedEncryptedAmount) {
     self.amount.add_assign(amount.amount());
     self.upper_bound = self.upper_bound + 1;
 }
