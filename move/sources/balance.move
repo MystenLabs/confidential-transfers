@@ -72,10 +72,8 @@ public struct EncryptedCoin<phantom T> {
     amount: InRangeVerifiedEncryptedAmount,
 }
 
-/// A batched transfer out of an `EncryptedBalance<T>`, verified and ready to execute. Built only by
-/// `verify_transfer_amounts` and consumed only by `try_withdraw_encrypted`; holding no abilities, it
-/// can be neither stored nor dropped nor taken apart, so `total_sender` can only ever reach the
-/// withdrawal paired with the receiver amounts it was summed from.
+/// A batched transfer out of an `EncryptedBalance<T>`, verified and ready to execute.
+/// By construction, the sum of `receiver_amounts` is the total leaving the sender.
 public struct VerifiedTransfer<phantom T> {
     receiver_amounts: vector<InRangeVerifiedEncryptedAmount>,
     new_balance: InRangeVerifiedEncryptedAmount,
