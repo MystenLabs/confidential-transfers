@@ -86,7 +86,7 @@ public(package) fun update(
 /// `current_pks`, else against `previous_pks`. Returns the verified handles tagged with the auditor
 /// key that accepted them, or `none` when the transfer carries no auditor data. The proof's
 /// transcript is derived here from the transfer's `SessionId`.
-public(package) fun verify_transfer<T>(
+public(package) fun prepare_auditor_data<T>(
     auditors: &Auditors,
     receiver_coins: &vector<EncryptedCoin<T>>,
     auditor_package: Option<AuditorPackage>,

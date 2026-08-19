@@ -779,7 +779,7 @@ export interface BatchedTransferOptions {
  * recover its outgoing amounts; it is not otherwise verified on chain.
  *
  * Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package`
- * must be `some`. See `auditors::verify_transfer` for details.
+ * must be `some`. See `auditors::prepare_auditor_data` for details.
  *
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
  * `BalanceProofFailed`. Aborts if a proof or the auditor requirement fails. Call

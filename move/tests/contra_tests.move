@@ -540,7 +540,7 @@ fun test_batched_transfer_with_auditor() {
     );
 
     // The auditor's handles + one witness-folded ElGamal proof over all auditor ciphertexts, for the
-    // two receiver amounts (both limb-0-only). `verify_transfer` checks the single proof.
+    // two receiver amounts (both limb-0-only). `prepare_auditor_data` checks the single proof.
     let auditor_dst = account_1.dst_auditor_elgamal_for_testing<TestCurrency>();
     let (handles, proof) = build_auditor_data(
         vector[30, 20],
@@ -769,7 +769,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
 //
 // At most one auditor key (each of `current_pks` / `previous_pks` holds ≤1). Auditing is disabled
 // exactly when `current_pks` is empty. A transfer must carry auditor data iff auditing is enabled.
-// These exercise `verify_transfer`'s presence branches directly (they never read `receiver_amounts`,
+// These exercise `prepare_auditor_data`'s presence branches directly (they never read `receiver_amounts`,
 // so an empty vector is fine).
 
 fun test_key(): PublicKey {
@@ -781,7 +781,7 @@ fun test_key(): PublicKey {
 fun auditor_disabled_accepts_no_data() {
     let auditor = auditors::new(vector[]);
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
-    let handles = auditors::verify_transfer(
+    let handles = auditors::prepare_auditor_data(
         &auditor,
         &amounts,
         option::none(),
@@ -798,9 +798,12 @@ fun auditor_disabled_accepts_no_data() {
 fun auditor_enabled_requires_data() {
     let auditor = auditors::new(vector[test_key()]);
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
-    auditors::verify_transfer(&auditor, &amounts, option::none(), session_id::new(b"dst")).destroy!(
-        |a| a.destroy_empty(),
-    );
+    auditors::prepare_auditor_data(
+        &auditor,
+        &amounts,
+        option::none(),
+        session_id::new(b"dst"),
+    ).destroy!(|a| a.destroy_empty());
     amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
@@ -812,7 +815,7 @@ fun auditor_disabled_forbids_data() {
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
     // A trivial (empty) package suffices: the presence check aborts before the proof is inspected.
     let package = auditors::new_auditor_package(vector[], nizk::default_elgamal_proof());
-    auditors::verify_transfer(
+    auditors::prepare_auditor_data(
         &auditor,
         &amounts,
         option::some(package),
@@ -830,7 +833,7 @@ fun auditor_disable_grace_accepts_no_data() {
     let mut auditor = auditors::new(vector[test_key()]);
     auditors::update(&mut auditor, vector[], vector[test_key()]);
     let amounts = vector<EncryptedCoin<TestCurrency>>[];
-    let handles = auditors::verify_transfer(
+    let handles = auditors::prepare_auditor_data(
         &auditor,
         &amounts,
         option::none(),
@@ -953,7 +956,7 @@ fun transfer<T>(
 /// the single `auditor_pk`. Each amount's low u32 limb is the ciphertext `(r_i*g + v_i*h, r_i*auditor_pk)`
 /// — its commitment is key-independent, so it equals the receiver's own u32 commitment — and its high
 /// u32 limb is the zero ciphertext. The returned handles are one `[lo, hi]` pair per amount
-/// (`[r_i*auditor_pk, identity]`), matching `verify_transfer`, and the proof covers the `2N` ciphertexts
+/// (`[r_i*auditor_pk, identity]`), matching `prepare_auditor_data`, and the proof covers the `2N` ciphertexts
 /// in receiver-major, limb-minor order.
 fun build_auditor_data(
     values: vector<u64>,

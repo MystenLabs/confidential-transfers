@@ -506,7 +506,7 @@ public fun wrap<T>(
 /// chain.
 ///
 /// Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package` must be `some`. See
-/// `auditors::verify_transfer` for details.
+/// `auditors::prepare_auditor_data` for details.
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts if a
 /// proof or the auditor requirement fails. Call `add` once per receiver, in `receiver_amounts` order,
@@ -555,7 +555,9 @@ public fun batched_transfer<T>(
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
-        let auditor_data = ct.auditors.verify_transfer(&coins, auditor_package, sender.session_id);
+        let auditor_data = ct
+            .auditors
+            .prepare_auditor_data(&coins, auditor_package, sender.session_id);
         // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order.
         coins.reverse();
         TransferBatch::Ok {
