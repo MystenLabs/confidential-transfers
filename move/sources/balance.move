@@ -311,9 +311,7 @@ public(package) fun try_rekey<T>(
 /// Overwrite `self` with `new` as its whole active balance, dropping every pending deposit. `new`
 /// is not range-checked and is counted as a single merge.
 ///
-/// WARNING: unchecked. The caller must restrict this to the token issuer, and it may break
-/// consistency between the tokens in circulation and the funds in the pool; the issuer is
-/// responsible for restoring it.
+/// WARNING: this may break consistency between the tokens in circulation and the funds in the pool.
 public(package) fun overwrite_unchecked<T>(self: &mut EncryptedBalance<T>, new: EncryptedAmount) {
     self.active.amount = new;
     self.active.upper_bound = 1;
