@@ -105,8 +105,7 @@ public(package) fun redeem_public_coin<T>(coin: PublicCoin<T>): u64 {
 
 // === Deposits ===
 
-/// Credit a pool claim to `self`'s public deposits, returning the value credited. Aborts with
-/// `EBalanceFull` if `self` cannot absorb the deposit.
+/// Add a `PublicCoin` to `self`.
 public(package) fun deposit_public<T>(self: &mut EncryptedBalance<T>, coin: PublicCoin<T>): u64 {
     // A non-zero public balance already holds a merge slot, so topping it up needs no new one.
     assert!(self.public_balance > 0 || self.has_deposit_slot(), EBalanceFull);
@@ -115,9 +114,7 @@ public(package) fun deposit_public<T>(self: &mut EncryptedBalance<T>, coin: Publ
     value
 }
 
-/// Credit a receiver-keyed `EncryptedCoin` to `self`'s pending deposits, returning the amount
-/// credited. Aborts with `EInvalidPublicKey` if the coin is not encrypted under `self.pk`, or with
-/// `EBalanceFull` if `self` cannot absorb the deposit.
+/// Deposit an `EncryptedCoin` to `self`.
 public(package) fun deposit_encrypted<T>(
     self: &mut EncryptedBalance<T>,
     coin: EncryptedCoin<T>,
@@ -130,8 +127,7 @@ public(package) fun deposit_encrypted<T>(
     *amount.amount()
 }
 
-/// Fold both kinds of pending deposit into the active balance, freeing their slots. Required before
-/// deposited value can be spent.
+/// Fold both kinds of pending deposit into the active balance, freeing their slots.
 public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
     self.active.merge_into(&mut self.pending);
     let value = self.public_balance;
