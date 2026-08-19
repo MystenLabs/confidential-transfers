@@ -39,10 +39,3 @@ export const EncryptedCoin = new MoveStruct({
 		amount: encrypted_amount.InRangeVerifiedEncryptedAmount,
 	},
 });
-export const VerifiedTransfer = new MoveStruct({
-	name: `${$moduleName}::VerifiedTransfer<phantom T>`,
-	fields: {
-		receiver_amounts: bcs.vector(encrypted_amount.InRangeVerifiedEncryptedAmount),
-		total_sender: encrypted_amount.VerifiedEncryption,
-	},
-});

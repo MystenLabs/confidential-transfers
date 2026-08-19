@@ -539,11 +539,9 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
-    let session = sender.session;
-
-    let (transfer, new_balance) = sender
+    let withdrawn = sender
         .balance
-        .verify_transfer_amounts(
+        .try_withdraw_batch(
             receiver_pks,
             receiver_amounts,
             receiver_encs_pok,
@@ -551,19 +549,13 @@ public fun batched_transfer<T>(
             total_sender_handle,
             sender_encs_pok,
             range_proofs,
-            session,
+            &balance_proof,
+            sender.session,
         );
-
-    let auditor_data = ct
-        .auditors
-        .verify_transfer(transfer.receiver_amounts(), auditor_package, session);
-
-    let withdrawn = sender
-        .balance
-        .try_withdraw_batch(transfer, new_balance, &balance_proof, session);
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
+        let auditor_data = ct.auditors.verify_transfer(&coins, auditor_package, sender.session);
         // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order.
         coins.reverse();
         TransferBatch::Ok {
@@ -576,7 +568,7 @@ public fun batched_transfer<T>(
         }
     } else {
         withdrawn.destroy_none();
-        destroy(auditor_data);
+        // The balance proof failed, so no receiver is credited and the auditor data goes unchecked.
         TransferBatch::BalanceProofFailed
     }
 }

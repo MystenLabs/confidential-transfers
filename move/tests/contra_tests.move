@@ -6,6 +6,7 @@ module contra::contra_tests;
 
 use contra::{
     auditors,
+    balance::EncryptedCoin,
     contra,
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
@@ -783,7 +784,7 @@ fun test_key(): PublicKey {
 #[test]
 fun auditor_disabled_accepts_no_data() {
     let auditor = auditors::new(vector[]);
-    let amounts = vector<encrypted_amount::InRangeVerifiedEncryptedAmount>[];
+    let amounts = vector<EncryptedCoin<TestCurrency>>[];
     let handles = auditors::verify_transfer(
         &auditor,
         &amounts,
@@ -792,6 +793,7 @@ fun auditor_disabled_accepts_no_data() {
     );
     assert!(handles.is_none());
     auditors::destroy(handles);
+    amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
 
@@ -799,10 +801,11 @@ fun auditor_disabled_accepts_no_data() {
 #[test, expected_failure(abort_code = ::contra::auditors::EMissingAuditorData)]
 fun auditor_enabled_requires_data() {
     let auditor = auditors::new(vector[test_key()]);
-    let amounts = vector<encrypted_amount::InRangeVerifiedEncryptedAmount>[];
+    let amounts = vector<EncryptedCoin<TestCurrency>>[];
     auditors::destroy(
         auditors::verify_transfer(&auditor, &amounts, option::none(), session::new(b"dst")),
     );
+    amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
 
@@ -810,12 +813,13 @@ fun auditor_enabled_requires_data() {
 #[test, expected_failure(abort_code = ::contra::auditors::EUnexpectedAuditorData)]
 fun auditor_disabled_forbids_data() {
     let auditor = auditors::new(vector[]);
-    let amounts = vector<encrypted_amount::InRangeVerifiedEncryptedAmount>[];
+    let amounts = vector<EncryptedCoin<TestCurrency>>[];
     // A trivial (empty) package suffices: the presence check aborts before the proof is inspected.
     let package = auditors::new_auditor_package(vector[], nizk::default_elgamal_proof());
     auditors::destroy(
         auditors::verify_transfer(&auditor, &amounts, option::some(package), session::new(b"dst")),
     );
+    amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
 
@@ -826,7 +830,7 @@ fun auditor_disabled_forbids_data() {
 fun auditor_disable_grace_accepts_no_data() {
     let mut auditor = auditors::new(vector[test_key()]);
     auditors::update(&mut auditor, vector[], vector[test_key()]);
-    let amounts = vector<encrypted_amount::InRangeVerifiedEncryptedAmount>[];
+    let amounts = vector<EncryptedCoin<TestCurrency>>[];
     let handles = auditors::verify_transfer(
         &auditor,
         &amounts,
@@ -835,6 +839,7 @@ fun auditor_disable_grace_accepts_no_data() {
     );
     assert!(handles.is_none());
     auditors::destroy(handles);
+    amounts.destroy_empty();
     unit_test::destroy(auditor);
 }
 
