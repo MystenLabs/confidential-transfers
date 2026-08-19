@@ -22,8 +22,6 @@ const ETooManyAuditors: u64 = 4;
 
 const U32_LIMBS: u64 = 2;
 
-/// Protocol ID for Fiat-Shamir domain separation, appended to the caller's session id to form the
-/// transcript of the auditor proof. Shared with the ts-sdk.
 const DST_AUDITOR_ELGAMAL: u8 = 0x07;
 
 // === Main Type ===
