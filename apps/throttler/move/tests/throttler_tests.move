@@ -4,7 +4,7 @@
 module throttler::throttler_tests;
 
 use contra::{
-    contra::{Self, ConfidentialToken, Pool as ContraPool, protocol_id_ddh, protocol_id_elgamal},
+    contra::{Self, ConfidentialToken, Pool as ContraPool},
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
     twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero_for_testing}
@@ -69,13 +69,13 @@ fun do_throttled_unwrap(
     let new_balance_encryption = new_balance.collapse_for_testing();
     let old_balance = alice_account.balance<BU>();
     let balance_proof = nizk::sum_proof_for_testing(
-        alice_account.derive_dst_for_testing<BU>(protocol_id_ddh()),
+        alice_account.dst_ddh_for_testing<BU>(),
         &old_balance,
         &new_balance_encryption,
         &unwrap_amount_trivial,
         sk_alice,
     );
-    let elgamal_sid = alice_account.derive_dst_for_testing<BU>(protocol_id_elgamal());
+    let elgamal_sid = alice_account.dst_elgamal_for_testing<BU>();
     let new_balance_pok = consistency_proof_for_testing(
         elgamal_sid,
         new_balance_value as u16,

@@ -6,7 +6,7 @@ module closed_loop::closed_loop_tests;
 use bu_token::bu::{Self, BuTreasury};
 use closed_loop::{confidential_pbu::{Self, Whitelist}, pbu::{Self, PBU, Pool as PbuPool}};
 use contra::{
-    contra::{Self, ConfidentialToken, Pool as ContraPool, protocol_id_ddh, protocol_id_elgamal},
+    contra::{Self, ConfidentialToken, Pool as ContraPool},
     encrypted_amount::{Self, collapse_for_testing, consistency_proof_for_testing},
     nizk,
     twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero_for_testing}
@@ -103,14 +103,14 @@ fun closed_loop_roundtrip() {
     let new_balance_encryption = new_balance.collapse_for_testing();
     let alice_old_balance = alice_account.balance<PBU>();
     let sum_proof = nizk::sum_proof_for_testing(
-        alice_account.derive_dst_for_testing<PBU>(protocol_id_ddh()),
+        alice_account.dst_ddh_for_testing<PBU>(),
         &alice_old_balance,
         &new_balance_encryption,
         &total_sender_enc,
         &sk_alice,
     );
 
-    let alice_elgamal_dst = alice_account.derive_dst_for_testing<PBU>(protocol_id_elgamal());
+    let alice_elgamal_dst = alice_account.dst_elgamal_for_testing<PBU>();
     // One folded proof per receiver, plus one folding the new-balance limbs and the total.
     let receiver_encs_pok = vector[
         consistency_proof_for_testing(alice_elgamal_dst, 50, &taken_amount, r, &pk_bob),
@@ -162,14 +162,14 @@ fun closed_loop_roundtrip() {
     let bob_new_balance_encryption = new_bob_balance.collapse_for_testing();
     let bob_old_balance = bob_account.balance<PBU>();
     let bob_balance_proof = nizk::sum_proof_for_testing(
-        bob_account.derive_dst_for_testing<PBU>(protocol_id_ddh()),
+        bob_account.dst_ddh_for_testing<PBU>(),
         &bob_old_balance,
         &bob_new_balance_encryption,
         &unwrap_amount_trivial,
         &sk_bob,
     );
     let new_bob_balance_pok = consistency_proof_for_testing(
-        bob_account.derive_dst_for_testing<PBU>(protocol_id_elgamal()),
+        bob_account.dst_elgamal_for_testing<PBU>(),
         0,
         &new_bob_balance,
         0,
