@@ -293,8 +293,11 @@ public(package) fun try_rekey<T>(
     session: Session,
 ): bool {
     assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
-    let dst = session.batch_ddh();
-    if (self.active.try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, dst)) {
+    if (
+        self
+            .active
+            .try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, session.batch_ddh())
+    ) {
         self.pk = new_pk;
         true
     } else {

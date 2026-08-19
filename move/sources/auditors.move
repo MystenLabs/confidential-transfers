@@ -91,7 +91,6 @@ public(package) fun verify_transfer(
     auditor_package: Option<AuditorPackage>,
     session: Session,
 ): Option<VerifiedAuditorHandles> {
-    let dst = session.auditor_elgamal();
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
         return option::none()
@@ -106,9 +105,13 @@ public(package) fun verify_transfer(
     assert!(handles.length() == n, EMismatchedAuditorCount);
     // Build the auditor ciphertexts once; `verify_under` reuses them for both key sets.
     let encryptions = build_auditor_encryptions(&handles, receiver_amounts);
-    let pk = if (verify_under(&encryptions, &proof, &auditors.current_pks, dst)) {
+    let pk = if (
+        verify_under(&encryptions, &proof, &auditors.current_pks, session.auditor_elgamal())
+    ) {
         auditors.current_pks[0]
-    } else if (verify_under(&encryptions, &proof, &auditors.previous_pks, dst)) {
+    } else if (
+        verify_under(&encryptions, &proof, &auditors.previous_pks, session.auditor_elgamal())
+    ) {
         auditors.previous_pks[0]
     } else {
         abort EAuditorProofFailed
