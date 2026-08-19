@@ -73,7 +73,6 @@ public struct EncryptedCoin<phantom T> {
 /// By construction, the sum of `receiver_amounts` is the total leaving the sender.
 public struct VerifiedTransfer<phantom T> {
     receiver_amounts: vector<InRangeVerifiedEncryptedAmount>,
-    new_balance: InRangeVerifiedEncryptedAmount,
     total_sender: VerifiedEncryption,
 }
 
@@ -168,8 +167,8 @@ public(package) fun verify_amount<T>(
     in_range.pop_back()
 }
 
-/// Verify the amounts of a batched transfer out of `self`, returning the sender-keyed transfer
-/// total, the per-receiver verified amounts, and the sender's new balance — what
+/// Verify the amounts of a batched transfer out of `self`, returning the receiver amounts paired
+/// with the sender-keyed total they sum to, and the sender's new balance alongside — what
 /// `try_withdraw_encrypted` takes.
 ///
 /// `receiver_amounts[i]` is the transferred value re-encrypted under `receiver_pks[i]` and proven a
@@ -192,7 +191,7 @@ public(package) fun verify_transfer_amounts<T>(
     sender_encs_pok: ElGamalProof,
     range_proofs: RangeProofs,
     session_id: vector<u8>,
-): VerifiedTransfer<T> {
+): (VerifiedTransfer<T>, InRangeVerifiedEncryptedAmount) {
     let n = receiver_amounts.length();
     assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
 
@@ -230,7 +229,7 @@ public(package) fun verify_transfer_amounts<T>(
         session_id.dst(DST_RANGE_PROOF_16),
     );
     let new_balance = receiver_amounts.pop_back();
-    VerifiedTransfer { receiver_amounts, new_balance, total_sender }
+    (VerifiedTransfer { receiver_amounts, total_sender }, new_balance)
 }
 
 /// The verified receiver amounts of `self`, for a caller with its own check to run against them —
@@ -274,10 +273,11 @@ public(package) fun try_withdraw_public<T>(
 public(package) fun try_withdraw_encrypted<T>(
     self: &mut EncryptedBalance<T>,
     transfer: VerifiedTransfer<T>,
+    new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
     session_id: vector<u8>,
 ): Option<vector<EncryptedCoin<T>>> {
-    let VerifiedTransfer { receiver_amounts, new_balance, total_sender } = transfer;
+    let VerifiedTransfer { receiver_amounts, total_sender } = transfer;
     assert!(total_sender.pk() == &self.pk, EInvalidPublicKey);
     let mut expected = self.active.collapse();
     expected.sub_assign(total_sender.encryption());

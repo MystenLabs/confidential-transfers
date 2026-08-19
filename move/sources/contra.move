@@ -542,7 +542,7 @@ public fun batched_transfer<T>(
     assert!(!sender.is_frozen, ETransferDenied);
     let session_id = sender.session_id;
 
-    let transfer = sender
+    let (transfer, new_balance) = sender
         .balance
         .verify_transfer_amounts(
             receiver_pks,
@@ -559,7 +559,9 @@ public fun batched_transfer<T>(
         .auditors
         .verify_transfer(transfer.receiver_amounts(), auditor_package, session_id);
 
-    let withdrawn = sender.balance.try_withdraw_encrypted(transfer, &balance_proof, session_id);
+    let withdrawn = sender
+        .balance
+        .try_withdraw_encrypted(transfer, new_balance, &balance_proof, session_id);
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
@@ -944,8 +946,7 @@ fun deposit<T>(pool: &Pool<T>, coin: Coin<T>): PublicCoin<T> {
 
 /// Redeem a claim issued by a balance, paying its amount out of the pool.
 fun redeem<T>(pool: &mut Pool<T>, claim: PublicCoin<T>, ctx: &mut TxContext): Coin<T> {
-    let value = claim.redeem_public_coin();
-    redeem_funds(withdraw_funds_from_object<T>(&mut pool.id, value), ctx)
+    redeem_funds(withdraw_funds_from_object<T>(&mut pool.id, claim.redeem_public_coin()), ctx)
 }
 
 // === Helpers ===
