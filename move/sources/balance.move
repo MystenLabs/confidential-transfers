@@ -17,6 +17,7 @@ use contra::{
         in_range_verified_from_value,
     },
     nizk::{DdhProof, ElGamalProof},
+    session::Session,
     twisted_elgamal::{Self, Encryption, PublicKey}
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -29,11 +30,6 @@ const EPendingDepositsMustBeMerged: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 
 // === Constants ===
-
-const DST_DDH: u8 = 0x01;
-const DST_ELGAMAL: u8 = 0x02;
-const DST_RANGE_PROOF_16: u8 = 0x04;
-const DST_BATCH_DDH: u8 = 0x06;
 
 /// The largest `upper_bound` that keeps a limb within the decryption window: each limb is then
 /// bounded by `0xFFFF * 0xFFFF < 2^32`.
@@ -146,18 +142,18 @@ public(package) fun verify_amount<T>(
     amount: EncryptedAmount,
     pok: &ElGamalProof,
     range_proofs: RangeProofs,
-    session_id: vector<u8>,
+    session: Session,
 ): InRangeVerifiedEncryptedAmount {
     let verified = encrypted_amount::verify_encrypted_amount(
         amount,
         self.pk,
         pok,
-        session_id.dst(DST_ELGAMAL),
+        session.elgamal(),
     );
     let mut in_range = encrypted_amount::verify_in_range(
         vector[verified],
         range_proofs,
-        session_id.dst(DST_RANGE_PROOF_16),
+        session.range_proof_16(),
     );
     in_range.pop_back()
 }
@@ -173,7 +169,7 @@ public(package) fun verify_transfer_amounts<T>(
     total_sender_handle: Element<G>,
     sender_encs_pok: ElGamalProof,
     range_proofs: RangeProofs,
-    session_id: vector<u8>,
+    session: Session,
 ): (VerifiedTransfer<T>, InRangeVerifiedEncryptedAmount) {
     let n = receiver_amounts.length();
     assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
@@ -184,7 +180,7 @@ public(package) fun verify_transfer_amounts<T>(
             receiver_amounts[i],
             receiver_pks[i],
             &receiver_encs_pok[i],
-            session_id.dst(DST_ELGAMAL),
+            session.elgamal(),
         )
     });
 
@@ -200,7 +196,7 @@ public(package) fun verify_transfer_amounts<T>(
         total,
         self.pk,
         &sender_encs_pok,
-        session_id.dst(DST_ELGAMAL),
+        session.elgamal(),
     );
     verified_amounts.push_back(new_balance);
 
@@ -209,7 +205,7 @@ public(package) fun verify_transfer_amounts<T>(
     let mut receiver_amounts = encrypted_amount::verify_in_range(
         verified_amounts,
         range_proofs,
-        session_id.dst(DST_RANGE_PROOF_16),
+        session.range_proof_16(),
     );
     let new_balance = receiver_amounts.pop_back();
     (VerifiedTransfer { receiver_amounts, total_sender }, new_balance)
@@ -234,11 +230,11 @@ public(package) fun try_withdraw_public<T>(
     amount: u64,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
+    session: Session,
 ): Option<PublicCoin<T>> {
     let mut expected = self.active.collapse();
     expected.sub_assign_u64(amount);
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session)) {
         return option::none()
     };
     option::some(PublicCoin { value: amount })
@@ -258,13 +254,13 @@ public(package) fun try_withdraw_batch<T>(
     transfer: VerifiedTransfer<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
+    session: Session,
 ): Option<vector<EncryptedCoin<T>>> {
     let VerifiedTransfer { receiver_amounts, total_sender } = transfer;
     assert!(total_sender.pk() == &self.pk, EInvalidPublicKey);
     let mut expected = self.active.collapse();
     expected.sub_assign(total_sender.encryption());
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session)) {
         return option::none()
     };
     option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
@@ -280,10 +276,10 @@ public(package) fun try_update_active<T>(
     self: &mut EncryptedBalance<T>,
     new_balance: InRangeVerifiedEncryptedAmount,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
+    session: Session,
 ): bool {
     let expected = self.active.collapse();
-    self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
+    self.try_replace_active(&new_balance, &expected, balance_proof, session)
 }
 
 /// Re-key `self` to `new_pk`, swapping each limb's decryption handle for the matching
@@ -294,10 +290,10 @@ public(package) fun try_rekey<T>(
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
-    session_id: vector<u8>,
+    session: Session,
 ): bool {
     assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
-    let dst = session_id.dst(DST_BATCH_DDH);
+    let dst = session.batch_ddh();
     if (self.active.try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, dst)) {
         self.pk = new_pk;
         true
@@ -328,10 +324,10 @@ fun try_replace_active<T>(
     new_balance: &InRangeVerifiedEncryptedAmount,
     expected: &Encryption,
     balance_proof: &DdhProof,
-    session_id: vector<u8>,
+    session: Session,
 ): bool {
     assert!(new_balance.pk() == &self.pk, EInvalidPublicKey);
-    if (new_balance.verify_equal(expected, balance_proof, session_id.dst(DST_DDH))) {
+    if (new_balance.verify_equal(expected, balance_proof, session.ddh())) {
         self.active.overwrite(new_balance);
         true
     } else {
@@ -344,15 +340,6 @@ fun try_replace_active<T>(
 fun has_deposit_slot<T>(self: &EncryptedBalance<T>): bool {
     MAX_UPPER_BOUND - 1 > self.active.upper_bound + self.pending.upper_bound
 }
-
-/// 21-byte Fiat-Shamir DST `session_id || protocol_id`.
-fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
-    let mut bytes = session_id;
-    bytes.push_back(protocol_id);
-    bytes
-}
-
-use fun dst as vector.dst;
 
 // === BoundedEncryptedAmount ===
 
@@ -405,15 +392,6 @@ fun set_empty(self: &mut BoundedEncryptedAmount) {
 }
 
 // === Test Helpers ===
-
-#[test_only]
-public(package) fun protocol_id_ddh(): u8 { DST_DDH }
-
-#[test_only]
-public(package) fun protocol_id_elgamal(): u8 { DST_ELGAMAL }
-
-#[test_only]
-public(package) fun protocol_id_batch_ddh(): u8 { DST_BATCH_DDH }
 
 #[test_only]
 public(package) fun collapse_active<T>(self: &EncryptedBalance<T>): Encryption {

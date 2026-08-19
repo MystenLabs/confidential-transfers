@@ -82,6 +82,7 @@ use contra::{
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
+    session::{Self, Session},
     twisted_elgamal::PublicKey
 };
 use sui::{
@@ -161,7 +162,7 @@ public struct Account has key {
 
 /// A user's account for one confidential token.
 public struct TokenAccount<phantom T> has store {
-    session_id: vector<u8>,
+    session: Session,
     is_frozen: bool,
     accepts_deposits: bool,
     balance: EncryptedBalance<T>,
@@ -318,8 +319,8 @@ public fun share_account(account: Account) {
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    let session_id = account.session_id<T>();
-    account.add_token_account<T>(pk, session_id);
+    let session = account.session<T>();
+    account.add_token_account<T>(pk, session);
 }
 
 /// Permissionless `register`: create a `TokenAccount<T>` keyed under the account's `default_pk`,
@@ -331,8 +332,8 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
         ERegistrationNotPermissionless,
     );
     let pk = *account.default_pk.borrow();
-    let session_id = account.session_id<T>();
-    account.add_token_account<T>(pk, session_id);
+    let session = account.session<T>();
+    account.add_token_account<T>(pk, session);
 }
 
 /// Like `register_with_default_pk`, but a no-op if `account` already has a `TokenAccount<T>`.
@@ -342,14 +343,14 @@ public fun try_register_with_default_pk<T>(account: &mut Account, ct: &Confident
 
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
 /// registered. The caller is responsible for any authorization.
-fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: vector<u8>) {
+fun add_token_account<T>(account: &mut Account, pk: PublicKey, session: Session) {
     assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
     events::emit_new_registration<T>(account.owner, pk);
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
         TokenAccount<T> {
-            session_id,
+            session,
             is_frozen: false,
             accepts_deposits: true,
             balance: balance::new<T>(pk),
@@ -455,8 +456,8 @@ fun rekey_token_account_internal<T>(
 ): bool {
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let session_id = token_account.session_id;
-    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
+    let session = token_account.session;
+    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session)) {
         events::emit_token_rekeyed<T>(owner, new_pk);
         true
     } else {
@@ -540,7 +541,7 @@ public fun batched_transfer<T>(
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
-    let session_id = sender.session_id;
+    let session = sender.session;
 
     let (transfer, new_balance) = sender
         .balance
@@ -552,16 +553,16 @@ public fun batched_transfer<T>(
             total_sender_handle,
             sender_encs_pok,
             range_proofs,
-            session_id,
+            session,
         );
 
     let auditor_data = ct
         .auditors
-        .verify_transfer(transfer.receiver_amounts(), auditor_package, session_id);
+        .verify_transfer(transfer.receiver_amounts(), auditor_package, session);
 
     let withdrawn = sender
         .balance
-        .try_withdraw_batch(transfer, new_balance, &balance_proof, session_id);
+        .try_withdraw_batch(transfer, new_balance, &balance_proof, session);
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
@@ -699,12 +700,12 @@ public fun update_active_balance<T>(
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
-    let session_id = token_account.session_id;
+    let session = token_account.session;
     let new_balance = token_account
         .balance
-        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session_id);
+        .verify_amount(new_balance, &new_balance_pok, new_balance_range_proofs, session);
     assert!(
-        token_account.balance.try_update_active(new_balance, balance_proof, session_id),
+        token_account.balance.try_update_active(new_balance, balance_proof, session),
         EBalanceProofFailed,
     );
     events::emit_update_balance<T>(owner);
@@ -803,18 +804,18 @@ fun try_unwrap_internal<T>(
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
-    let session_id = account.session_id;
+    let session = account.session;
     let new_balance = account
         .balance
         .verify_amount(
             new_balance,
             &new_balance_consistency_proof,
             new_balance_range_proofs,
-            session_id,
+            session,
         );
     let withdrawn = account
         .balance
-        .try_withdraw_public(amount, new_balance, balance_proof, session_id);
+        .try_withdraw_public(amount, new_balance, balance_proof, session);
     if (withdrawn.is_some()) {
         events::emit_unwrap<T>(owner, amount);
         (true, pool.redeem(withdrawn.destroy_some(), ctx))
@@ -959,13 +960,15 @@ fun has_token<T>(account: &Account): bool {
     df::exists(&account.id, TokenAccountKey<T>())
 }
 
-/// 20-byte session_id for `account`'s `TokenAccount<T>`.
-fun session_id<T>(account: &Account): vector<u8> {
+/// The `Session` binding proofs to `account`'s `TokenAccount<T>`, derived from a 20-byte id.
+fun session<T>(account: &Account): Session {
     // `derive_address` hashes the account ID together with the full `TokenAccountKey<T>` type
     // tag. The account ID is itself derived from the `AccountRegistry`, which is unique per
     // standalone deployment of contra.
     // TODO: Once contra is added to the framework, verify session ids stay chain-unique.
-    derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>()).to_bytes().take(20)
+    session::new(derived_object::derive_address(account.id.to_inner(), TokenAccountKey<T>())
+        .to_bytes()
+        .take(20))
 }
 
 // === Syntactic Sugar ===
@@ -983,19 +986,19 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 // === Test Helpers ===
 
 #[test_only]
-use contra::{auditors, twisted_elgamal::Encryption};
+use contra::twisted_elgamal::Encryption;
 
 #[test_only]
-public fun protocol_id_ddh(): u8 { balance::protocol_id_ddh() }
+public fun protocol_id_ddh(): u8 { session::protocol_id_ddh() }
 
 #[test_only]
-public fun protocol_id_elgamal(): u8 { balance::protocol_id_elgamal() }
+public fun protocol_id_elgamal(): u8 { session::protocol_id_elgamal() }
 
 #[test_only]
-public fun protocol_id_batch_ddh(): u8 { balance::protocol_id_batch_ddh() }
+public fun protocol_id_batch_ddh(): u8 { session::protocol_id_batch_ddh() }
 
 #[test_only]
-public fun protocol_id_auditor_elgamal(): u8 { auditors::protocol_id_auditor_elgamal() }
+public fun protocol_id_auditor_elgamal(): u8 { session::protocol_id_auditor_elgamal() }
 
 #[test_only]
 public fun new_account_registry_for_testing(ctx: &mut TxContext): AccountRegistry {
@@ -1041,7 +1044,5 @@ public fun token_public_key<T>(account: &Account): Element<G> {
 
 #[test_only]
 public fun derive_dst_for_testing<T>(account: &Account, protocol_id: u8): vector<u8> {
-    let mut bytes = account.session_id<T>();
-    bytes.push_back(protocol_id);
-    bytes
+    account.session<T>().dst_with_tag(protocol_id)
 }

@@ -96,6 +96,7 @@ import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
 import * as policy from './policy.js';
+import * as session from './session.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::contra';
@@ -138,7 +139,7 @@ export const Account = new MoveStruct({
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
-		session_id: bcs.vector(bcs.u8()),
+		session: session.Session,
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
 		balance: balance.EncryptedBalance,

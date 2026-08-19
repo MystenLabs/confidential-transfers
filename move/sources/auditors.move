@@ -6,6 +6,7 @@ module contra::auditors;
 use contra::{
     encrypted_amount::{InRangeVerifiedEncryptedAmount, ciphertexts_u32},
     nizk::{ElGamalProof, verify_elgamal},
+    session::Session,
     twisted_elgamal::{Self, PublicKey, Encryption}
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -21,8 +22,6 @@ const ETooManyAuditors: u64 = 4;
 // === Constants ===
 
 const U32_LIMBS: u64 = 2;
-
-const DST_AUDITOR_ELGAMAL: u8 = 0x07;
 
 // === Main Type ===
 
@@ -85,14 +84,14 @@ public(package) fun update(
 /// carries none). The batched `ElGamalProof` over all `2N` auditor ciphertexts must verify against
 /// `current_pks`, else against `previous_pks`. Returns the verified handles tagged with the auditor
 /// key that accepted them, or `none` when the transfer carries no auditor data. The proof's
-/// transcript is derived here from the transfer's `session_id`.
+/// transcript is derived here from the transfer's `Session`.
 public(package) fun verify_transfer(
     auditors: &Auditors,
     receiver_amounts: &vector<InRangeVerifiedEncryptedAmount>,
     auditor_package: Option<AuditorPackage>,
-    session_id: vector<u8>,
+    session: Session,
 ): Option<VerifiedAuditorHandles> {
-    let dst = dst(session_id, DST_AUDITOR_ELGAMAL);
+    let dst = session.auditor_elgamal();
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
         return option::none()
@@ -138,13 +137,6 @@ public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
     let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
 }
 
-/// 21-byte Fiat-Shamir DST `session_id || protocol_id`.
-fun dst(session_id: vector<u8>, protocol_id: u8): vector<u8> {
-    let mut bytes = session_id;
-    bytes.push_back(protocol_id);
-    bytes
-}
-
 /// Whether the batched `ElGamalProof` verifies for the single key in `pks` over the pre-built `2N`
 /// auditor ciphertexts. Returns false unless `pks` holds exactly one key. Each ciphertext pairs a
 /// receiver's u32 commitment (`Ǎ_{r,l}`, derived homomorphically from its range-proven u16 limbs) with
@@ -173,8 +165,3 @@ fun build_auditor_encryptions(
     });
     encryptions
 }
-
-// === Test Helpers ===
-
-#[test_only]
-public(package) fun protocol_id_auditor_elgamal(): u8 { DST_AUDITOR_ELGAMAL }
