@@ -22,7 +22,7 @@ use contra::{
 };
 use sui::{
     balance::withdraw_funds_from_object,
-    coin::{Coin, redeem_funds},
+    coin::{Coin, send_funds, redeem_funds},
     group_ops::Element,
     ristretto255::G
 };
@@ -93,19 +93,16 @@ public(package) fun public_key<T>(self: &EncryptedBalance<T>): &PublicKey {
 
 // === PublicCoin ===
 
-/// Issue a claim for `value`. The caller must have just moved matching funds into `T`'s pool.
-public(package) fun new_public_coin<T>(value: u64): PublicCoin<T> {
+/// Send `coin`'s funds to `pool` and issue the matching claim, the only way to make one.
+public(package) fun wrap<T>(coin: Coin<T>, pool: &UID): PublicCoin<T> {
+    let value = coin.value();
+    send_funds(coin, pool.to_address());
     PublicCoin { value }
 }
 
-/// Redeem a claim against `pool`, paying its value out as a `Coin<T>`. The only way to consume a
-/// claim other than crediting it to a balance, and it can only produce the coin — no bare value
-/// comes back that a caller could drop.
-public(package) fun redeem_public_coin<T>(
-    coin: PublicCoin<T>,
-    pool: &mut UID,
-    ctx: &mut TxContext,
-): Coin<T> {
+/// Consume a claim, paying its value out of `pool` as a `Coin<T>`. Together with crediting one to a
+/// balance this is the only way to spend a claim, and neither hands back a bare value to drop.
+public(package) fun unwrap<T>(coin: PublicCoin<T>, pool: &mut UID, ctx: &mut TxContext): Coin<T> {
     let PublicCoin { value } = coin;
     redeem_funds(withdraw_funds_from_object<T>(pool, value), ctx)
 }
