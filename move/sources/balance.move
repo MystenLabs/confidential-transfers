@@ -75,7 +75,7 @@ public struct VerifiedTransfer<phantom T> {
 public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
     EncryptedBalance {
         pk,
-        active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
+        active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 1 },
         pending: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
         public_balance: 0,
     }
