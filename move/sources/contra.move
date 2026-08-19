@@ -950,7 +950,6 @@ fun redeem<T>(pool: &mut Pool<T>, claim: PublicCoin<T>, ctx: &mut TxContext): Co
 
 // === Helpers ===
 
-/// The key `self`'s balances are encrypted under. Senders read it to encrypt a deposit for `self`.
 fun pk<T>(self: &TokenAccount<T>): &PublicKey {
     self.balance.public_key()
 }
