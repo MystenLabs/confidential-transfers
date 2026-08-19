@@ -53,19 +53,13 @@ public struct EncryptedBalance<phantom T> has store {
     public_balance: u64,
 }
 
-/// An `EncryptedAmount` carrying the bound on its limbs: `upper_bound` counts the u16-bounded
-/// values folded into it, so every limb is at most `upper_bound * (2^16 - 1)` — nothing folded in
-/// means a limb of exactly zero — and while that product fits the decryption window, the amount
-/// stays decryptable.
+/// An `EncryptedAmount` with a bound on its limbs: each is at most `upper_bound * (2^16 - 1)`.
 public struct BoundedEncryptedAmount has store {
     amount: EncryptedAmount,
     upper_bound: u16,
 }
 
-/// A claim on token `T`'s pool for a publicly known amount. Abilityless, so it cannot be copied,
-/// stored or quietly dropped: whoever holds one must either credit it to a balance or redeem it
-/// against the pool, and each side only issues one against value it has just given up — the pool
-/// against funds paid in, a balance against value proven out of it.
+/// Linear wrapper around a publicly-known `u64`.
 public struct PublicCoin<phantom T> {
     value: u64,
 }
