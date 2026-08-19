@@ -338,10 +338,7 @@ public(package) fun overwrite_unchecked<T>(
 // === Private functions ===
 
 /// Replace the active balance with `new_balance` if `balance_proof` shows it encrypts the same value
-/// as `expected`. Returns whether the proof verified; on failure `self` is untouched. This is the
-/// only place the active balance is re-stated, so every such change carries both a proof that it
-/// kept the balance's value and — since a verified amount can reach us from any balance — a check
-/// that it is under this balance's key.
+/// as `expected`.
 fun try_replace_active<T>(
     self: &mut EncryptedBalance<T>,
     new_balance: &InRangeVerifiedEncryptedAmount,
