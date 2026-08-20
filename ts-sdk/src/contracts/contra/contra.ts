@@ -142,7 +142,7 @@ export const TokenAccount = new MoveStruct({
 		session_id: session_id.SessionId,
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
-		balance: balance.EncryptedBalance,
+		balance: balance.Balances,
 	},
 });
 export const TokenKey = new MoveTuple({

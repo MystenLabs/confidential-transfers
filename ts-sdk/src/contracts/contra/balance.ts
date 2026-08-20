@@ -24,8 +24,8 @@ export const BoundedEncryptedAmount = new MoveStruct({
 		upper_bound: bcs.u16(),
 	},
 });
-export const EncryptedBalance = new MoveStruct({
-	name: `${$moduleName}::EncryptedBalance<phantom T>`,
+export const Balances = new MoveStruct({
+	name: `${$moduleName}::Balances<phantom T>`,
 	fields: {
 		pk: twisted_elgamal.PublicKey,
 		active: BoundedEncryptedAmount,

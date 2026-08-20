@@ -76,7 +76,7 @@ use contra::{
         destroy_empty,
         new as new_auditors,
     },
-    balance::{Self, EncryptedBalance, EncryptedCoin},
+    balance::{Self, Balances, EncryptedCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::{EncryptedAmount, RangeProofs},
     events,
@@ -164,7 +164,7 @@ public struct TokenAccount<phantom T> has store {
     session_id: SessionId,
     is_frozen: bool,
     accepts_deposits: bool,
-    balance: EncryptedBalance<T>,
+    balance: Balances<T>,
 }
 
 /// State machine for batched transfers from a single sender to multiple receivers.

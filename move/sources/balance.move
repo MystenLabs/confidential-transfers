@@ -42,9 +42,10 @@ const MAX_UPPER_BOUND: u16 = 0xFFFF;
 
 // === Structs ===
 
-/// One account's holdings of token `T`: the encrypted amounts, all under `pk`, plus
-/// `public_balance`, the plaintext total of public deposits held in the pool but not yet merged.
-public struct EncryptedBalance<phantom T> has store {
+/// One account's balances of token `T`, all under `pk`: what is spendable now (`active`), what is
+/// waiting to be merged (`pending`), and the plaintext total of public deposits sitting in the pool
+/// (`public_balance`).
+public struct Balances<phantom T> has store {
     pk: PublicKey,
     active: BoundedEncryptedAmount,
     pending: BoundedEncryptedAmount,
@@ -64,9 +65,9 @@ public struct EncryptedCoin<phantom T> {
 
 // === Construction and views ===
 
-/// An empty `EncryptedBalance` with every amount encrypted under `pk`.
-public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
-    EncryptedBalance {
+/// An empty `Balances` with every amount encrypted under `pk`.
+public(package) fun new<T>(pk: PublicKey): Balances<T> {
+    Balances {
         pk,
         active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 1 },
         pending: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
@@ -75,14 +76,14 @@ public(package) fun new<T>(pk: PublicKey): EncryptedBalance<T> {
 }
 
 /// The key `self`'s amounts are encrypted under. Senders read it to encrypt a deposit for `self`.
-public(package) fun public_key<T>(self: &EncryptedBalance<T>): &PublicKey {
+public(package) fun public_key<T>(self: &Balances<T>): &PublicKey {
     &self.pk
 }
 
 // === Deposits ===
 
 /// Send `coin`'s funds to `pool` and credit their value to `self`'s public deposits, returning it.
-public(package) fun deposit_public<T>(self: &mut EncryptedBalance<T>, coin: Coin<T>, pool: &UID) {
+public(package) fun deposit_public<T>(self: &mut Balances<T>, coin: Coin<T>, pool: &UID) {
     // A non-zero public balance already holds a merge slot, so topping it up needs no new one.
     assert!(self.public_balance > 0 || self.has_deposit_slot(), EBalanceFull);
     self.public_balance = self.public_balance + coin.value();
@@ -90,7 +91,7 @@ public(package) fun deposit_public<T>(self: &mut EncryptedBalance<T>, coin: Coin
 }
 
 /// Deposit an `EncryptedCoin` to `self`.
-public(package) fun deposit_encrypted<T>(self: &mut EncryptedBalance<T>, coin: EncryptedCoin<T>) {
+public(package) fun deposit_encrypted<T>(self: &mut Balances<T>, coin: EncryptedCoin<T>) {
     assert!(self.has_deposit_slot(), EBalanceFull);
     let EncryptedCoin { amount } = coin;
     assert!(amount.pk() == &self.pk, EInvalidPublicKey);
@@ -98,7 +99,7 @@ public(package) fun deposit_encrypted<T>(self: &mut EncryptedBalance<T>, coin: E
 }
 
 /// Fold both kinds of pending deposit into the active balance, freeing their slots.
-public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
+public(package) fun merge_deposits<T>(self: &mut Balances<T>) {
     self.active.merge_into(&mut self.pending);
     let value = self.public_balance;
     self.public_balance = 0;
@@ -111,7 +112,7 @@ public(package) fun merge_deposits<T>(self: &mut EncryptedBalance<T>) {
 /// active balance to `new_balance` and return `amount` paid out of `pool`; on a failing proof
 /// leave `self` untouched and return `none`. Aborts if `new_balance` fails to verify.
 public(package) fun try_withdraw_public<T>(
-    self: &mut EncryptedBalance<T>,
+    self: &mut Balances<T>,
     amount: u64,
     new_balance: EncryptedAmount,
     new_balance_pok: &ElGamalProof,
@@ -143,7 +144,7 @@ public(package) fun try_withdraw_public<T>(
 /// The transfer total's commitment is the sum of the receiver commitments, which is what binds the
 /// amount leaving `self` to what the receivers get; it is built here from those very amounts.
 public(package) fun try_withdraw_batch<T>(
-    self: &mut EncryptedBalance<T>,
+    self: &mut Balances<T>,
     receiver_pks: vector<PublicKey>,
     receiver_amounts: vector<EncryptedAmount>,
     receiver_encs_pok: vector<ElGamalProof>,
@@ -184,7 +185,7 @@ public(package) fun amount<T>(coin: &EncryptedCoin<T>): &InRangeVerifiedEncrypte
 /// of merges it counts as. Returns whether the balance proof verified; on failure `self` is
 /// untouched. Aborts if `new_balance` fails to verify.
 public(package) fun try_update_active<T>(
-    self: &mut EncryptedBalance<T>,
+    self: &mut Balances<T>,
     new_balance: EncryptedAmount,
     new_balance_pok: &ElGamalProof,
     new_balance_range_proofs: RangeProofs,
@@ -205,7 +206,7 @@ public(package) fun try_update_active<T>(
 /// `new_handles[i]` on a verifying `rekey_proof`. Aborts if there are pending deposits: those are
 /// under the old key and the proof does not cover them.
 public(package) fun try_rekey<T>(
-    self: &mut EncryptedBalance<T>,
+    self: &mut Balances<T>,
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
@@ -230,7 +231,7 @@ public(package) fun try_rekey<T>(
 /// is not range-checked and is counted as a single merge.
 ///
 /// WARNING: this may break consistency between the tokens in circulation and the funds in the pool.
-public(package) fun overwrite_unchecked<T>(self: &mut EncryptedBalance<T>, new: EncryptedAmount) {
+public(package) fun overwrite_unchecked<T>(self: &mut Balances<T>, new: EncryptedAmount) {
     self.active.amount = new;
     self.active.upper_bound = 1;
     self.pending.set_empty();
@@ -242,7 +243,7 @@ public(package) fun overwrite_unchecked<T>(self: &mut EncryptedBalance<T>, new: 
 /// Verify the amounts of a batched transfer out of `self`: the receiver amounts, the sender's new
 /// balance, and the sender-keyed total the receivers sum to.
 fun verify_transfer_amounts<T>(
-    self: &EncryptedBalance<T>,
+    self: &Balances<T>,
     receiver_pks: vector<PublicKey>,
     receiver_amounts: vector<EncryptedAmount>,
     receiver_encs_pok: vector<ElGamalProof>,
@@ -293,7 +294,7 @@ fun verify_transfer_amounts<T>(
 }
 
 fun verify_amount<T>(
-    self: &EncryptedBalance<T>,
+    self: &Balances<T>,
     amount: EncryptedAmount,
     pok: &ElGamalProof,
     range_proofs: RangeProofs,
@@ -316,7 +317,7 @@ fun verify_amount<T>(
 /// Replace the active balance with `new_balance` if `balance_proof` shows it encrypts the same value
 /// as `expected`.
 fun try_replace_active<T>(
-    self: &mut EncryptedBalance<T>,
+    self: &mut Balances<T>,
     new_balance: &InRangeVerifiedEncryptedAmount,
     expected: &Encryption,
     balance_proof: &DdhProof,
@@ -332,7 +333,7 @@ fun try_replace_active<T>(
 
 /// Whether `self` can absorb one more merge. Always reserves one slot for a possible future public
 /// deposit, so the cap compared against is `MAX_UPPER_BOUND - 1`.
-fun has_deposit_slot<T>(self: &EncryptedBalance<T>): bool {
+fun has_deposit_slot<T>(self: &Balances<T>): bool {
     MAX_UPPER_BOUND - 1 > self.active.upper_bound + self.pending.upper_bound
 }
 
@@ -389,11 +390,11 @@ fun set_empty(self: &mut BoundedEncryptedAmount) {
 // === Test Helpers ===
 
 #[test_only]
-public(package) fun collapse_active<T>(self: &EncryptedBalance<T>): Encryption {
+public(package) fun collapse_active<T>(self: &Balances<T>): Encryption {
     self.active.collapse()
 }
 
 #[test_only]
-public(package) fun collapse_pending<T>(self: &EncryptedBalance<T>): Encryption {
+public(package) fun collapse_pending<T>(self: &Balances<T>): Encryption {
     self.pending.collapse()
 }
