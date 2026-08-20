@@ -1052,7 +1052,7 @@ export class ContraClient {
 	 * credited to `recipients[i].receiverAddress` with `recipients[i].memo`,
 	 * matching the order of emitted `TransferEvent`s.
 	 *
-	 * `recipients.length` must be in `[1, 7]`.
+	 * `recipients.length` must be in `[1, 255]` (`MAX_BATCH_RECIPIENTS`).
 	 *
 	 * When `merge` is `true` (the default) and the sender has pending
 	 * deposits, a `merge` call is prepended to the transaction so that
