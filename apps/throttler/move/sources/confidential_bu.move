@@ -19,8 +19,9 @@ module throttler::confidential_bu;
 
 use contra::{
     contra::{Self, Account, ConfidentialToken, ManagementCap, Pool, TokenRegistry},
-    encrypted_amount::{EncryptedAmount, RangeProofs},
-    nizk::{DdhProof, ElGamalProof}
+    encrypted_amount::EncryptedAmount,
+    nizk::{DdhProof, ElGamalProof},
+    range_proof::RangeProofs
 };
 use sui::{
     balance::{Self, Balance},
