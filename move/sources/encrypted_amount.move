@@ -5,35 +5,17 @@ module contra::encrypted_amount;
 
 use contra::{
     nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
+    range_proof::RangeProofs,
     twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_trivial, encrypt_zero}
 };
-use sui::{
-    group_ops::Element,
-    rangeproofs,
-    ristretto255::{G, Scalar, g_add, g_identity, g_mul, scalar_from_u64}
-};
-
-/// Bulletproof construction version. `0` is the original Bulletproofs construction
-/// (Bünz et al., 2018), the only version currently supported by
-/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255`.
-const BULLETPROOFS_VERSION: u8 = 0;
-
-/// Bit-length used by the per-limb range check: each limb encrypts a u16, so the proof
-/// must show every committed value lies in `[0, 2^16)`.
-const LIMB_BITS: u8 = 16;
+use sui::{group_ops::Element, ristretto255::{G, Scalar, g_add, g_identity, g_mul, scalar_from_u64}};
 
 const U16_LIMBS: u64 = 4;
-
-/// Maximum number of encryptions covered by a single Bulletproof chunk.
-/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
-/// count at 32 for `LIMB_BITS = 16`, and each encryption contributes one commitment.
-const MAX_RANGE_PROOF_BATCH_SIZE: u64 = 32;
 
 const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 const EEncryptionProofFailed: u64 = 4;
 const ERangeProofFailed: u64 = 5;
-const ERangeProofRequired: u64 = 6;
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -65,20 +47,6 @@ public struct VerifiedAmount has drop {
 public struct RangeVerifiedAmount has drop {
     amount: EncryptedAmount,
     pk: PublicKey,
-}
-
-/// The Bulletproof range proofs for a range-check batch (one per `batch_sizes` chunk). The only
-/// production constructor (`new_range_proofs`) rejects an empty set, and PTBs can't fabricate a
-/// struct, so a batch verified on chain can never silently skip its range check. Move tests, which
-/// can't produce Bulletproof bytes, use the `#[test_only]` `assume_range_checked` instead.
-public struct RangeProofs has drop {
-    proofs: vector<vector<u8>>,
-}
-
-/// Wrap `proofs` into `RangeProofs`; rejects an empty set so the range check can't be skipped on chain.
-public fun new_range_proofs(proofs: vector<vector<u8>>): RangeProofs {
-    assert!(!proofs.is_empty() && proofs.all!(|p| !p.is_empty()), ERangeProofRequired);
-    RangeProofs { proofs }
 }
 
 public fun new_encrypted_amount(
@@ -123,11 +91,10 @@ public(package) fun verify_in_range(
     range_proofs: RangeProofs,
     dst: vector<u8>,
 ): vector<RangeVerifiedAmount> {
-    let RangeProofs { proofs } = range_proofs;
     // Collect every limb commitment for the single batched range proof.
     let mut commitments = vector<Element<G>>[];
     amounts.do_ref!(|a| U16_LIMBS.do!(|i| commitments.push_back(*a.amount[i].ciphertext())));
-    assert!(verify_range_proofs(&commitments, &proofs, dst), ERangeProofFailed);
+    assert!(range_proofs.verify(&commitments, dst), ERangeProofFailed);
     amounts.map!(|a| {
         let VerifiedAmount { amount, pk } = a;
         RangeVerifiedAmount { amount, pk }
@@ -298,59 +265,8 @@ public(package) fun add_assign(a: &mut EncryptedAmount, b: &EncryptedAmount) {
     a.l3 = a[3].add(&b[3]);
 }
 
-/// Verify every `commitment` opens to a value in `[0, 2^16)` via one Bulletproof per chunk of
-/// `batch_sizes`. An empty `range_proofs` skips the check — only reachable via the `#[test_only]`
-/// `assume_range_checked`, since `new_range_proofs` rejects empty input in production.
-fun verify_range_proofs(
-    commitments: &vector<Element<G>>,
-    range_proofs: &vector<vector<u8>>,
-    dst: vector<u8>,
-): bool {
-    if (range_proofs.is_empty()) return true;
-    let sizes = batch_sizes(commitments.length());
-    if (range_proofs.length() != sizes.length()) return false;
-    let mut offset = 0;
-    sizes.zip_map_ref!(range_proofs, |chunk, range_proof| {
-        let chunk = *chunk;
-        let start = offset;
-        offset = offset + chunk;
-        rangeproofs::verify_bulletproofs_with_dst_ristretto255(
-            range_proof,
-            LIMB_BITS,
-            &vector::tabulate!(chunk, |j| commitments[start + j]),
-            &dst,
-            BULLETPROOFS_VERSION,
-        )
-    }).all!(|ok| *ok)
-}
-
-/// Canonical Bulletproof chunking for `n` encryptions (one commitment each): greedily take as many
-/// `MAX_RANGE_PROOF_BATCH_SIZE` chunks as fit, then halve the chunk size and repeat until `n` is exhausted.
-/// Examples (`MAX_RANGE_PROOF_BATCH_SIZE = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
-fun batch_sizes(n: u64): vector<u64> {
-    let mut sizes = vector[];
-    let mut remaining = n;
-    let mut chunk = MAX_RANGE_PROOF_BATCH_SIZE;
-    while (remaining > 0) {
-        while (remaining >= chunk) {
-            sizes.push_back(chunk);
-            remaining = remaining - chunk;
-        };
-        chunk = chunk / 2;
-    };
-    sizes
-}
-
 #[test_only]
 use contra::nizk::prove_elgamal;
-
-/// `RangeProofs` that skips the range check — Move tests can't produce Bulletproof bytes, so they
-/// assume the range instead of proving it. Not reachable from production (`new_range_proofs` rejects
-/// the empty set this holds).
-#[test_only]
-public fun assume_range_checked(): RangeProofs {
-    RangeProofs { proofs: vector[] }
-}
 
 /// Collapsed single-`Encryption` view of `ea` — the `public(package)` `collapse` exposed to
 /// downstream test packages.

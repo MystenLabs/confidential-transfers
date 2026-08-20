@@ -12,11 +12,11 @@ use contra::{
         Self,
         EncryptedAmount,
         RangeVerifiedAmount,
-        RangeProofs,
         VerifiedEncryption,
         range_verified_from_value,
     },
     nizk::{DdhProof, ElGamalProof},
+    range_proof::RangeProofs,
     session_id::SessionId,
     twisted_elgamal::{Self, Encryption, PublicKey}
 };

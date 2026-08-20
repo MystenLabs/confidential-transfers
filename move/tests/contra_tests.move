@@ -11,6 +11,7 @@ use contra::{
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
     policy,
+    range_proof,
     session_id,
     twisted_elgamal::{encrypt_trivial_for_testing, encrypt_zero, public_key, PublicKey, Encryption}
 };
@@ -232,7 +233,7 @@ fun test_simple_flow() {
         &mut pool,
         new_balance,
         new_balance_consistency_proof,
-        encrypted_amount::assume_range_checked(),
+        range_proof::assume_range_checked(),
         taken_amount,
         &sum_proof,
         scenario.ctx(),
@@ -394,7 +395,7 @@ fun test_batched_transfer() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            encrypted_amount::assume_range_checked(),
+            range_proof::assume_range_checked(),
             ristretto255::g_identity(),
             balance_proof,
             option::none(),
@@ -562,7 +563,7 @@ fun test_batched_transfer_with_auditor() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            encrypted_amount::assume_range_checked(),
+            range_proof::assume_range_checked(),
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
@@ -735,7 +736,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            encrypted_amount::assume_range_checked(),
+            range_proof::assume_range_checked(),
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
@@ -942,7 +943,7 @@ fun transfer<T>(
             new_balance,
             total_sender_handle,
             sender_consistency_proof,
-            encrypted_amount::assume_range_checked(),
+            range_proof::assume_range_checked(),
             ristretto255::g_identity(),
             balance_proof,
             option::none(),
@@ -2106,7 +2107,7 @@ fun test_account_freeze_blocks_unwrap() {
         &mut pool,
         new_balance,
         new_balance_consistency_proof,
-        encrypted_amount::assume_range_checked(),
+        range_proof::assume_range_checked(),
         taken_amount,
         &sum_proof,
         scenario.ctx(),
@@ -2146,7 +2147,7 @@ fun verify_encrypted_amount_dst_match_succeeds() {
     let verified = encrypted_amount::verify_encrypted_amount(ea, public_key(pk), &proof, dst);
     encrypted_amount::verify_in_range(
         vector[verified],
-        encrypted_amount::assume_range_checked(),
+        range_proof::assume_range_checked(),
         b"range-proof-dst-21byt",
     );
 }
@@ -2190,9 +2191,9 @@ fun verify_encrypted_amount_dst_mismatch_fails() {
 /// The production `RangeProofs` constructor rejects an empty proof set, so a batch verified on chain
 /// can never skip its range check (only the `#[test_only]` `assume_range_checked` produces an empty
 /// set).
-#[test, expected_failure(abort_code = ::contra::encrypted_amount::ERangeProofRequired)]
+#[test, expected_failure(abort_code = ::contra::range_proof::ERangeProofRequired)]
 fun empty_range_proofs_rejected() {
-    encrypted_amount::new_range_proofs(vector[]);
+    range_proof::new_range_proofs(vector[]);
 }
 
 // === Policy tests ===

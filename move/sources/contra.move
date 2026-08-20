@@ -78,10 +78,11 @@ use contra::{
     },
     balance::{Self, Balances, EncryptedCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
-    encrypted_amount::{EncryptedAmount, RangeProofs},
+    encrypted_amount::EncryptedAmount,
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
+    range_proof::RangeProofs,
     session_id::{Self, SessionId},
     twisted_elgamal::PublicKey
 };
