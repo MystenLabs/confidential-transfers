@@ -394,7 +394,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						ct: tokenIssuer.confidentialTokenId,
 						pool: poolId,
 						newBalance: newBalanceEa,
-						newBalanceConsistencyProof: newBalancePok,
+						newBalancePok,
 						newBalanceRangeProofs: newBalanceRange,
 						amount: callAmount,
 						balanceProof: buildDdhProof(pid, balanceProof),
