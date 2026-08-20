@@ -944,7 +944,7 @@ export class ContraClient {
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `EPendingDepositsMustBeMerged` — the token still has pending deposits (e.g. `merge=false`).
-	 * - `EAmountsEqualityProofFailed` — the re-key proof did not verify (e.g. a deposit raced the
+	 * - `ERekeyProofFailed` — the re-key proof did not verify (e.g. a deposit raced the
 	 *   SDK's balance read). Use `tryRekeyTokenAccount` to soft-fail instead of aborting.
 	 */
 	async rekeyTokenAccount({
@@ -1365,7 +1365,7 @@ export class ContraClient {
 						ct: this.#getConfidentialTokenId(tokenType),
 						pool: this.#getPoolId(tokenType),
 						newBalance: newBalanceEa,
-						newBalanceConsistencyProof: newBalancePok,
+						newBalancePok,
 						newBalanceRangeProofs: newBalanceRange,
 						amount,
 						balanceProof: buildDdhProof(pid, balanceProof),
