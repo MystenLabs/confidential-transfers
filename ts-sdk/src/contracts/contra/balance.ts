@@ -3,28 +3,34 @@
  **************************************************************/
 
 /**
- * Confidential value: `EncryptedBalance<T>` (a single encrypted amount with a
- * count of merged u16-bounded values that bounds limb growth), plus the linear
- * coin types `PublicCoin<T>` and `EncryptedCoin<T>` that move value in and out.
+ * An account's confidential holdings of one token, all under one key: the
+ * spendable `active` balance, the `pending` deposits, and the `public_balance` of
+ * wrapped-but-unmerged coins — deposits land aside and are folded in by
+ * `merge_deposits`, so they never mutate the balance a concurrent transfer is
+ * proving against.
  */
 
 import { bcs } from '@mysten/sui/bcs';
 
 import { MoveStruct } from '../utils/index.js';
 import * as encrypted_amount from './encrypted_amount.js';
+import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::balance';
-export const EncryptedBalance = new MoveStruct({
-	name: `${$moduleName}::EncryptedBalance<phantom T>`,
+export const BoundedEncryptedAmount = new MoveStruct({
+	name: `${$moduleName}::BoundedEncryptedAmount`,
 	fields: {
 		amount: encrypted_amount.EncryptedAmount,
 		upper_bound: bcs.u16(),
 	},
 });
-export const PublicCoin = new MoveStruct({
-	name: `${$moduleName}::PublicCoin<phantom T>`,
+export const Balances = new MoveStruct({
+	name: `${$moduleName}::Balances<phantom T>`,
 	fields: {
-		value: bcs.u64(),
+		pk: twisted_elgamal.PublicKey,
+		active: BoundedEncryptedAmount,
+		pending: BoundedEncryptedAmount,
+		public_balance: bcs.u64(),
 	},
 });
 export const EncryptedCoin = new MoveStruct({

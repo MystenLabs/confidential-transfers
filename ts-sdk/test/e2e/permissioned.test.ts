@@ -130,7 +130,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 		);
 
 		// A well-formed (but arbitrary) new balance paired with a deliberately
-		// invalid balance proof, so the balance proof inside `try_split_batch`
+		// invalid balance proof, so the balance proof inside `try_withdraw_batch`
 		// rejects it.
 		const newBalanceLimbs = intoLimbs(0n).map((v) => ({
 			value: v,

@@ -1,46 +1,61 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Confidential value: `EncryptedBalance<T>` (a single encrypted amount with a count of merged
-/// u16-bounded values that bounds limb growth), plus the linear coin types `PublicCoin<T>` and
-/// `EncryptedCoin<T>` that move value in and out.
+/// An account's confidential holdings of one token, all under one key: the spendable `active`
+/// balance, the `pending` deposits, and the `public_balance` of wrapped-but-unmerged
+/// coins — deposits land aside and are folded in by `merge_deposits`, so they never mutate the
+/// balance a concurrent transfer is proving against.
 module contra::balance;
 
 use contra::{
     encrypted_amount::{
         Self,
         EncryptedAmount,
-        VerifiedEncryption,
         InRangeVerifiedEncryptedAmount,
-        from_value,
+        RangeProofs,
+        VerifiedEncryption,
+        in_range_verified_from_value,
     },
-    nizk::DdhProof,
-    twisted_elgamal::{Encryption, PublicKey}
+    nizk::{DdhProof, ElGamalProof},
+    session_id::SessionId,
+    twisted_elgamal::{Self, Encryption, PublicKey}
 };
 use sui::{
     balance::withdraw_funds_from_object,
-    coin::{Coin, TreasuryCap, send_funds, redeem_funds},
+    coin::{Coin, send_funds, redeem_funds},
     group_ops::Element,
     ristretto255::G
 };
 
 // === Errors ===
 
-/// A value carried into the balance was encrypted under a different key.
 const EInvalidPublicKey: u64 = 0;
+const EBalanceFull: u64 = 1;
+const EPendingDepositsMustBeMerged: u64 = 2;
+const EMismatchedBatchLength: u64 = 3;
+
+// === Constants ===
+
+/// The largest `upper_bound` that keeps a limb within the decryption window: each limb is then
+/// bounded by `0xFFFF * 0xFFFF < 2^32`.
+const MAX_UPPER_BOUND: u16 = 0xFFFF;
 
 // === Structs ===
 
-/// A single confidential amount: an `EncryptedAmount` plus the count of u16-bounded values that
-/// have been folded into it.
-public struct EncryptedBalance<phantom T> has store {
-    amount: EncryptedAmount,
-    upper_bound: u16,
+/// One account's balances of token `T`, all under `pk`: what is spendable now (`active`), what is
+/// waiting to be merged (`pending`), and the plaintext total of public deposits sitting in the pool
+/// (`public_balance`).
+public struct Balances<phantom T> has store {
+    pk: PublicKey,
+    active: BoundedEncryptedAmount,
+    pending: BoundedEncryptedAmount,
+    public_balance: u64,
 }
 
-/// Linear wrapper around a publicly-known `u64`.
-public struct PublicCoin<phantom T> has store {
-    value: u64,
+/// An `EncryptedAmount` with a bound on its limbs: each is at most `upper_bound * (2^16 - 1)`.
+public struct BoundedEncryptedAmount has store {
+    amount: EncryptedAmount,
+    upper_bound: u16,
 }
 
 /// Linear wrapper around a verified encrypted amount.
@@ -48,235 +63,338 @@ public struct EncryptedCoin<phantom T> {
     amount: InRangeVerifiedEncryptedAmount,
 }
 
-// === PublicCoin / EncryptedCoin ===
+// === Construction and views ===
 
-/// A `PublicCoin` of zero value.
-public(package) fun zero<T>(): PublicCoin<T> {
-    PublicCoin<T> { value: 0 }
+/// An empty `Balances` with every amount encrypted under `pk`.
+public(package) fun new<T>(pk: PublicKey): Balances<T> {
+    Balances {
+        pk,
+        active: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 1 },
+        pending: BoundedEncryptedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
+        public_balance: 0,
+    }
 }
 
-/// Wrap a `Coin<T>` into a `PublicCoin<T>`, sending the coin's funds to `pool`.
-public(package) fun wrap<T>(coin: Coin<T>, pool: &UID): PublicCoin<T> {
-    let value = coin.value();
+/// The key `self`'s amounts are encrypted under. Senders read it to encrypt a deposit for `self`.
+public(package) fun public_key<T>(self: &Balances<T>): &PublicKey {
+    &self.pk
+}
+
+// === Deposits ===
+
+/// Send `coin`'s funds to `pool` and credit their value to `self`'s public deposits, returning it.
+public(package) fun deposit_public<T>(self: &mut Balances<T>, coin: Coin<T>, pool: &UID) {
+    // A non-zero public balance already holds a merge slot, so topping it up needs no new one.
+    assert!(self.public_balance > 0 || self.has_deposit_slot(), EBalanceFull);
+    self.public_balance = self.public_balance + coin.value();
     send_funds(coin, pool.to_address());
-    PublicCoin<T> { value }
 }
 
-/// Unwrap a `PublicCoin<T>` back into a `Coin<T>`, withdrawing matching funds from `pool`.
-public(package) fun unwrap<T>(coin: PublicCoin<T>, pool: &mut UID, ctx: &mut TxContext): Coin<T> {
-    let PublicCoin { value } = coin;
-    redeem_funds(withdraw_funds_from_object<T>(pool, value), ctx)
+/// Deposit an `EncryptedCoin` to `self`.
+public(package) fun deposit_encrypted<T>(self: &mut Balances<T>, coin: EncryptedCoin<T>) {
+    assert!(self.has_deposit_slot(), EBalanceFull);
+    let EncryptedCoin { amount } = coin;
+    assert!(amount.pk() == &self.pk, EInvalidPublicKey);
+    self.pending.add_assign(&amount);
 }
 
-/// Merge `other` into `self`.
-public(package) fun join<T>(self: &mut PublicCoin<T>, other: PublicCoin<T>) {
-    let PublicCoin { value } = other;
-    self.value = self.value + value;
+/// Fold both kinds of pending deposit into the active balance, freeing their slots.
+public(package) fun merge_deposits<T>(self: &mut Balances<T>) {
+    self.active.merge_into(&mut self.pending);
+    let value = self.public_balance;
+    self.public_balance = 0;
+    if (value > 0) self.active.add_assign(&in_range_verified_from_value(value, self.pk));
 }
 
-/// Move the value out of `self`, leaving it at zero.
-public(package) fun take<T>(self: &mut PublicCoin<T>): PublicCoin<T> {
-    let value = self.value;
-    self.value = 0;
-    PublicCoin<T> { value }
+// === Withdrawals ===
+
+/// On a verifying `balance_proof` that the active balance is `new_balance` plus `amount`, lower the
+/// active balance to `new_balance` and return `amount` paid out of `pool`; on a failing proof
+/// leave `self` untouched and return `none`. Aborts if `new_balance` fails to verify.
+public(package) fun try_withdraw_public<T>(
+    self: &mut Balances<T>,
+    amount: u64,
+    new_balance: EncryptedAmount,
+    new_balance_pok: &ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
+    balance_proof: &DdhProof,
+    session_id: SessionId,
+    pool: &mut UID,
+    ctx: &mut TxContext,
+): Option<Coin<T>> {
+    let new_balance = self.verify_amount(
+        new_balance,
+        new_balance_pok,
+        new_balance_range_proofs,
+        session_id,
+    );
+    let mut expected = self.active.collapse();
+    expected.sub_assign_u64(amount);
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+        return option::none()
+    };
+    option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
 }
 
-/// The public value carried by `self`.
-public(package) fun value<T>(self: &PublicCoin<T>): u64 {
-    self.value
+/// Split a batched transfer's receiver-keyed coins off the active balance, verifying every amount
+/// first. Returns `some(coins)` — one per receiver amount, in the same order — on a verifying
+/// balance proof, and `none` (leaving `self` untouched) otherwise; aborts if any amount fails to
+/// verify.
+///
+/// The transfer total's commitment is the sum of the receiver commitments, which is what binds the
+/// amount leaving `self` to what the receivers get; it is built here from those very amounts.
+public(package) fun try_withdraw_batch<T>(
+    self: &mut Balances<T>,
+    receiver_pks: vector<PublicKey>,
+    receiver_amounts: vector<EncryptedAmount>,
+    receiver_encs_pok: vector<ElGamalProof>,
+    new_balance: EncryptedAmount,
+    total_sender_handle: Element<G>,
+    sender_encs_pok: ElGamalProof,
+    range_proofs: RangeProofs,
+    balance_proof: &DdhProof,
+    session_id: SessionId,
+): Option<vector<EncryptedCoin<T>>> {
+    let (receiver_amounts, new_balance, total_sender) = self.verify_transfer_amounts(
+        receiver_pks,
+        receiver_amounts,
+        receiver_encs_pok,
+        new_balance,
+        total_sender_handle,
+        sender_encs_pok,
+        range_proofs,
+        session_id,
+    );
+    let mut expected = self.active.collapse();
+    expected.sub_assign(total_sender.encryption());
+    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+        return option::none()
+    };
+    option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
 }
 
-/// The verified encrypted amount carried by `coin`.
+/// The verified amount `coin` carries, for a caller that must check something against it before
+/// crediting it to a receiver.
 public(package) fun amount<T>(coin: &EncryptedCoin<T>): &InRangeVerifiedEncryptedAmount {
     &coin.amount
 }
 
-// === EncryptedBalance ===
+// === Re-statement ===
 
-/// An `EncryptedBalance` encrypting zero with `upper_bound = 1`.
-public(package) fun new<T>(): EncryptedBalance<T> {
-    EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 1 }
-}
-
-/// An `EncryptedBalance` encrypting zero with `upper_bound = 0`.
-public(package) fun empty<T>(): EncryptedBalance<T> {
-    EncryptedBalance { amount: encrypted_amount::zero(), upper_bound: 0 }
-}
-
-/// The number of u16-bounded values folded into `self`.
-public(package) fun upper_bound<T>(self: &EncryptedBalance<T>): u16 {
-    self.upper_bound
-}
-
-/// The largest `upper_bound` that keeps a limb within the decryption window: each limb is
-/// then bounded by `0xFFFF * 0xFFFF < 2^32`.
-public(package) fun max_upper_bound(): u16 {
-    0xFFFF
-}
-
-/// Whether `self` is in its post-construction state (nothing merged in).
-public(package) fun is_empty<T>(self: &EncryptedBalance<T>): bool {
-    self.upper_bound == 0
-}
-
-/// Collapsed (single-`Encryption`) view of `self`.
-public(package) fun collapse<T>(self: &EncryptedBalance<T>): Encryption {
-    self.amount.collapse()
-}
-
-/// Fold `other` into `self`, leaving `other` at zero. Caller is responsible for ensuring both
-/// sides are encrypted under the same key, and for any protocol-level cap on `upper_bound`.
-public(package) fun merge_into<T>(self: &mut EncryptedBalance<T>, other: &mut EncryptedBalance<T>) {
-    self.amount.add_assign(&other.amount);
-    self.upper_bound = self.upper_bound + other.upper_bound;
-    other.set_empty();
-}
-
-/// Fold an `EncryptedCoin` into `self`. Aborts if the coin's pk doesn't match the caller-supplied
-/// `pk`.
-public(package) fun merge_encrypted<T>(
-    self: &mut EncryptedBalance<T>,
-    pk: &PublicKey,
-    coin: EncryptedCoin<T>,
-) {
-    let EncryptedCoin { amount } = coin;
-    assert!(amount.pk() == pk, EInvalidPublicKey);
-    self.amount.add_assign(amount.amount());
-    self.upper_bound = self.upper_bound + 1;
-}
-
-/// Fold a `PublicCoin` into `self`. Zero-valued coins are no-ops (no slot consumed).
-public(package) fun merge_public<T>(self: &mut EncryptedBalance<T>, coin: PublicCoin<T>) {
-    let PublicCoin { value } = coin;
-    if (value == 0) return;
-    self.amount.add_assign(&from_value(value));
-    self.upper_bound = self.upper_bound + 1;
-}
-
-/// On a verifying `proof` that `self == new_balance + value`, lower `self` to `new_balance` and
-/// return `value` as a `PublicCoin`; else return `none`. Aborts if `new_balance.pk() != sender_pk`.
-public(package) fun try_split_to_public<T>(
-    self: &mut EncryptedBalance<T>,
-    sender_pk: &PublicKey,
-    new_balance: InRangeVerifiedEncryptedAmount,
-    value: u64,
-    proof: &DdhProof,
-    dst: vector<u8>,
-): Option<PublicCoin<T>> {
-    assert!(new_balance.pk() == sender_pk, EInvalidPublicKey);
-    let mut expected = self.collapse();
-    expected.sub_assign_u64(value);
-    if (new_balance.verify_equal(&expected, proof, dst)) {
-        self.overwrite(&new_balance);
-        option::some(PublicCoin<T> { value })
-    } else {
-        option::none()
-    }
-}
-
-/// Split receiver-keyed coins off `self` for a batched transfer. `receiver_amounts` are the
-/// per-receiver amounts and `total_sender` is the sender-keyed transfer total. Returns `some(coins)`
-/// on a verifying balance proof, else `none`. Aborts if `new_balance` or `total_sender` is not keyed
-/// to `sender_pk`.
-///
-/// `total_sender`'s commitment must equal the sum of the receiver commitments — the invariant that
-/// binds the amount leaving `self` to what the receivers get. This is **not** checked here - the caller
-/// (`verify_transfer_amounts`) builds `total_sender` from the receiver sum, so it holds by construction.
-/// TODO: consider enforcing this structurally so `try_split_batch` need not trust the caller.
-public(package) fun try_split_batch<T>(
-    self: &mut EncryptedBalance<T>,
-    sender_pk: &PublicKey,
-    new_balance: InRangeVerifiedEncryptedAmount,
-    receiver_amounts: vector<InRangeVerifiedEncryptedAmount>,
-    total_sender: VerifiedEncryption,
+/// Re-state the active balance as a verified re-encryption of the same value, resetting the number
+/// of merges it counts as. Returns whether the balance proof verified; on failure `self` is
+/// untouched. Aborts if `new_balance` fails to verify.
+public(package) fun try_update_active<T>(
+    self: &mut Balances<T>,
+    new_balance: EncryptedAmount,
+    new_balance_pok: &ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
-    balance_dst: vector<u8>,
-): Option<vector<EncryptedCoin<T>>> {
-    assert!(new_balance.pk() == sender_pk && total_sender.pk() == sender_pk, EInvalidPublicKey);
-
-    let mut expected = self.collapse();
-    expected.sub_assign(total_sender.encryption());
-    if (new_balance.verify_equal(&expected, balance_proof, balance_dst)) {
-        self.overwrite(&new_balance);
-        option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
-    } else {
-        option::none()
-    }
+    session_id: SessionId,
+): bool {
+    let new_balance = self.verify_amount(
+        new_balance,
+        new_balance_pok,
+        new_balance_range_proofs,
+        session_id,
+    );
+    let expected = self.active.collapse();
+    self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
 }
 
-/// Re-state `self` as a verified re-encryption of the same value. Returns whether the proof
-/// verified. Aborts if `new_balance.pk() != sender_pk`.
-public(package) fun try_update<T>(
-    self: &mut EncryptedBalance<T>,
-    sender_pk: &PublicKey,
-    new_balance: InRangeVerifiedEncryptedAmount,
-    proof: &DdhProof,
-    dst: vector<u8>,
+/// Re-key `self` to `new_pk`, swapping each limb's decryption handle for the matching
+/// `new_handles[i]` on a verifying `rekey_proof`. Aborts if there are pending deposits: those are
+/// under the old key and the proof does not cover them.
+public(package) fun try_rekey<T>(
+    self: &mut Balances<T>,
+    new_pk: PublicKey,
+    new_handles: vector<Element<G>>,
+    rekey_proof: DdhProof,
+    session_id: SessionId,
 ): bool {
-    assert!(new_balance.pk() == sender_pk, EInvalidPublicKey);
-    if (new_balance.verify_equal(&self.collapse(), proof, dst)) {
-        self.overwrite(&new_balance);
+    assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
+    if (
+        self
+            .active
+            .try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, session_id.batch_ddh())
+    ) {
+        self.pk = new_pk;
         true
     } else {
         false
     }
 }
 
-/// On a verifying `eq_proof` that `new_handles` re-key `self` (under `old_pk`) to `new_pk` — each
-/// limb's commitment kept, its decryption handle mapped by a shared witness — replace `self`'s
-/// amount with the re-keyed amount, preserving `upper_bound` (the re-keyed limbs encrypt the same
-/// values, so their bounds are unchanged). Returns whether the proof verified. The caller is
-/// responsible for updating its own record of the active key.
-public(package) fun try_set_public_key<T>(
-    self: &mut EncryptedBalance<T>,
+// === Admin functions ===
+
+/// Overwrite `self` with `new` as its whole active balance, dropping every pending deposit. `new`
+/// is not range-checked and is counted as a single merge.
+///
+/// WARNING: this may break consistency between the tokens in circulation and the funds in the pool.
+public(package) fun overwrite_unchecked<T>(self: &mut Balances<T>, new: EncryptedAmount) {
+    self.active.amount = new;
+    self.active.upper_bound = 1;
+    self.pending.set_empty();
+    self.public_balance = 0;
+}
+
+// === Private functions ===
+
+/// Verify the amounts of a batched transfer out of `self`: the receiver amounts, the sender's new
+/// balance, and the sender-keyed total the receivers sum to.
+fun verify_transfer_amounts<T>(
+    self: &Balances<T>,
+    receiver_pks: vector<PublicKey>,
+    receiver_amounts: vector<EncryptedAmount>,
+    receiver_encs_pok: vector<ElGamalProof>,
+    new_balance: EncryptedAmount,
+    total_sender_handle: Element<G>,
+    sender_encs_pok: ElGamalProof,
+    range_proofs: RangeProofs,
+    session_id: SessionId,
+): (vector<InRangeVerifiedEncryptedAmount>, InRangeVerifiedEncryptedAmount, VerifiedEncryption) {
+    let n = receiver_amounts.length();
+    assert!(receiver_pks.length() == n && receiver_encs_pok.length() == n, EMismatchedBatchLength);
+
+    // Each receiver amount is proven a valid encryption under its own key.
+    let mut verified_amounts = vector::tabulate!(n, |i| {
+        encrypted_amount::verify_encrypted_amount(
+            receiver_amounts[i],
+            receiver_pks[i],
+            &receiver_encs_pok[i],
+            session_id.elgamal(),
+        )
+    });
+
+    // The total's commitment is reconstructed from the receiver commitments and the given handle.
+    let total = twisted_elgamal::new(
+        encrypted_amount::sum_ciphertexts(&receiver_amounts),
+        total_sender_handle,
+    );
+
+    // Sender side: the new-balance limbs and the total are verified under `self.pk` in one proof.
+    let (new_balance, total_sender) = encrypted_amount::verify_encrypted_amount_and_encryption(
+        new_balance,
+        total,
+        self.pk,
+        &sender_encs_pok,
+        session_id.elgamal(),
+    );
+    verified_amounts.push_back(new_balance);
+
+    // One batched range proof over every limb, grouped into the n receivers followed by the new
+    // balance.
+    let mut receiver_amounts = encrypted_amount::verify_in_range(
+        verified_amounts,
+        range_proofs,
+        session_id.range_proof_16(),
+    );
+    let new_balance = receiver_amounts.pop_back();
+    (receiver_amounts, new_balance, total_sender)
+}
+
+fun verify_amount<T>(
+    self: &Balances<T>,
+    amount: EncryptedAmount,
+    pok: &ElGamalProof,
+    range_proofs: RangeProofs,
+    session_id: SessionId,
+): InRangeVerifiedEncryptedAmount {
+    let verified = encrypted_amount::verify_encrypted_amount(
+        amount,
+        self.pk,
+        pok,
+        session_id.elgamal(),
+    );
+    let mut in_range = encrypted_amount::verify_in_range(
+        vector[verified],
+        range_proofs,
+        session_id.range_proof_16(),
+    );
+    in_range.pop_back()
+}
+
+/// Replace the active balance with `new_balance` if `balance_proof` shows it encrypts the same value
+/// as `expected`.
+fun try_replace_active<T>(
+    self: &mut Balances<T>,
+    new_balance: &InRangeVerifiedEncryptedAmount,
+    expected: &Encryption,
+    balance_proof: &DdhProof,
+    session_id: SessionId,
+): bool {
+    if (new_balance.verify_equal(expected, balance_proof, session_id.ddh())) {
+        self.active.overwrite(new_balance);
+        true
+    } else {
+        false
+    }
+}
+
+/// Whether `self` can absorb one more merge. Always reserves one slot for a possible future public
+/// deposit, so the cap compared against is `MAX_UPPER_BOUND - 1`.
+fun has_deposit_slot<T>(self: &Balances<T>): bool {
+    MAX_UPPER_BOUND - 1 > self.active.upper_bound + self.pending.upper_bound
+}
+
+// === BoundedEncryptedAmount ===
+
+/// Collapsed (single-`Encryption`) view of `self`.
+fun collapse(self: &BoundedEncryptedAmount): Encryption {
+    self.amount.collapse()
+}
+
+/// Fold `other` into `self`, leaving `other` empty. Both sides must be under the same key.
+fun merge_into(self: &mut BoundedEncryptedAmount, other: &mut BoundedEncryptedAmount) {
+    self.amount.add_assign(&other.amount);
+    self.upper_bound = self.upper_bound + other.upper_bound;
+    other.set_empty();
+}
+
+/// Fold one u16-bounded, range-proven `amount` into `self`. The caller is responsible for it being
+/// under the same key.
+fun add_assign(self: &mut BoundedEncryptedAmount, amount: &InRangeVerifiedEncryptedAmount) {
+    self.amount.add_assign(amount.amount());
+    self.upper_bound = self.upper_bound + 1;
+}
+
+/// On a verifying `rekey_proof` that `new_handles` map `self`'s limb decryption handles from
+/// `old_pk` to `new_pk` under a shared witness, adopt the re-keyed amount and return `true`. The
+/// re-keyed limbs encrypt the same values, so `upper_bound` is preserved.
+fun try_set_public_key(
+    self: &mut BoundedEncryptedAmount,
     old_pk: &PublicKey,
     new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
-    eq_proof: DdhProof,
+    rekey_proof: DdhProof,
     dst: vector<u8>,
 ): bool {
-    self.amount.try_rekey(old_pk, new_pk, new_handles, &eq_proof, dst).is_some_and!(|amount| {
+    self.amount.try_rekey(old_pk, new_pk, new_handles, &rekey_proof, dst).is_some_and!(|amount| {
         self.amount = *amount;
         true
     })
 }
 
-// === Admin functions ===
-//
-// Issuer overrides gated by `TreasuryCap`. May break consistency between circulating tokens and
-// pool funds; the issuer is responsible for keeping the system consistent.
-
-/// Overwrite `self` with a raw `EncryptedAmount`. `new` is not range-checked; `upper_bound` is
-/// set to 1.
-public(package) fun overwrite_unchecked<T>(
-    self: &mut EncryptedBalance<T>,
-    _t: &mut TreasuryCap<T>,
-    new: EncryptedAmount,
-) {
-    self.amount = new;
-    self.upper_bound = 1;
-}
-
-/// Reset `self` to zero without proof.
-public(package) fun clear_unchecked<T>(self: &mut EncryptedBalance<T>, _t: &mut TreasuryCap<T>) {
-    self.set_empty();
-}
-
-/// Reset a `PublicCoin` to zero without proof.
-public(package) fun set_zero_unchecked<T>(self: &mut PublicCoin<T>, _t: &mut TreasuryCap<T>) {
-    self.value = 0;
-}
-
-// === Private functions ===
-
-/// Overwrite `self` with the verified amount `new`.
-fun overwrite<T>(self: &mut EncryptedBalance<T>, new: &InRangeVerifiedEncryptedAmount) {
+/// Overwrite `self` with the verified amount `new`, which counts as a single merged value.
+fun overwrite(self: &mut BoundedEncryptedAmount, new: &InRangeVerifiedEncryptedAmount) {
     self.amount = *new.amount();
     self.upper_bound = 1;
 }
 
-/// Reset `self` to the same state `empty()` returns.
-fun set_empty<T>(self: &mut EncryptedBalance<T>) {
+/// Reset `self` to holding no value at all, freeing every slot it took.
+fun set_empty(self: &mut BoundedEncryptedAmount) {
     self.amount = encrypted_amount::zero();
     self.upper_bound = 0;
+}
+
+// === Test Helpers ===
+
+#[test_only]
+public(package) fun collapse_active<T>(self: &Balances<T>): Encryption {
+    self.active.collapse()
+}
+
+#[test_only]
+public(package) fun collapse_pending<T>(self: &Balances<T>): Encryption {
+    self.pending.collapse()
 }

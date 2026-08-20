@@ -96,6 +96,7 @@ import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
 import * as policy from './policy.js';
+import * as session_id from './session_id.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::contra';
@@ -138,13 +139,10 @@ export const Account = new MoveStruct({
 export const TokenAccount = new MoveStruct({
 	name: `${$moduleName}::TokenAccount<phantom T>`,
 	fields: {
-		pk: twisted_elgamal.PublicKey,
-		session_id: bcs.vector(bcs.u8()),
+		session_id: session_id.SessionId,
 		is_frozen: bcs.bool(),
 		accepts_deposits: bcs.bool(),
-		active: balance.EncryptedBalance,
-		pending: balance.EncryptedBalance,
-		public_balance: balance.PublicCoin,
+		balance: balance.Balances,
 	},
 });
 export const TokenKey = new MoveTuple({
@@ -619,13 +617,12 @@ export interface RekeyTokenAccountOptions {
 	typeArguments: [string];
 }
 /**
- * Re-key token `T`'s active balance from its current `TokenAccount.pk` to
- * `new_pk`, swapping each limb's decryption handle for the matching
- * `new_handles[i]` (proven by `rekey_proof`). `new_pk` is explicit and independent
- * of the account's default key. Aborts if the token has unmerged pending deposits
- * (which are under the old key, so they must be merged first) or the proof fails.
- * Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation
- * and for `account.owner`.
+ * Re-key token `T`'s balance from its current key to `new_pk`, swapping each
+ * limb's decryption handle for the matching `new_handles[i]` (proven by
+ * `rekey_proof`). `new_pk` is explicit and independent of the account's default
+ * key. Aborts if the token has unmerged pending deposits (which are under the old
+ * key, so they must be merged first) or the proof fails. Authorized by `auth`,
+ * which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
  */
 export function rekeyTokenAccount(options: RekeyTokenAccountOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -775,15 +772,14 @@ export interface BatchedTransferOptions {
  * one proof; `range_proofs` range-check every limb; and `total_sender_handle` is
  * the single sender-keyed decryption handle for the total (its commitment is
  * reconstructed on chain from the receiver amounts). The amounts are verified
- * against `sender`'s own key and session (see `verify_transfer_amounts`), so they
- * are bound to this transfer by construction. `balance_proof` proves the sender's
- * balance drops by exactly the transfer total (see `balance::try_split_batch`).
- * `seed_point` (= `P`) is forwarded to the events so the sender can re-derive each
- * transfer's blinding and recover its outgoing amounts; it is not otherwise
- * verified on chain.
+ * against `sender`'s own key and session id, so they are bound to this transfer by
+ * construction. `balance_proof` proves the sender's balance drops by exactly the
+ * transfer total (see `balance::try_withdraw_batch`). `seed_point` (= `P`) is
+ * forwarded to the events so the sender can re-derive each transfer's blinding and
+ * recover its outgoing amounts; it is not otherwise verified on chain.
  *
  * Per-transfer auditing: when `ct` has auditor keys enabled, `auditor_package`
- * must be `some`. See `auditors::verify_transfer` for details.
+ * must be `some`. See `auditors::prepare_auditor_data` for details.
  *
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
  * `BalanceProofFailed`. Aborts if a proof or the auditor requirement fails. Call
@@ -1162,7 +1158,7 @@ export function owner(options: OwnerOptions) {
 		});
 }
 export interface SetBalanceByIssuerArguments {
-	t: RawTransactionArgument<string>;
+	T: RawTransactionArgument<string>;
 	account: RawTransactionArgument<string>;
 	newBalance: TransactionArgument;
 }
@@ -1171,7 +1167,7 @@ export interface SetBalanceByIssuerOptions {
 	arguments:
 		| SetBalanceByIssuerArguments
 		| [
-				t: RawTransactionArgument<string>,
+				T: RawTransactionArgument<string>,
 				account: RawTransactionArgument<string>,
 				newBalance: TransactionArgument,
 		  ];
@@ -1190,7 +1186,7 @@ export interface SetBalanceByIssuerOptions {
 export function setBalanceByIssuer(options: SetBalanceByIssuerOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = [null, null, null] satisfies (string | null)[];
-	const parameterNames = ['t', 'account', 'newBalance'];
+	const parameterNames = ['T', 'account', 'newBalance'];
 	return (tx: Transaction) =>
 		tx.moveCall({
 			package: packageAddress,

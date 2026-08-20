@@ -218,7 +218,7 @@ export class Admin {
 				package: pid,
 				typeArguments: [this.tokenIssuer.tokenType],
 				arguments: {
-					t: this.tokenIssuer.treasuryCapId,
+					T: this.tokenIssuer.treasuryCapId,
 					account: this.client.contra.getAccountId(accountOwner),
 					newBalance,
 				},

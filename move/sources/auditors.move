@@ -4,8 +4,10 @@
 module contra::auditors;
 
 use contra::{
-    encrypted_amount::{InRangeVerifiedEncryptedAmount, ciphertexts_u32},
+    balance::EncryptedCoin,
+    encrypted_amount::ciphertexts_u32,
     nizk::{ElGamalProof, verify_elgamal},
+    session_id::SessionId,
     twisted_elgamal::{Self, PublicKey, Encryption}
 };
 use sui::{group_ops::Element, ristretto255::G};
@@ -78,16 +80,17 @@ public(package) fun update(
     auditors.previous_pks = previous_pks;
 }
 
-/// Verify a transfer's per-transfer auditor data. `receiver_amounts` are the range/consistency-proven
-/// receiver amounts and `auditor_package` is the sender-supplied data (`none` when the transfer
+/// Verify a transfer's per-transfer auditor data. `receiver_coins` are the coins split off the
+/// sender's balance and `auditor_package` is the sender-supplied data (`none` when the transfer
 /// carries none). The batched `ElGamalProof` over all `2N` auditor ciphertexts must verify against
 /// `current_pks`, else against `previous_pks`. Returns the verified handles tagged with the auditor
-/// key that accepted them, or `none` when the transfer carries no auditor data.
-public(package) fun verify_transfer(
+/// key that accepted them, or `none` when the transfer carries no auditor data. The proof's
+/// transcript is derived here from the transfer's `SessionId`.
+public(package) fun prepare_auditor_data<T>(
     auditors: &Auditors,
-    receiver_amounts: &vector<InRangeVerifiedEncryptedAmount>,
+    receiver_coins: &vector<EncryptedCoin<T>>,
     auditor_package: Option<AuditorPackage>,
-    dst: vector<u8>,
+    session_id: SessionId,
 ): Option<VerifiedAuditorHandles> {
     if (auditor_package.is_none()) {
         assert!(auditors.current_pks.is_empty(), EMissingAuditorData);
@@ -98,14 +101,18 @@ public(package) fun verify_transfer(
         EUnexpectedAuditorData,
     );
     let AuditorPackage { mut handles, proof } = auditor_package.destroy_some();
-    let n = receiver_amounts.length();
+    let n = receiver_coins.length();
     // At most one auditor: exactly one `[lo, hi]` handle pair per receiver.
     assert!(handles.length() == n, EMismatchedAuditorCount);
     // Build the auditor ciphertexts once; `verify_under` reuses them for both key sets.
-    let encryptions = build_auditor_encryptions(&handles, receiver_amounts);
-    let pk = if (verify_under(&encryptions, &proof, &auditors.current_pks, dst)) {
+    let encryptions = build_auditor_encryptions(&handles, receiver_coins);
+    let pk = if (
+        verify_under(&encryptions, &proof, &auditors.current_pks, session_id.auditor_elgamal())
+    ) {
         auditors.current_pks[0]
-    } else if (verify_under(&encryptions, &proof, &auditors.previous_pks, dst)) {
+    } else if (
+        verify_under(&encryptions, &proof, &auditors.previous_pks, session_id.auditor_elgamal())
+    ) {
         auditors.previous_pks[0]
     } else {
         abort EAuditorProofFailed
@@ -125,13 +132,11 @@ public(package) fun next(
     (verified.handles.pop_back(), option::some(verified.pk))
 }
 
-/// Consume the auditor data. This also works if not all handles were popped.
-public(package) fun destroy(auditor_data: Option<VerifiedAuditorHandles>) {
-    if (auditor_data.is_none()) {
-        auditor_data.destroy_none();
-        return
-    };
-    let VerifiedAuditorHandles { handles: _, pk: _ } = auditor_data.destroy_some();
+/// Consume the auditor data once every receiver's handles have been popped by `next`. Aborts if any
+/// are left, which would mean a receiver was audited but never credited.
+public(package) fun destroy_empty(auditor_data: VerifiedAuditorHandles) {
+    let VerifiedAuditorHandles { handles, pk: _ } = auditor_data;
+    handles.destroy_empty();
 }
 
 /// Whether the batched `ElGamalProof` verifies for the single key in `pks` over the pre-built `2N`
@@ -149,13 +154,13 @@ fun verify_under(
     proof.verify_elgamal(dst, &pks[0], encryptions)
 }
 
-fun build_auditor_encryptions(
+fun build_auditor_encryptions<T>(
     handles: &vector<vector<Element<G>>>,
-    receiver_amounts: &vector<InRangeVerifiedEncryptedAmount>,
+    receiver_coins: &vector<EncryptedCoin<T>>,
 ): vector<Encryption> {
     let mut encryptions = vector<Encryption>[];
-    receiver_amounts.length().do!(|r| {
-        let commitments = receiver_amounts[r].ciphertexts_u32();
+    receiver_coins.length().do!(|r| {
+        let commitments = receiver_coins[r].amount().ciphertexts_u32();
         U32_LIMBS.do!(
             |l| encryptions.push_back(twisted_elgamal::new(commitments[l], handles[r][l])),
         );
