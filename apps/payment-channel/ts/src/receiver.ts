@@ -242,6 +242,7 @@ export class Receiver {
 		const contraPureModules = new Set([
 			'decode',
 			'encrypted_amount',
+			'range_proof',
 			'auditors',
 			'twisted_elgamal',
 			'nizk',
