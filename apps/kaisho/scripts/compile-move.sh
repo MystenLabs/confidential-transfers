@@ -15,11 +15,25 @@ REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 CONTRA_TOML="$REPO_ROOT/move/Move.toml"
 BU_TOKEN_DIR="$REPO_ROOT/utils/move/test_token"
 BU_TOKEN_TOML="$BU_TOKEN_DIR/Move.toml"
+BU_TOKEN_LOCK="$BU_TOKEN_DIR/Move.lock"
 OUTPUT="$APP_DIR/public/bu_token_bytecodes.json"
 
-# Save originals
+# Save the files this script rewrites, and restore them however it exits. The lock has to be saved
+# too: it is deleted below to force re-resolution, and the build then writes one pinned to the
+# throwaway "fresh" environment, which must not be left in the tree. Restoring from a trap rather
+# than at the end also covers a failed build, which would otherwise leave the fabricated manifests
+# behind.
 cp "$CONTRA_TOML" "$CONTRA_TOML.bak"
 cp "$BU_TOKEN_TOML" "$BU_TOKEN_TOML.bak"
+cp "$BU_TOKEN_LOCK" "$BU_TOKEN_LOCK.bak"
+
+restore() {
+  [ -f "$CONTRA_TOML.bak" ] && mv -f "$CONTRA_TOML.bak" "$CONTRA_TOML"
+  [ -f "$BU_TOKEN_TOML.bak" ] && mv -f "$BU_TOKEN_TOML.bak" "$BU_TOKEN_TOML"
+  [ -f "$BU_TOKEN_LOCK.bak" ] && mv -f "$BU_TOKEN_LOCK.bak" "$BU_TOKEN_LOCK"
+  return 0
+}
+trap restore EXIT
 
 # Use a "fresh" environment so contra is bundled as unpublished. The system-package pins mirror
 # move/Move.toml: the protocol snapshot the toolchain resolves predates
@@ -54,7 +68,7 @@ sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-fram
 fresh = "00000001"
 TOML
 
-rm -f "$BU_TOKEN_DIR/Move.lock"
+rm -f "$BU_TOKEN_LOCK"
 
 # Compile. `--no-tree-shaking` keeps the build offline (skips RPC calls the
 # tree-shaker would otherwise make against the "fresh" chain id, which has
@@ -66,10 +80,6 @@ sui move build \
   --with-unpublished-dependencies \
   --no-tree-shaking \
   2>/dev/null > "$OUTPUT"
-
-# Restore originals
-mv "$CONTRA_TOML.bak" "$CONTRA_TOML"
-mv "$BU_TOKEN_TOML.bak" "$BU_TOKEN_TOML"
 
 MODULE_COUNT=$(python3 -c "import json; print(len(json.load(open('$OUTPUT'))['modules']))")
 echo "Compiled $MODULE_COUNT modules -> $OUTPUT"
