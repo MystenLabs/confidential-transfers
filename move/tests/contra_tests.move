@@ -1118,7 +1118,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 
 /// `rekey_token_account` aborts on a bad re-key proof (here a wrong witness, standing in for a raced balance
 /// whose handles no longer match), reverting the PTB — nothing is committed.
-#[test, expected_failure(abort_code = ::contra::contra::EAmountsEqualityProofFailed)]
+#[test, expected_failure(abort_code = ::contra::contra::ERekeyProofFailed)]
 fun test_rekey_token_account_aborts_on_bad_proof() {
     let setup_addr = @0x0;
     let addr1 = @0x100;
@@ -1193,7 +1193,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
         option::some(public_key(pk_new)),
         scenario.ctx(),
     );
-    // Aborts here with `EAmountsEqualityProofFailed`.
+    // Aborts here with `ERekeyProofFailed`.
     contra::rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
@@ -2014,7 +2014,7 @@ fun test_try_register_with_default_pk_is_idempotent() {
     // First call registers the token account under the default key.
     contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
     assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
-    // Second call is a no-op (`register_with_default_pk` here would abort `EAccountAlreadyRegistered`).
+    // Second call is a no-op (`register_with_default_pk` here would abort `ETokenAccountAlreadyRegistered`).
     contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
     assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
 

@@ -1005,7 +1005,7 @@ export interface UnwrapArguments {
 	ct: RawTransactionArgument<string>;
 	pool: RawTransactionArgument<string>;
 	newBalance: TransactionArgument;
-	newBalanceConsistencyProof: TransactionArgument;
+	newBalancePok: TransactionArgument;
 	newBalanceRangeProofs: TransactionArgument;
 	amount: RawTransactionArgument<number | bigint>;
 	balanceProof: TransactionArgument;
@@ -1020,7 +1020,7 @@ export interface UnwrapOptions {
 				ct: RawTransactionArgument<string>,
 				pool: RawTransactionArgument<string>,
 				newBalance: TransactionArgument,
-				newBalanceConsistencyProof: TransactionArgument,
+				newBalancePok: TransactionArgument,
 				newBalanceRangeProofs: TransactionArgument,
 				amount: RawTransactionArgument<number | bigint>,
 				balanceProof: TransactionArgument,
@@ -1058,7 +1058,7 @@ export function unwrap(options: UnwrapOptions) {
 		'ct',
 		'pool',
 		'newBalance',
-		'newBalanceConsistencyProof',
+		'newBalancePok',
 		'newBalanceRangeProofs',
 		'amount',
 		'balanceProof',
@@ -1078,7 +1078,7 @@ export interface TryUnwrapArguments {
 	ct: RawTransactionArgument<string>;
 	pool: RawTransactionArgument<string>;
 	newBalance: TransactionArgument;
-	newBalanceConsistencyProof: TransactionArgument;
+	newBalancePok: TransactionArgument;
 	newBalanceRangeProofs: TransactionArgument;
 	amount: RawTransactionArgument<number | bigint>;
 	balanceProof: TransactionArgument;
@@ -1093,7 +1093,7 @@ export interface TryUnwrapOptions {
 				ct: RawTransactionArgument<string>,
 				pool: RawTransactionArgument<string>,
 				newBalance: TransactionArgument,
-				newBalanceConsistencyProof: TransactionArgument,
+				newBalancePok: TransactionArgument,
 				newBalanceRangeProofs: TransactionArgument,
 				amount: RawTransactionArgument<number | bigint>,
 				balanceProof: TransactionArgument,
@@ -1124,7 +1124,7 @@ export function tryUnwrap(options: TryUnwrapOptions) {
 		'ct',
 		'pool',
 		'newBalance',
-		'newBalanceConsistencyProof',
+		'newBalancePok',
 		'newBalanceRangeProofs',
 		'amount',
 		'balanceProof',

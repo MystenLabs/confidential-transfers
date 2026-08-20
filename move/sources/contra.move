@@ -100,16 +100,17 @@ use sui::{
 const EAccountAlreadyRegistered: u64 = 0;
 const ETransferDenied: u64 = 1;
 const EAuthorizationError: u64 = 2;
-const ETokenAlreadyRegistered: u64 = 3;
+const EConfidentialTokenAlreadyExists: u64 = 3;
+const ETokenAccountAlreadyRegistered: u64 = 4;
 const EBalanceProofFailed: u64 = 5;
 const EAllAmountsMustBeUsed: u64 = 6;
-const EAmountsEqualityProofFailed: u64 = 7;
+const ERekeyProofFailed: u64 = 7;
 const EEmptyTransferBatch: u64 = 8;
 const ETooManyReceivers: u64 = 9;
-const EBatchTooLarge: u64 = 11;
-const EReceiverNotRegistered: u64 = 12;
-const ERegistrationNotPermissionless: u64 = 13;
-const EDefaultPkNotSet: u64 = 14;
+const EBatchTooLarge: u64 = 10;
+const EReceiverNotRegistered: u64 = 11;
+const ERegistrationNotPermissionless: u64 = 12;
+const EDefaultPkNotSet: u64 = 13;
 
 // === Constants ===
 
@@ -270,7 +271,7 @@ public fun new_confidential_token<T>(
     auditor_public_keys: vector<PublicKey>,
     ctx: &mut TxContext,
 ): (ConfidentialToken<T>, ManagementCap<T>) {
-    assert!(!derived_object::exists(&registry.id, TokenKey<T>()), ETokenAlreadyRegistered);
+    assert!(!derived_object::exists(&registry.id, TokenKey<T>()), EConfidentialTokenAlreadyExists);
     let mut id = derived_object::claim(&mut registry.id, TokenKey<T>());
     let pool_id = derived_object::claim(&mut id, PoolKey());
     transfer::share_object(Pool<T> { id: pool_id });
@@ -343,7 +344,7 @@ public fun try_register_with_default_pk<T>(account: &mut Account, ct: &Confident
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
 /// registered. The caller is responsible for any authorization.
 fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: SessionId) {
-    assert!(!account.has_token<T>(), EAccountAlreadyRegistered);
+    assert!(!account.has_token<T>(), ETokenAccountAlreadyRegistered);
     events::emit_new_registration<T>(account.owner, pk);
     df::add(
         &mut account.id,
@@ -416,7 +417,7 @@ public fun rekey_token_account<T>(
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(
         rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof),
-        EAmountsEqualityProofFailed,
+        ERekeyProofFailed,
     );
 }
 
@@ -721,7 +722,7 @@ public fun unwrap<T>(
     deny_list: &DenyList,
     pool: &mut Pool<T>,
     new_balance: EncryptedAmount,
-    new_balance_consistency_proof: ElGamalProof,
+    new_balance_pok: ElGamalProof,
     new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
@@ -733,7 +734,7 @@ public fun unwrap<T>(
         deny_list,
         pool,
         new_balance,
-        new_balance_consistency_proof,
+        new_balance_pok,
         new_balance_range_proofs,
         amount,
         balance_proof,
@@ -752,7 +753,7 @@ public fun try_unwrap<T>(
     deny_list: &DenyList,
     pool: &mut Pool<T>,
     new_balance: EncryptedAmount,
-    new_balance_consistency_proof: ElGamalProof,
+    new_balance_pok: ElGamalProof,
     new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
@@ -764,7 +765,7 @@ public fun try_unwrap<T>(
         deny_list,
         pool,
         new_balance,
-        new_balance_consistency_proof,
+        new_balance_pok,
         new_balance_range_proofs,
         amount,
         balance_proof,
@@ -785,7 +786,7 @@ fun try_unwrap_internal<T>(
     deny_list: &DenyList,
     pool: &mut Pool<T>,
     new_balance: EncryptedAmount,
-    new_balance_consistency_proof: ElGamalProof,
+    new_balance_pok: ElGamalProof,
     new_balance_range_proofs: RangeProofs,
     amount: u64,
     balance_proof: &DdhProof,
@@ -806,7 +807,7 @@ fun try_unwrap_internal<T>(
         .try_withdraw_public(
             amount,
             new_balance,
-            &new_balance_consistency_proof,
+            &new_balance_pok,
             new_balance_range_proofs,
             balance_proof,
             account.session_id,
