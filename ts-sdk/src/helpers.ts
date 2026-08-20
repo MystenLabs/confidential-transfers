@@ -17,7 +17,7 @@ import { hexToBytes } from '@noble/hashes/utils.js';
 import type { BatchRangeProver } from './bp.js';
 import * as auditorsContracts from './contracts/contra/auditors.js';
 import * as decodeContracts from './contracts/contra/decode.js';
-import * as encryptedAmountContracts from './contracts/contra/encrypted_amount.js';
+import * as rangeProofContracts from './contracts/contra/range_proof.js';
 import * as twistedElgamalContracts from './contracts/contra/twisted_elgamal.js';
 import { InvalidArgumentError } from './error.js';
 import type { DdhNizk } from './nizk.js';
@@ -297,13 +297,13 @@ export function buildElGamalProofs(packageId: string, proofs: ElGamalNizk[]) {
  * Maximum number of amounts a single Bulletproof chunk can cover. Sui's
  * `rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment count at 32 for
  * 16-bit range proofs, and each amount contributes 4 limb commitments, so a chunk holds at most
- * `32 / 4 = 8` amounts. Mirrors `MAX_RANGE_PROOF_BATCH_SIZE` in `encrypted_amount.move`.
+ * `32 / 4 = 8` amounts. Mirrors `MAX_BATCH_SIZE` in `range_proof.move` (32 commitments).
  */
 const MAX_RANGE_PROOF_BATCH_SIZE = 8;
 
 /**
  * Build an on-chain `RangeProofs` over a batch of amounts' limbs via
- * `encrypted_amount::new_range_proofs`. Sui's bulletproof aggregator requires a power-of-2
+ * `range_proof::new_range_proofs`. Sui's bulletproof aggregator requires a power-of-2
  * committed-value count and at most `MAX_RANGE_PROOF_BATCH_SIZE` amounts (= 32 commitments) per proof; we
  * partition N amounts into power-of-2 chunks largest-first (e.g. N=7 → [4, 2, 1]; N=20 → [8, 8, 4]).
  * The on-chain verifier reconstructs the same partition from the commitment count. `rangeDst` (the
@@ -340,7 +340,7 @@ export function buildRangeProofs(
 		}
 		chunkSize = Math.floor(chunkSize / 2);
 	}
-	return encryptedAmountContracts.newRangeProofs({
+	return rangeProofContracts.newRangeProofs({
 		package: packageId,
 		arguments: { proofs: rangeProofs },
 	});

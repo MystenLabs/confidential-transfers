@@ -9,6 +9,7 @@ use contra::{
     contra::{Self, ConfidentialToken, Pool as ContraPool},
     encrypted_amount::{Self, collapse_for_testing, consistency_proof_for_testing},
     nizk,
+    range_proof,
     twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero_for_testing}
 };
 use std::unit_test::{Self, assert_eq};
@@ -138,7 +139,7 @@ fun closed_loop_roundtrip() {
             new_balance,
             total_sender_handle,
             sender_encs_pok,
-            encrypted_amount::assume_range_checked(),
+            range_proof::assume_range_checked(),
             ristretto255::g_identity(),
             sum_proof,
             option::none(),
@@ -182,7 +183,7 @@ fun closed_loop_roundtrip() {
         &mut contra_pool,
         new_bob_balance,
         new_bob_balance_pok,
-        encrypted_amount::assume_range_checked(),
+        range_proof::assume_range_checked(),
         50,
         &bob_balance_proof,
         scenario.ctx(),

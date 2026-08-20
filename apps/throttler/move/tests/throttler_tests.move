@@ -7,6 +7,7 @@ use contra::{
     contra::{Self, ConfidentialToken, Pool as ContraPool},
     encrypted_amount::{Self, consistency_proof_for_testing},
     nizk,
+    range_proof,
     twisted_elgamal::{Self, encrypt_trivial_for_testing, encrypt_zero_for_testing}
 };
 use std::unit_test::{Self, assert_eq};
@@ -91,7 +92,7 @@ fun do_throttled_unwrap(
         throttled_pool,
         new_balance,
         new_balance_pok,
-        encrypted_amount::assume_range_checked(),
+        range_proof::assume_range_checked(),
         amount,
         &balance_proof,
         clock,
