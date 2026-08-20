@@ -17,8 +17,8 @@ export const EncryptedAmount = new MoveStruct({
 		l3: twisted_elgamal.Encryption,
 	},
 });
-export const InRangeVerifiedEncryptedAmount = new MoveStruct({
-	name: `${$moduleName}::InRangeVerifiedEncryptedAmount`,
+export const RangeVerifiedAmount = new MoveStruct({
+	name: `${$moduleName}::RangeVerifiedAmount`,
 	fields: {
 		amount: EncryptedAmount,
 		pk: twisted_elgamal.PublicKey,
@@ -31,8 +31,8 @@ export const VerifiedEncryption = new MoveStruct({
 		pk: twisted_elgamal.PublicKey,
 	},
 });
-export const VerifiedEncryptedAmount = new MoveStruct({
-	name: `${$moduleName}::VerifiedEncryptedAmount`,
+export const VerifiedAmount = new MoveStruct({
+	name: `${$moduleName}::VerifiedAmount`,
 	fields: {
 		amount: EncryptedAmount,
 		pk: twisted_elgamal.PublicKey,

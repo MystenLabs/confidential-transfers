@@ -105,14 +105,8 @@ describe('core user flows (devnet)', () => {
 
 		// Verify both accounts start at zero.
 		await expectBalances([
-			[
-				user1TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
-			],
-			[
-				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
-			],
+			[user1TokenAccount, { balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 }],
+			[user2TokenAccount, { balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 }],
 		]);
 	}, 180_000);
 
@@ -124,12 +118,9 @@ describe('core user flows (devnet)', () => {
 		await expectBalances([
 			[
 				user1TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 5n * ONE, balanceUpperBound: 1 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 5n * ONE, balanceTerms: 1 },
 			],
-			[
-				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
-			],
+			[user2TokenAccount, { balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 }],
 		]);
 
 		// --- Merge and update balance for user1 ---
@@ -138,12 +129,9 @@ describe('core user flows (devnet)', () => {
 		await expectBalances([
 			[
 				user1TokenAccount,
-				{ balance: 5n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+				{ balance: 5n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 			],
-			[
-				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
-			],
+			[user2TokenAccount, { balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 }],
 		]);
 
 		// --- Unwrap 4 from user1 ---
@@ -152,12 +140,9 @@ describe('core user flows (devnet)', () => {
 		await expectBalances([
 			[
 				user1TokenAccount,
-				{ balance: 1n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+				{ balance: 1n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 			],
-			[
-				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
-			],
+			[user2TokenAccount, { balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 }],
 		]);
 
 		// --- Mint and wrap 1 to user2 (public deposit) ---
@@ -167,11 +152,11 @@ describe('core user flows (devnet)', () => {
 		await expectBalances([
 			[
 				user1TokenAccount,
-				{ balance: 1n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+				{ balance: 1n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 			],
 			[
 				user2TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 1n * ONE, balanceUpperBound: 1 },
+				{ balance: 0n, pending: 0n, pendingPublicBalance: 1n * ONE, balanceTerms: 1 },
 			],
 		]);
 
@@ -179,17 +164,14 @@ describe('core user flows (devnet)', () => {
 		await transfer(user1TokenAccount, user1, user2Address, 1n * ONE);
 
 		await expectBalances([
-			[
-				user1TokenAccount,
-				{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
-			],
+			[user1TokenAccount, { balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 }],
 			[
 				user2TokenAccount,
 				{
 					balance: 0n,
 					pending: 1n * ONE,
 					pendingPublicBalance: 1n * ONE,
-					balanceUpperBound: 1,
+					balanceTerms: 1,
 				},
 			],
 		]);
@@ -213,7 +195,7 @@ describe('core user flows (devnet)', () => {
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
@@ -221,7 +203,7 @@ describe('core user flows (devnet)', () => {
 						balance: 12n * ONE,
 						pending: 0n,
 						pendingPublicBalance: 0n,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 			]);
@@ -233,7 +215,7 @@ describe('core user flows (devnet)', () => {
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 5n * ONE, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 5n * ONE, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
@@ -241,7 +223,7 @@ describe('core user flows (devnet)', () => {
 						balance: 12n * ONE,
 						pending: 0n,
 						pendingPublicBalance: 0n,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 			]);
@@ -252,7 +234,7 @@ describe('core user flows (devnet)', () => {
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 7n * ONE, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 7n * ONE, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
@@ -260,7 +242,7 @@ describe('core user flows (devnet)', () => {
 						balance: 12n * ONE,
 						pending: 0n,
 						pendingPublicBalance: 0n,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 			]);
@@ -275,12 +257,12 @@ describe('core user flows (devnet)', () => {
 						balance: 0n,
 						pending: 3n * ONE,
 						pendingPublicBalance: 7n * ONE,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 				[
 					user2TokenAccount,
-					{ balance: 9n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 9n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 
@@ -294,12 +276,12 @@ describe('core user flows (devnet)', () => {
 						balance: 0n,
 						pending: 3n * ONE,
 						pendingPublicBalance: 7n * ONE,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 				[
 					user2TokenAccount,
-					{ balance: 6n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 6n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 
@@ -313,12 +295,12 @@ describe('core user flows (devnet)', () => {
 						balance: 0n,
 						pending: 5n * ONE,
 						pendingPublicBalance: 7n * ONE,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 				[
 					user2TokenAccount,
-					{ balance: 4n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 4n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 
@@ -332,12 +314,12 @@ describe('core user flows (devnet)', () => {
 						balance: 0n,
 						pending: 5n * ONE,
 						pendingPublicBalance: 7n * ONE,
-						balanceUpperBound: 1,
+						balanceTerms: 1,
 					},
 				],
 				[
 					user2TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 
@@ -347,11 +329,11 @@ describe('core user flows (devnet)', () => {
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 		},
@@ -452,11 +434,11 @@ describe('core user flows (devnet)', () => {
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
-					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 		},
@@ -483,7 +465,7 @@ describe('core user flows (devnet)', () => {
 				balance: 0n,
 				pending: 0n,
 				pendingPublicBalance: 5n * ONE,
-				balanceUpperBound: 1,
+				balanceTerms: 1,
 			});
 
 			// Transfer 2 to user2. user1.balance is 0 but pendingPublicBalance=5,
@@ -493,11 +475,11 @@ describe('core user flows (devnet)', () => {
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 3n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 3n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
-					{ balance: 0n, pending: 2n * ONE, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 2n * ONE, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 			]);
 		},
@@ -555,22 +537,22 @@ describe('core user flows (devnet)', () => {
 			});
 
 			// `add_to_batch` only mutates each receiver's `pending_deposits`, never
-			// `balance`: user2 keeps its carry-over balance.upperBound (1) and each
-			// freshly-registered receiver stays at upperBound 1. user1's balance is set
-			// via `try_update_balance` -> upperBound = 1, ending at
+			// `balance`: user2 keeps its carry-over balance.terms (1) and each
+			// freshly-registered receiver stays at terms 1. user1's balance is set
+			// via `try_update_balance` -> terms = 1, ending at
 			// 3*ONE - 1*ONE - 10*SHARE = 1*ONE.
 			await expectBalances([
 				[
 					user1TokenAccount,
-					{ balance: 1n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 1n * ONE, pending: 0n, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 				[
 					user2TokenAccount,
-					{ balance: 0n, pending: 3n * ONE, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: 3n * ONE, pendingPublicBalance: 0n, balanceTerms: 1 },
 				],
 				...freshReceivers.map((r): [TokenAccount, ExpectedBalance] => [
 					r.tokenAccount,
-					{ balance: 0n, pending: SHARE, pendingPublicBalance: 0n, balanceUpperBound: 1 },
+					{ balance: 0n, pending: SHARE, pendingPublicBalance: 0n, balanceTerms: 1 },
 				]),
 			]);
 		},
@@ -607,7 +589,7 @@ describe('core user flows (devnet)', () => {
 				balance: wrapAmount,
 				pending: 0n,
 				pendingPublicBalance: 0n,
-				balanceUpperBound: 1,
+				balanceTerms: 1,
 			});
 
 			// --- Rotation 1: no pending deposits. `tryRekeyTokenAccount` re-keys the token in one PTB
@@ -641,7 +623,7 @@ describe('core user flows (devnet)', () => {
 				balance: wrapAmount,
 				pending: 0n,
 				pendingPublicBalance: 0n,
-				balanceUpperBound: 1,
+				balanceTerms: 1,
 			});
 
 			// --- Rotation 2: with a pending public deposit outstanding so `tryRekeyTokenAccount`'s inline merge
@@ -654,7 +636,7 @@ describe('core user flows (devnet)', () => {
 				balance: wrapAmount,
 				pending: 0n,
 				pendingPublicBalance: extra,
-				balanceUpperBound: 1,
+				balanceTerms: 1,
 			});
 
 			const rotated2 = new TokenAccount(
@@ -680,7 +662,7 @@ describe('core user flows (devnet)', () => {
 				pendingPublicBalance: 0n,
 				// The inline merge folded the pending public deposit into `active` (bound 1 -> 2), and
 				// the lazy re-key only swaps handles (preserving the bound), so this is 2, not 1.
-				balanceUpperBound: 2,
+				balanceTerms: 2,
 			});
 
 			// Sanity check: a transfer from the post-rotation account still works.
@@ -689,7 +671,7 @@ describe('core user flows (devnet)', () => {
 				balance: wrapAmount + extra - 1n * ONE,
 				pending: 0n,
 				pendingPublicBalance: 0n,
-				balanceUpperBound: 1,
+				balanceTerms: 1,
 			});
 		},
 	);

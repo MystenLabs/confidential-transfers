@@ -54,7 +54,7 @@ public struct VerifiedEncryption has drop {
 
 /// A four-limb `EncryptedAmount` whose limbs are proven (via an `ElGamalProof`) to be valid
 /// twisted-ElGamal encryptions under `pk` — knowledge of each limb's blinding and message.
-public struct VerifiedEncryptedAmount has drop {
+public struct VerifiedAmount has drop {
     amount: EncryptedAmount,
     pk: PublicKey,
 }
@@ -62,7 +62,7 @@ public struct VerifiedEncryptedAmount has drop {
 /// A wrapper around EncryptedAmount that has been verified to have the following properties:
 /// 1) The plaintexts for all limbs are at most 2^16.
 /// 2) All limbs are valid encryptions with respect to the given public key (in the Proof of Knowledge sense).
-public struct InRangeVerifiedEncryptedAmount has drop {
+public struct RangeVerifiedAmount has drop {
     amount: EncryptedAmount,
     pk: PublicKey,
 }
@@ -96,9 +96,9 @@ public(package) fun verify_encrypted_amount(
     pk: PublicKey,
     proof: &ElGamalProof,
     dst: vector<u8>,
-): VerifiedEncryptedAmount {
+): VerifiedAmount {
     assert!(proof.verify_elgamal(dst, &pk, &amount.limbs()), EEncryptionProofFailed);
-    VerifiedEncryptedAmount { amount, pk }
+    VerifiedAmount { amount, pk }
 }
 
 /// Verify `amount`'s four limbs together with the extra `encryption` under `pk` in one folded proof,
@@ -109,28 +109,28 @@ public(package) fun verify_encrypted_amount_and_encryption(
     pk: PublicKey,
     proof: &ElGamalProof,
     dst: vector<u8>,
-): (VerifiedEncryptedAmount, VerifiedEncryption) {
+): (VerifiedAmount, VerifiedEncryption) {
     let mut ciphertexts = amount.limbs();
     ciphertexts.push_back(encryption);
     assert!(proof.verify_elgamal(dst, &pk, &ciphertexts), EEncryptionProofFailed);
-    (VerifiedEncryptedAmount { amount, pk }, VerifiedEncryption { encryption, pk })
+    (VerifiedAmount { amount, pk }, VerifiedEncryption { encryption, pk })
 }
 
 /// Range-check every limb of `amounts` (each committed value to `[0, 2^16)`) in one batch and
-/// promote each to a `InRangeVerifiedEncryptedAmount`. The amounts are returned in input order.
+/// promote each to a `RangeVerifiedAmount`. The amounts are returned in input order.
 public(package) fun verify_in_range(
-    amounts: vector<VerifiedEncryptedAmount>,
+    amounts: vector<VerifiedAmount>,
     range_proofs: RangeProofs,
     dst: vector<u8>,
-): vector<InRangeVerifiedEncryptedAmount> {
+): vector<RangeVerifiedAmount> {
     let RangeProofs { proofs } = range_proofs;
     // Collect every limb commitment for the single batched range proof.
     let mut commitments = vector<Element<G>>[];
     amounts.do_ref!(|a| U16_LIMBS.do!(|i| commitments.push_back(*a.amount[i].ciphertext())));
     assert!(verify_range_proofs(&commitments, &proofs, dst), ERangeProofFailed);
     amounts.map!(|a| {
-        let VerifiedEncryptedAmount { amount, pk } = a;
-        InRangeVerifiedEncryptedAmount { amount, pk }
+        let VerifiedAmount { amount, pk } = a;
+        RangeVerifiedAmount { amount, pk }
     })
 }
 
@@ -150,12 +150,12 @@ public(package) fun encryption_pk(self: &VerifiedEncryption): &PublicKey {
 public use fun encryption_pk as VerifiedEncryption.pk;
 
 /// The verified encrypted amount carried by `self`.
-public(package) fun amount(self: &InRangeVerifiedEncryptedAmount): &EncryptedAmount {
+public(package) fun amount(self: &RangeVerifiedAmount): &EncryptedAmount {
     &self.amount
 }
 
 /// The public key `self.amount()` is encrypted under.
-public(package) fun pk(self: &InRangeVerifiedEncryptedAmount): &PublicKey {
+public(package) fun pk(self: &RangeVerifiedAmount): &PublicKey {
     &self.pk
 }
 
@@ -187,7 +187,7 @@ public(package) fun collapse(ea: &EncryptedAmount): Encryption {
 
 /// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
 public(package) fun verify_equal(
-    ea1: &InRangeVerifiedEncryptedAmount,
+    ea1: &RangeVerifiedAmount,
     ea2: &Encryption,
     proof: &DdhProof,
     dst: vector<u8>,
@@ -249,7 +249,7 @@ public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<
 
 /// This amount's two u32-limb ciphertexts (`Ǎ_l = C_{2l} + 2^16 C_{2l+1}`) — the shared,
 /// key-independent components an auditor pairs with its own decryption handles.
-public(package) fun ciphertexts_u32(self: &InRangeVerifiedEncryptedAmount): vector<Element<G>> {
+public(package) fun ciphertexts_u32(self: &RangeVerifiedAmount): vector<Element<G>> {
     self.amount.collapse_to_u32().map!(|e| *e.ciphertext())
 }
 
@@ -269,11 +269,8 @@ fun fold_encryption(lo: &Encryption, hi: &Encryption, shift: &Element<Scalar>): 
 /// The trivial encryption of the public `value`, verified under `pk` by construction: every limb is
 /// a u16 digit of `value` committed with a zero blinding, so the limbs are in range and the
 /// (identity) decryption handles are valid encryptions under any key.
-public(package) fun in_range_verified_from_value(
-    value: u64,
-    pk: PublicKey,
-): InRangeVerifiedEncryptedAmount {
-    InRangeVerifiedEncryptedAmount { amount: from_value(value), pk }
+public(package) fun range_verified_from_value(value: u64, pk: PublicKey): RangeVerifiedAmount {
+    RangeVerifiedAmount { amount: from_value(value), pk }
 }
 
 public(package) fun from_value(value: u64): EncryptedAmount {

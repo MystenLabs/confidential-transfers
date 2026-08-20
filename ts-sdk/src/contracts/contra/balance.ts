@@ -17,25 +17,25 @@ import * as encrypted_amount from './encrypted_amount.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::balance';
-export const BoundedEncryptedAmount = new MoveStruct({
-	name: `${$moduleName}::BoundedEncryptedAmount`,
+export const AccumulatedAmount = new MoveStruct({
+	name: `${$moduleName}::AccumulatedAmount`,
 	fields: {
 		amount: encrypted_amount.EncryptedAmount,
-		upper_bound: bcs.u16(),
+		terms: bcs.u16(),
 	},
 });
 export const Balances = new MoveStruct({
 	name: `${$moduleName}::Balances<phantom T>`,
 	fields: {
 		pk: twisted_elgamal.PublicKey,
-		active: BoundedEncryptedAmount,
-		pending: BoundedEncryptedAmount,
+		active: AccumulatedAmount,
+		pending: AccumulatedAmount,
 		public_balance: bcs.u64(),
 	},
 });
 export const EncryptedCoin = new MoveStruct({
 	name: `${$moduleName}::EncryptedCoin<phantom T>`,
 	fields: {
-		amount: encrypted_amount.InRangeVerifiedEncryptedAmount,
+		amount: encrypted_amount.RangeVerifiedAmount,
 	},
 });

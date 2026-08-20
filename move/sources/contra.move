@@ -834,7 +834,7 @@ public fun owner(account: &Account): address {
 /// WARNING: This may break the consistency of the balance such that the number of confidential
 /// tokens in circulation does not match the amount of coins in the pool. It is the responsibility
 /// of the caller to ensure consistency is maintained when using this function.
-/// The `upper_bound` is set to 1, so the caller is responsible for ensuring that the
+/// The balance's `terms` count is set to 1, so the caller is responsible for ensuring that the
 /// `EncryptedAmount` is in range.
 public fun set_balance_by_issuer<T>(
     _t: &mut TreasuryCap<T>,

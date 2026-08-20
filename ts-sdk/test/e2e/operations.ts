@@ -36,7 +36,7 @@ export interface ExpectedBalance {
 	balance: bigint;
 	pending: bigint;
 	pendingPublicBalance: bigint;
-	balanceUpperBound: number;
+	balanceTerms: number;
 }
 
 /** An authority that can sign a transaction. */
@@ -146,7 +146,7 @@ export function createOperations(
 				bal.balance.amount === expected.balance &&
 				bal.pending.amount === expected.pending &&
 				bal.pendingPublicBalance === expected.pendingPublicBalance &&
-				bal.balance.upperBound === expected.balanceUpperBound
+				bal.balance.terms === expected.balanceTerms
 			) {
 				break;
 			}
@@ -156,7 +156,7 @@ export function createOperations(
 		expect(bal.balance.amount).toBe(expected.balance);
 		expect(bal.pending.amount).toBe(expected.pending);
 		expect(bal.pendingPublicBalance).toBe(expected.pendingPublicBalance);
-		expect(bal.balance.upperBound).toBe(expected.balanceUpperBound);
+		expect(bal.balance.terms).toBe(expected.balanceTerms);
 	}
 
 	/** Run multiple balance checks in parallel. */
