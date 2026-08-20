@@ -44,9 +44,11 @@ export interface BalanceEntry {
 	 */
 	amount: bigint;
 	/**
-	 * The upper bound for the balance limbs: `limb_i <= balanceUpperBound * 2^16`.
+	 * How many u16-bounded values this balance was summed from, which is what bounds
+	 * its limbs: `limb_i <= terms * (2^16 - 1)`. Mirrors `terms` on
+	 * `balance::AccumulatedAmount`.
 	 */
-	upperBound: number;
+	terms: number;
 }
 
 /**

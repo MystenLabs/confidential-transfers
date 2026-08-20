@@ -206,12 +206,12 @@ describe('admin flows: freeze, deny list, seize (devnet)', () => {
 
 			// Issuer seizes by overwriting the balance with an encryption of 0.
 			// `set_balance_by_issuer` also clears all pending deposits and
-			// resets `balance.upper_bound` to 1.
+			// resets `balance.terms` to 1.
 			await admin.setBalance(user.address, 0n);
 
 			bal = await client.contra.getBalance(user.tokenAccount);
 			expect(bal.balance.amount).toBe(0n);
-			expect(bal.balance.upperBound).toBe(1);
+			expect(bal.balance.terms).toBe(1);
 			expect(bal.pending.amount).toBe(0n);
 			expect(bal.pendingPublicBalance).toBe(0n);
 
@@ -252,7 +252,7 @@ describe('admin flows: freeze, deny list, seize (devnet)', () => {
 			expect(bal.balance.amount).toBe(5n * ONE);
 			expect(bal.pending.amount).toBe(0n);
 			expect(bal.pendingPublicBalance).toBe(0n);
-			expect(bal.balance.upperBound).toBe(1);
+			expect(bal.balance.terms).toBe(1);
 		},
 	);
 });

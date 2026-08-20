@@ -270,12 +270,12 @@ export class ContraClient {
 			balance: {
 				ciphertext: balanceCiphertext,
 				amount: balanceCiphertext.decrypt(sk, this.#table),
-				upperBound: balance.active.upper_bound,
+				terms: balance.active.terms,
 			},
 			pending: {
 				ciphertext: pendingCiphertext,
 				amount: pendingCiphertext.decrypt(sk, this.#table),
-				upperBound: balance.pending.upper_bound,
+				terms: balance.pending.terms,
 			},
 			pendingPublicBalance: BigInt(balance.public_balance),
 		};
@@ -866,7 +866,7 @@ export class ContraClient {
 		// into active first. Public deposits contribute a zero handle, so they don't affect the
 		// handle mapping — only the encrypted pending handles do.
 		const shouldMerge =
-			merge && (pending.upperBound > 0 || pending.amount > 0n || pendingPublicBalance > 0n);
+			merge && (pending.terms > 0 || pending.amount > 0n || pendingPublicBalance > 0n);
 
 		const activeLimbs = [
 			balance.ciphertext.l0,

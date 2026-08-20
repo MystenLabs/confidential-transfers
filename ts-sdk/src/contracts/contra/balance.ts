@@ -21,7 +21,7 @@ export const AccumulatedAmount = new MoveStruct({
 	name: `${$moduleName}::AccumulatedAmount`,
 	fields: {
 		amount: encrypted_amount.EncryptedAmount,
-		upper_bound: bcs.u16(),
+		terms: bcs.u16(),
 	},
 });
 export const Balances = new MoveStruct({

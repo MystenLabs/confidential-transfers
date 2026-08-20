@@ -1180,8 +1180,8 @@ export interface SetBalanceByIssuerOptions {
  * WARNING: This may break the consistency of the balance such that the number of
  * confidential tokens in circulation does not match the amount of coins in the
  * pool. It is the responsibility of the caller to ensure consistency is maintained
- * when using this function. The `upper_bound` is set to 1, so the caller is
- * responsible for ensuring that the `EncryptedAmount` is in range.
+ * when using this function. The balance's `terms` count is set to 1, so the caller
+ * is responsible for ensuring that the `EncryptedAmount` is in range.
  */
 export function setBalanceByIssuer(options: SetBalanceByIssuerOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

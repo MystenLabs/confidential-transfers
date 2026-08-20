@@ -36,9 +36,9 @@ const EMismatchedBatchLength: u64 = 3;
 
 // === Constants ===
 
-/// The largest `upper_bound` that keeps a limb within the decryption window: each limb is then
+/// The largest number of `terms` that keeps a limb within the decryption window: each limb is then
 /// bounded by `0xFFFF * 0xFFFF < 2^32`.
-const MAX_UPPER_BOUND: u16 = 0xFFFF;
+const MAX_TERMS: u16 = 0xFFFF;
 
 // === Structs ===
 
@@ -52,10 +52,11 @@ public struct Balances<phantom T> has store {
     public_balance: u64,
 }
 
-/// An `EncryptedAmount` with a bound on its limbs: each is at most `upper_bound * (2^16 - 1)`.
+/// An `EncryptedAmount` summed from `terms` u16-bounded values, which is what bounds its limbs:
+/// each is at most `terms * (2^16 - 1)`. Not an upper bound itself — it is the multiplier.
 public struct AccumulatedAmount has store {
     amount: EncryptedAmount,
-    upper_bound: u16,
+    terms: u16,
 }
 
 /// Linear wrapper around a verified encrypted amount.
@@ -69,8 +70,8 @@ public struct EncryptedCoin<phantom T> {
 public(package) fun new<T>(pk: PublicKey): Balances<T> {
     Balances {
         pk,
-        active: AccumulatedAmount { amount: encrypted_amount::zero(), upper_bound: 1 },
-        pending: AccumulatedAmount { amount: encrypted_amount::zero(), upper_bound: 0 },
+        active: AccumulatedAmount { amount: encrypted_amount::zero(), terms: 1 },
+        pending: AccumulatedAmount { amount: encrypted_amount::zero(), terms: 0 },
         public_balance: 0,
     }
 }
@@ -212,7 +213,7 @@ public(package) fun try_rekey<T>(
     rekey_proof: DdhProof,
     session_id: SessionId,
 ): bool {
-    assert!(self.pending.upper_bound == 0, EPendingDepositsMustBeMerged);
+    assert!(self.pending.terms == 0, EPendingDepositsMustBeMerged);
     if (
         self
             .active
@@ -233,7 +234,7 @@ public(package) fun try_rekey<T>(
 /// WARNING: this may break consistency between the tokens in circulation and the funds in the pool.
 public(package) fun overwrite_unchecked<T>(self: &mut Balances<T>, new: EncryptedAmount) {
     self.active.amount = new;
-    self.active.upper_bound = 1;
+    self.active.terms = 1;
     self.pending.set_empty();
     self.public_balance = 0;
 }
@@ -332,9 +333,9 @@ fun try_replace_active<T>(
 }
 
 /// Whether `self` can absorb one more merge. Always reserves one slot for a possible future public
-/// deposit, so the cap compared against is `MAX_UPPER_BOUND - 1`.
+/// deposit, so the cap compared against is `MAX_TERMS - 1`.
 fun has_deposit_slot<T>(self: &Balances<T>): bool {
-    MAX_UPPER_BOUND - 1 > self.active.upper_bound + self.pending.upper_bound
+    MAX_TERMS - 1 > self.active.terms + self.pending.terms
 }
 
 // === AccumulatedAmount ===
@@ -347,7 +348,7 @@ fun collapse(self: &AccumulatedAmount): Encryption {
 /// Fold `other` into `self`, leaving `other` empty. Both sides must be under the same key.
 fun merge_into(self: &mut AccumulatedAmount, other: &mut AccumulatedAmount) {
     self.amount.add_assign(&other.amount);
-    self.upper_bound = self.upper_bound + other.upper_bound;
+    self.terms = self.terms + other.terms;
     other.set_empty();
 }
 
@@ -355,12 +356,12 @@ fun merge_into(self: &mut AccumulatedAmount, other: &mut AccumulatedAmount) {
 /// under the same key.
 fun add_assign(self: &mut AccumulatedAmount, amount: &RangeVerifiedAmount) {
     self.amount.add_assign(amount.amount());
-    self.upper_bound = self.upper_bound + 1;
+    self.terms = self.terms + 1;
 }
 
 /// On a verifying `rekey_proof` that `new_handles` map `self`'s limb decryption handles from
 /// `old_pk` to `new_pk` under a shared witness, adopt the re-keyed amount and return `true`. The
-/// re-keyed limbs encrypt the same values, so `upper_bound` is preserved.
+/// re-keyed limbs encrypt the same values, so `terms` is preserved.
 fun try_set_public_key(
     self: &mut AccumulatedAmount,
     old_pk: &PublicKey,
@@ -378,13 +379,13 @@ fun try_set_public_key(
 /// Overwrite `self` with the verified amount `new`, which counts as a single merged value.
 fun overwrite(self: &mut AccumulatedAmount, new: &RangeVerifiedAmount) {
     self.amount = *new.amount();
-    self.upper_bound = 1;
+    self.terms = 1;
 }
 
 /// Reset `self` to holding no value at all, freeing every slot it took.
 fun set_empty(self: &mut AccumulatedAmount) {
     self.amount = encrypted_amount::zero();
-    self.upper_bound = 0;
+    self.terms = 0;
 }
 
 // === Test Helpers ===
