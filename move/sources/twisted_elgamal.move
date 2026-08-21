@@ -100,23 +100,16 @@ public(package) fun sub(e1: &Encryption, e2: &Encryption): Encryption {
     }
 }
 
-/// In-place version of `sub`: `e1` becomes the homomorphic difference `e1 - e2`.
-/// Beware of plaintext-side overflow in the scalar field.
-public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
-    e1.ciphertext = g_sub(&e1.ciphertext, &e2.ciphertext);
-    e1.decryption_handle = g_sub(&e1.decryption_handle, &e2.decryption_handle);
-}
-
 /// Add a known public `amount` to the ciphertext.
 public(package) fun add_assign_u64(e: &mut Encryption, amount: u64) {
     if (amount == 0) return;
     e.ciphertext = g_add(&e.ciphertext, &g_mul(&scalar_from_u64(amount), &h()));
 }
 
-/// Subtract a known public `amount` from the ciphertext.
-public(package) fun sub_assign_u64(e: &mut Encryption, amount: u64) {
-    if (amount == 0) return;
-    e.ciphertext = g_sub(&e.ciphertext, &g_mul(&scalar_from_u64(amount), &h()));
+#[test_only]
+public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
+    e1.ciphertext = g_sub(&e1.ciphertext, &e2.ciphertext);
+    e1.decryption_handle = g_sub(&e1.decryption_handle, &e2.decryption_handle);
 }
 
 /// Trivial encryption of zero without randomness.
@@ -125,19 +118,6 @@ public(package) fun encrypt_zero(): Encryption {
     Encryption {
         ciphertext: g_identity(),
         decryption_handle: g_identity(),
-    }
-}
-
-/// Trivial encryption without randomness.
-public(package) fun encrypt_trivial(amount: u64): Encryption {
-    if (amount == 0) {
-        encrypt_zero()
-    } else {
-        // TODO: consider changing to (pk, g + amount*h)
-        Encryption {
-            ciphertext: g_mul(&scalar_from_u64(amount as u64), &h()),
-            decryption_handle: g_identity(),
-        }
     }
 }
 

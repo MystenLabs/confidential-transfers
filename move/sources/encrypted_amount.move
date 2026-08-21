@@ -6,9 +6,12 @@ module contra::encrypted_amount;
 use contra::{
     nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
     range_proof::RangeProofs,
-    twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_trivial, encrypt_zero}
+    twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_zero}
 };
-use sui::{group_ops::Element, ristretto255::{G, Scalar, g_add, g_identity, g_mul, scalar_from_u64}};
+use sui::{group_ops::Element, ristretto255::{G, Scalar, g_add, g_mul, scalar_from_u64}};
+
+#[test_only]
+use sui::ristretto255::g_identity;
 
 const U16_LIMBS: u64 = 4;
 
@@ -16,6 +19,7 @@ const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 const EEncryptionProofFailed: u64 = 4;
 const ERangeProofFailed: u64 = 5;
+const EEmptyBatch: u64 = 6;
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -152,18 +156,27 @@ public(package) fun collapse(ea: &EncryptedAmount): Encryption {
     fold_encryption(&u32s[0], &u32s[1], &scalar_from_u64(1 << 32))
 }
 
-/// Verify that `ea1` and `ea2` encrypt the same plaintext under `ea1.pk`.
-public(package) fun verify_equal(
-    ea1: &RangeVerifiedAmount,
-    ea2: &Encryption,
+/// The limb-wise difference `a - b`.
+public(package) fun sub(a: &EncryptedAmount, b: &EncryptedAmount): EncryptedAmount {
+    EncryptedAmount {
+        l0: a.l0.sub(&b.l0),
+        l1: a.l1.sub(&b.l1),
+        l2: a.l2.sub(&b.l2),
+        l3: a.l3.sub(&b.l3),
+    }
+}
+
+/// Verify that `residual` is an encryption of zero under the secret key behind `pk`.
+public(package) fun verify_zero(
+    pk: &PublicKey,
+    residual: &Encryption,
     proof: &DdhProof,
     dst: vector<u8>,
 ): bool {
-    let encryption = ea1.amount.collapse().sub(ea2);
     proof.verify_ddh(
         dst,
-        &vector[g(), *encryption.ciphertext()],
-        &vector[*ea1.pk.as_element(), *encryption.decryption_handle()],
+        &vector[g(), *residual.ciphertext()],
+        &vector[*pk.as_element(), *residual.decryption_handle()],
     )
 }
 
@@ -203,11 +216,15 @@ public(package) fun try_rekey(
 
 /// Sum of the collapsed ciphertexts of `amounts` (the `r*g + m*h` component, not the handles).
 public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<G> {
-    let mut cs = vector::tabulate!(U16_LIMBS, |_| g_identity());
-    amounts.do_ref!(|ea| U16_LIMBS.do!(|j| {
-        let sum = g_add(&cs[j], ea[j].ciphertext());
-        *cs.borrow_mut(j) = sum;
-    }));
+    assert!(!amounts.is_empty(), EEmptyBatch);
+    let mut cs = vector::tabulate!(U16_LIMBS, |j| *amounts[0][j].ciphertext());
+    (amounts.length() - 1).do!(|i| {
+        let ea = &amounts[i + 1];
+        U16_LIMBS.do!(|j| {
+            let sum = g_add(&cs[j], ea[j].ciphertext());
+            *cs.borrow_mut(j) = sum;
+        });
+    });
     let two_16 = scalar_from_u64(1 << 16);
     let lo = fold(&cs[0], &cs[1], &two_16);
     let hi = fold(&cs[2], &cs[3], &two_16);
@@ -217,7 +234,12 @@ public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<
 /// This amount's two u32-limb ciphertexts (`Ǎ_l = C_{2l} + 2^16 C_{2l+1}`) — the shared,
 /// key-independent components an auditor pairs with its own decryption handles.
 public(package) fun ciphertexts_u32(self: &RangeVerifiedAmount): vector<Element<G>> {
-    self.amount.collapse_to_u32().map!(|e| *e.ciphertext())
+    let ea = &self.amount;
+    let two_16 = scalar_from_u64(1 << 16);
+    vector[
+        fold(ea.l0.ciphertext(), ea.l1.ciphertext(), &two_16),
+        fold(ea.l2.ciphertext(), ea.l3.ciphertext(), &two_16),
+    ]
 }
 
 /// `lo + shift * hi`.
@@ -233,19 +255,12 @@ fun fold_encryption(lo: &Encryption, hi: &Encryption, shift: &Element<Scalar>): 
     )
 }
 
-/// The trivial encryption of the public `value`, verified under `pk` by construction: every limb is
-/// a u16 digit of `value` committed with a zero blinding, so the limbs are in range and the
-/// (identity) decryption handles are valid encryptions under any key.
-public(package) fun range_verified_from_value(value: u64, pk: PublicKey): RangeVerifiedAmount {
-    RangeVerifiedAmount { amount: from_value(value), pk }
-}
-
-public(package) fun from_value(value: u64): EncryptedAmount {
-    let l0 = encrypt_trivial(value & 0xFFFF);
-    let l1 = encrypt_trivial((value >> 16) & 0xFFFF);
-    let l2 = encrypt_trivial((value >> 32) & 0xFFFF);
-    let l3 = encrypt_trivial((value >> 48) & 0xFFFF);
-    EncryptedAmount { l0, l1, l2, l3 }
+/// Add the public `value` into `a`, one u16 digit per limb.
+public(package) fun add_assign_value(a: &mut EncryptedAmount, value: u64) {
+    a.l0.add_assign_u64(value & 0xFFFF);
+    a.l1.add_assign_u64((value >> 16) & 0xFFFF);
+    a.l2.add_assign_u64((value >> 32) & 0xFFFF);
+    a.l3.add_assign_u64((value >> 48) & 0xFFFF);
 }
 
 public(package) fun zero(): EncryptedAmount {

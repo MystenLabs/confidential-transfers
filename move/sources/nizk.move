@@ -68,7 +68,9 @@ public(package) fun verify_ddh(
 ): bool {
     let n = bases.length();
     if (images.length() != n || proof.commitments.length() != n) return false;
-    if (bases.all!(|b| *b == g_identity())) return false;
+    // Hoisted: `g_identity()` is a native call, and the closure would rebuild it per base.
+    let identity = g_identity();
+    if (bases.all!(|b| *b == identity)) return false;
     let c = challenge_ddh(dst, bases, images, &proof.commitments);
     vector::tabulate!(
         n,

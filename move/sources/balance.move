@@ -8,13 +8,7 @@
 module contra::balance;
 
 use contra::{
-    encrypted_amount::{
-        Self,
-        EncryptedAmount,
-        RangeVerifiedAmount,
-        VerifiedEncryption,
-        range_verified_from_value,
-    },
+    encrypted_amount::{Self, EncryptedAmount, RangeVerifiedAmount, VerifiedEncryption},
     nizk::{DdhProof, ElGamalProof},
     range_proof::RangeProofs,
     session_id::SessionId,
@@ -104,7 +98,7 @@ public(package) fun merge_deposits<T>(self: &mut Balances<T>) {
     self.active.merge_into(&mut self.pending);
     let value = self.public_balance;
     self.public_balance = 0;
-    if (value > 0) self.active.add_assign(&range_verified_from_value(value, self.pk));
+    if (value > 0) self.active.add_assign_value(value);
 }
 
 // === Withdrawals ===
@@ -129,9 +123,9 @@ public(package) fun try_withdraw_public<T>(
         new_balance_range_proofs,
         session_id,
     );
-    let mut expected = self.active.collapse();
-    expected.sub_assign_u64(amount);
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+    let mut residual = self.balance_change(&new_balance);
+    residual.add_assign_u64(amount);
+    if (!self.try_replace_active(&new_balance, &residual, balance_proof, session_id)) {
         return option::none()
     };
     option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
@@ -166,9 +160,8 @@ public(package) fun try_withdraw_batch<T>(
         range_proofs,
         session_id,
     );
-    let mut expected = self.active.collapse();
-    expected.sub_assign(total_sender.encryption());
-    if (!self.try_replace_active(&new_balance, &expected, balance_proof, session_id)) {
+    let residual = self.balance_change(&new_balance).add(total_sender.encryption());
+    if (!self.try_replace_active(&new_balance, &residual, balance_proof, session_id)) {
         return option::none()
     };
     option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
@@ -199,8 +192,8 @@ public(package) fun try_update_active<T>(
         new_balance_range_proofs,
         session_id,
     );
-    let expected = self.active.collapse();
-    self.try_replace_active(&new_balance, &expected, balance_proof, session_id)
+    let residual = self.balance_change(&new_balance);
+    self.try_replace_active(&new_balance, &residual, balance_proof, session_id)
 }
 
 /// Re-key `self` to `new_pk`, swapping each limb's decryption handle for the matching
@@ -315,16 +308,22 @@ fun verify_amount<T>(
     in_range.pop_back()
 }
 
-/// Replace the active balance with `new_balance` if `balance_proof` shows it encrypts the same value
-/// as `expected`.
+/// The change `new_balance - active`, collapsed to a single `Encryption`.
+fun balance_change<T>(self: &Balances<T>, new_balance: &RangeVerifiedAmount): Encryption {
+    new_balance.amount().sub(&self.active.amount).collapse()
+}
+
+/// Replace the active balance with `new_balance` if `balance_proof` shows `residual` encrypts zero.
 fun try_replace_active<T>(
     self: &mut Balances<T>,
     new_balance: &RangeVerifiedAmount,
-    expected: &Encryption,
+    residual: &Encryption,
     balance_proof: &DdhProof,
     session_id: SessionId,
 ): bool {
-    if (new_balance.verify_equal(expected, balance_proof, session_id.ddh())) {
+    if (
+        encrypted_amount::verify_zero(new_balance.pk(), residual, balance_proof, session_id.ddh())
+    ) {
         self.active.overwrite(new_balance);
         true
     } else {
@@ -341,6 +340,7 @@ fun has_deposit_slot<T>(self: &Balances<T>): bool {
 // === AccumulatedAmount ===
 
 /// Collapsed (single-`Encryption`) view of `self`.
+#[test_only]
 fun collapse(self: &AccumulatedAmount): Encryption {
     self.amount.collapse()
 }
@@ -350,6 +350,12 @@ fun merge_into(self: &mut AccumulatedAmount, other: &mut AccumulatedAmount) {
     self.amount.add_assign(&other.amount);
     self.terms = self.terms + other.terms;
     other.set_empty();
+}
+
+/// Fold the public `value` into `self`.
+fun add_assign_value(self: &mut AccumulatedAmount, value: u64) {
+    self.amount.add_assign_value(value);
+    self.terms = self.terms + 1;
 }
 
 /// Fold one u16-bounded, range-proven `amount` into `self`. The caller is responsible for it being
