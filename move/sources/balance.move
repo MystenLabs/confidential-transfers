@@ -308,17 +308,12 @@ fun verify_amount<T>(
     in_range.pop_back()
 }
 
-/// The change `new_balance - active`, collapsed to a single `Encryption`. Collapsing is linear, so
-/// folding the limb-wise difference once gives the same point as differencing two separately
-/// collapsed balances — at one fold instead of two, trading six scalar multiplications for four
-/// point subtractions.
+/// The change `new_balance - active`, collapsed to a single `Encryption`.
 fun balance_change<T>(self: &Balances<T>, new_balance: &RangeVerifiedAmount): Encryption {
     new_balance.amount().sub(&self.active.amount).collapse()
 }
 
-/// Replace the active balance with `new_balance` if `balance_proof` shows the caller's `residual` —
-/// the balance change plus whatever left the balance — encrypts zero, i.e. that `active` was
-/// exactly `new_balance` plus the withdrawn amount.
+/// Replace the active balance with `new_balance` if `balance_proof` shows `residual` encrypts zero.
 fun try_replace_active<T>(
     self: &mut Balances<T>,
     new_balance: &RangeVerifiedAmount,
