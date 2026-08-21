@@ -295,9 +295,10 @@ export function buildElGamalProofs(packageId: string, proofs: ElGamalNizk[]) {
 
 /**
  * Maximum number of amounts a single Bulletproof chunk can cover. Sui's
- * `rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment count at 32 for
- * 16-bit range proofs, and each amount contributes 4 limb commitments, so a chunk holds at most
- * `32 / 4 = 8` amounts. Mirrors `MAX_BATCH_SIZE` in `range_proof.move` (32 commitments).
+ * `rangeproofs::verify_bulletproofs_with_dst_ristretto255` rejects a proof whose
+ * `commitments * bits` exceeds 512, which at 16 bits is 32 commitments, and each amount contributes
+ * 4 limb commitments — so a chunk holds at most `512 / 16 / 4 = 8` amounts. Mirrors `MAX_BATCH_SIZE`
+ * in `range_proof.move` (32 commitments).
  */
 const MAX_RANGE_PROOF_BATCH_SIZE = 8;
 

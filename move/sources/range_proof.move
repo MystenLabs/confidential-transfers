@@ -24,12 +24,14 @@ const BULLETPROOFS_VERSION: u8 = 0;
 
 /// Bit-length of the range check: every committed value must lie in `[0, 2^16)`. This is the
 /// per-limb bound of an `encrypted_amount::EncryptedAmount`, the only thing range-checked today.
-const RANGE_BITS: u8 = 16;
+const RANGE_BITS: u64 = 16;
+
+/// `sui::rangeproofs` rejects a proof whose `commitments * bits` exceeds this, so the commitment
+/// cap below is a consequence of `RANGE_BITS` rather than a number of its own.
+const MAX_TOTAL_BITS: u64 = 512;
 
 /// Maximum number of commitments covered by a single Bulletproof.
-/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
-/// count at 32 for `RANGE_BITS = 16`.
-const MAX_BATCH_SIZE: u64 = 32;
+const MAX_BATCH_SIZE: u64 = MAX_TOTAL_BITS / RANGE_BITS;
 
 // === Structs ===
 
@@ -68,7 +70,7 @@ public(package) fun verify(
         offset = offset + chunk;
         rangeproofs::verify_bulletproofs_with_dst_ristretto255(
             range_proof,
-            RANGE_BITS,
+            RANGE_BITS as u8,
             &vector::tabulate!(chunk, |j| commitments[start + j]),
             &dst,
             BULLETPROOFS_VERSION,
