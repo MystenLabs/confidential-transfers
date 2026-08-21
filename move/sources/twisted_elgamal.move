@@ -106,8 +106,6 @@ public(package) fun add_assign_u64(e: &mut Encryption, amount: u64) {
     e.ciphertext = g_add(&e.ciphertext, &g_mul(&scalar_from_u64(amount), &h()));
 }
 
-/// In-place version of `sub`: `e1` becomes the homomorphic difference `e1 - e2`.
-/// Beware of plaintext-side overflow in the scalar field.
 #[test_only]
 public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
     e1.ciphertext = g_sub(&e1.ciphertext, &e2.ciphertext);
