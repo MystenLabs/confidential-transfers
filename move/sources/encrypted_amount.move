@@ -166,8 +166,7 @@ public(package) fun sub(a: &EncryptedAmount, b: &EncryptedAmount): EncryptedAmou
     }
 }
 
-/// Verify that `residual` is an encryption of zero under the secret key behind `pk` — the shape
-/// every balance equation reduces to once its terms are folded together.
+/// Verify that `residual` is an encryption of zero under the secret key behind `pk`.
 public(package) fun verify_zero(
     pk: &PublicKey,
     residual: &Encryption,
@@ -218,8 +217,6 @@ public(package) fun try_rekey(
 /// Sum of the collapsed ciphertexts of `amounts` (the `r*g + m*h` component, not the handles).
 public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<G> {
     assert!(!amounts.is_empty(), EEmptyBatch);
-    // Seed the per-limb sums with the first amount: adding it to the identity instead would be
-    // four group additions that change nothing.
     let mut cs = vector::tabulate!(U16_LIMBS, |j| *amounts[0][j].ciphertext());
     (amounts.length() - 1).do!(|i| {
         let ea = &amounts[i + 1];
@@ -237,8 +234,6 @@ public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<
 /// This amount's two u32-limb ciphertexts (`Ǎ_l = C_{2l} + 2^16 C_{2l+1}`) — the shared,
 /// key-independent components an auditor pairs with its own decryption handles.
 public(package) fun ciphertexts_u32(self: &RangeVerifiedAmount): vector<Element<G>> {
-    // Fold the commitments alone. An auditor pairs these with handles of its own, so the
-    // receiver-keyed handles `collapse_to_u32` would fold alongside them are discarded work.
     let ea = &self.amount;
     let two_16 = scalar_from_u64(1 << 16);
     vector[
@@ -260,12 +255,7 @@ fun fold_encryption(lo: &Encryption, hi: &Encryption, shift: &Element<Scalar>): 
     )
 }
 
-/// Add the public `value` into `a`, one u16 digit per limb. A public value carries no blinding, so
-/// only the commitments move: its decryption handles are the identity, and folding them in would be
-/// four additions of zero. Digits that are zero cost nothing at all.
-///
-/// The result stays range-verified by construction — each digit is a u16 — which is why the public
-/// half of a balance needs no proof to be merged in.
+/// Add the public `value` into `a`, one u16 digit per limb.
 public(package) fun add_assign_value(a: &mut EncryptedAmount, value: u64) {
     a.l0.add_assign_u64(value & 0xFFFF);
     a.l1.add_assign_u64((value >> 16) & 0xFFFF);
