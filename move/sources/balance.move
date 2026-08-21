@@ -352,8 +352,7 @@ fun merge_into(self: &mut AccumulatedAmount, other: &mut AccumulatedAmount) {
     other.set_empty();
 }
 
-/// Fold the public `value` into `self`. Its u16 digits are in range by construction, so it needs no
-/// proof, and like any merged value it counts as one more term.
+/// Fold the public `value` into `self`.
 fun add_assign_value(self: &mut AccumulatedAmount, value: u64) {
     self.amount.add_assign_value(value);
     self.terms = self.terms + 1;
