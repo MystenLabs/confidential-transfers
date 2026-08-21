@@ -156,9 +156,7 @@ public(package) fun collapse(ea: &EncryptedAmount): Encryption {
     fold_encryption(&u32s[0], &u32s[1], &scalar_from_u64(1 << 32))
 }
 
-/// The limb-wise difference `a - b`. Limb plaintexts wrap in the scalar field, which is harmless
-/// for the only consumer: it collapses the result and proves it is an encryption of zero, a
-/// statement about points that the wrap does not affect.
+/// The limb-wise difference `a - b`.
 public(package) fun sub(a: &EncryptedAmount, b: &EncryptedAmount): EncryptedAmount {
     EncryptedAmount {
         l0: a.l0.sub(&b.l0),
