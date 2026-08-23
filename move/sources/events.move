@@ -49,8 +49,7 @@ public struct WrapEvent<phantom T> has copy, drop {
 }
 
 /// A confidential transfer is made from a sender to a receiver. The transferred amount is the
-/// in-range four-limb encryption `encrypted_amount_receiver` (four range-proven u16 limbs) under
-/// `receiver_pk`; the full amount is `Σ_k n_k · 2^{16k}`. The sender does not send a separate
+/// in-range four-limb encryption `encrypted_amount_receiver` under `receiver_pk`. The sender does not send a separate
 /// sender-keyed amount: it recovers its own outgoing value from these commitments (the sender and
 /// receiver commitments are identical) by re-deriving the per-transfer blinding from
 /// `seed = HKDF(sk * seed_point)` and the receiver's `batch_index` within this transfer.

@@ -27,10 +27,12 @@ const U32_LIMBS: u64 = 2;
 // === Main Type ===
 
 /// The auditor configuration for a confidential token: the `current_pks` key set (tried first on a
-/// transfer) and the `previous_pks` set (also accepted), allowing a grace period. Each holds **at most
-/// one** key (asserted by `new` / `update`). Auditing is per-transfer — every transfer carries an
-/// auditor-readable copy of the amount under the auditor key. Empty `current_pks` disables auditing
-/// going forward.
+/// transfer) and the `previous_pks` set (also accepted), allowing a grace period. Auditing is
+/// per-transfer — every transfer carries an auditor-readable copy of the amount under the auditor
+/// key. Empty `current_pks` disables auditing going forward.
+///
+/// Currently each holds **at most one** key (asserted by `new` / `update`). May be extended to
+/// support multiple auditors in the future.
 public struct Auditors has store {
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
@@ -57,18 +59,18 @@ public fun new_auditor_package(
     handles: vector<vector<Element<G>>>,
     proof: ElGamalProof,
 ): AuditorPackage {
+    handles.do_ref!(|pair| assert!(pair.length() == U32_LIMBS, EMismatchedAuditorCount));
     AuditorPackage { handles, proof }
 }
 
 public(package) fun new(pks: vector<PublicKey>): Auditors {
     assert!(pks.length() <= 1, ETooManyAuditors);
-    // Seed `previous_pks` equal to `current_pks`: no grace (and no old key) before the first `update`.
-    Auditors { current_pks: pks, previous_pks: pks }
+    Auditors { current_pks: pks, previous_pks: vector[] }
 }
 
 /// Replace both auditor key vectors (each at most one key). `current_pks` is tried first on a transfer,
 /// then `previous_pks`. The caller drives the grace policy: rotate with `update(new, old_current)`, end
-/// the grace with `update(new, new)`, enable with `update(pk, pk)`, disable with grace via
+/// the grace with `update(new, [])`, enable with `update(pk, [])`, disable with grace via
 /// `update([], old)`, or disable immediately with `update([], [])`.
 public(package) fun update(
     auditors: &mut Auditors,
@@ -84,8 +86,7 @@ public(package) fun update(
 /// sender's balance and `auditor_package` is the sender-supplied data (`none` when the transfer
 /// carries none). The batched `ElGamalProof` over all `2N` auditor ciphertexts must verify against
 /// `current_pks`, else against `previous_pks`. Returns the verified handles tagged with the auditor
-/// key that accepted them, or `none` when the transfer carries no auditor data. The proof's
-/// transcript is derived here from the transfer's `SessionId`.
+/// key that accepted them, or `none` when the transfer carries no auditor data.
 public(package) fun prepare_auditor_data<T>(
     auditors: &Auditors,
     receiver_coins: &vector<EncryptedCoin<T>>,
@@ -102,18 +103,17 @@ public(package) fun prepare_auditor_data<T>(
     );
     let AuditorPackage { mut handles, proof } = auditor_package.destroy_some();
     let n = receiver_coins.length();
-    // At most one auditor: exactly one `[lo, hi]` handle pair per receiver.
     assert!(handles.length() == n, EMismatchedAuditorCount);
-    // Build the auditor ciphertexts once; `verify_under` reuses them for both key sets.
+
+    // Each key set holds at most one key, so a non-empty set's key is `[0]`.
     let encryptions = build_auditor_encryptions(&handles, receiver_coins);
-    let pk = if (
-        verify_under(&encryptions, &proof, &auditors.current_pks, session_id.auditor_elgamal())
-    ) {
-        auditors.current_pks[0]
-    } else if (
-        verify_under(&encryptions, &proof, &auditors.previous_pks, session_id.auditor_elgamal())
-    ) {
-        auditors.previous_pks[0]
+    let dst = session_id.auditor_elgamal();
+    let current = &auditors.current_pks;
+    let previous = &auditors.previous_pks;
+    let pk = if (!current.is_empty() && proof.verify_elgamal(dst, &current[0], &encryptions)) {
+        current[0]
+    } else if (!previous.is_empty() && proof.verify_elgamal(dst, &previous[0], &encryptions)) {
+        previous[0]
     } else {
         abort EAuditorProofFailed
     };
@@ -137,21 +137,6 @@ public(package) fun next(
 public(package) fun destroy_empty(auditor_data: VerifiedAuditorHandles) {
     let VerifiedAuditorHandles { handles, pk: _ } = auditor_data;
     handles.destroy_empty();
-}
-
-/// Whether the batched `ElGamalProof` verifies for the single key in `pks` over the pre-built `2N`
-/// auditor ciphertexts. Returns false unless `pks` holds exactly one key. Each ciphertext pairs a
-/// receiver's u32 commitment (`Ǎ_{r,l}`, derived homomorphically from its range-proven u16 limbs) with
-/// the sender-supplied auditor handle `D_{r,l}`; one witness-folded proof re-keys every commitment's
-/// blinding to its handle under the auditor key.
-fun verify_under(
-    encryptions: &vector<Encryption>,
-    proof: &ElGamalProof,
-    pks: &vector<PublicKey>,
-    dst: vector<u8>,
-): bool {
-    if (pks.length() != 1) return false;
-    proof.verify_elgamal(dst, &pks[0], encryptions)
 }
 
 fun build_auditor_encryptions<T>(

@@ -192,8 +192,10 @@ export function createOperations(
 		await Promise.all(
 			users.map(async (user) => {
 				const tx = new Transaction();
-				const account = tx.add(client.contra.newAccount({ owner: user.tokenAccount.address }));
-				tx.add(client.contra.shareAccount({ account }));
+				const account = tx.add(
+					await client.contra.newAccount({ owner: user.tokenAccount.address }),
+				);
+				tx.add(await client.contra.shareAccount({ account }));
 				tx.setSender(user.address);
 				await exec(tx, user.keypair);
 			}),

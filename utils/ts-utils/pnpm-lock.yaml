@@ -173,18 +173,12 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@mysten/bcs@2.0.5':
-    resolution: {integrity: sha512-Dop9Xq36DPLlsmIDQZvUg4uJeBBxIGirgp2OXGaEff+mtLKFBoW2HnE3aSTSSpiMQH9XRhjwtiM16zFJhFqz0Q==}
-
   '@mysten/bcs@2.1.0':
     resolution: {integrity: sha512-rIR/cDAqDfBDxmYEZXppN/on8gmh1OW0dYi/Bk2kMBZcYMTaBaEtEX1VR6g7HicVxuMbFAIP0/SQkdH7J9Y5dQ==}
 
   '@mysten/sui@2.24.0':
     resolution: {integrity: sha512-VmIkgnMulRVeA0mnBgHiTFTci5XKJH5/UB8Kr2M9+1nZnKC1RKsNGRXWBtox+2HYtwHNdUjHxYchfWnfZ9yHkQ==}
     engines: {node: '>=22'}
-
-  '@mysten/utils@0.3.3':
-    resolution: {integrity: sha512-gVHn5toh24eXXLEyBknwwM2F/tbDgqPX0yj77KtHjuoYUallcQ9vSwGfGsAy39IcTB259Yprt/ZOEwdup+zrpA==}
 
   '@mysten/utils@0.4.0':
     resolution: {integrity: sha512-nHlXECBl9kE+AHF/aw5a7JVNizae8Kb71A4H18BV/sXd5/l2BaWNGWVatq05fzJo3hF78AWorDxa++1TgcBKWw==}
@@ -199,8 +193,16 @@ packages:
     resolution: {integrity: sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ==}
     engines: {node: '>= 20.19.0'}
 
+  '@noble/curves@2.3.0':
+    resolution: {integrity: sha512-v7cY+4oWYPQszRj6ZFGzTVL7uP2TaLo1xMhWHzYC5wj0ZhOXQ5x+sBre8rF3hi8cAoi0bh1qXoovoOkdFtvqEg==}
+    engines: {node: '>= 20.19.0'}
+
   '@noble/hashes@2.2.0':
     resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.3.0':
+    resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
     engines: {node: '>= 20.19.0'}
 
   '@oxc-project/types@0.127.0':
@@ -687,11 +689,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@mysten/bcs@2.0.5':
-    dependencies:
-      '@mysten/utils': 0.3.3
-      '@scure/base': 2.2.0
-
   '@mysten/bcs@2.1.0':
     dependencies:
       '@mysten/utils': 0.4.0
@@ -719,10 +716,6 @@ snapshots:
       - '@gql.tada/vue-support'
       - typescript
 
-  '@mysten/utils@0.3.3':
-    dependencies:
-      '@scure/base': 2.2.0
-
   '@mysten/utils@0.4.0':
     dependencies:
       '@scure/base': 2.2.0
@@ -738,7 +731,13 @@ snapshots:
     dependencies:
       '@noble/hashes': 2.2.0
 
+  '@noble/curves@2.3.0':
+    dependencies:
+      '@noble/hashes': 2.3.0
+
   '@noble/hashes@2.2.0': {}
+
+  '@noble/hashes@2.3.0': {}
 
   '@oxc-project/types@0.127.0': {}
 
@@ -961,10 +960,10 @@ snapshots:
   ts-sdk@file:../../ts-sdk(typescript@5.9.3):
     dependencies:
       '@contra/bulletproofs-wasm': file:../bulletproofs-wasm
-      '@mysten/bcs': 2.0.5
+      '@mysten/bcs': 2.1.0
       '@mysten/sui': 2.24.0(typescript@5.9.3)
-      '@noble/curves': 2.2.0
-      '@noble/hashes': 2.2.0
+      '@noble/curves': 2.3.0
+      '@noble/hashes': 2.3.0
     transitivePeerDependencies:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'

@@ -3,8 +3,9 @@
  **************************************************************/
 
 /**
- * Simple deserialization functions that build the composite crypto types from
- * their byte-encoded elements in a single Move call.
+ * Optional convenience deserializers that build the composite crypto types from
+ * their byte-encoded elements in a single Move call. Do not check the input
+ * validity.
  */
 
 import { type Transaction } from '@mysten/sui/transactions';
@@ -37,10 +38,6 @@ export interface PublicKeysOptions {
 	package?: string;
 	arguments: PublicKeysArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
-/**
- * Build one `PublicKey` per point-encoded part; each is validated non-identity by
- * `public_key`.
- */
 export function publicKeys(options: PublicKeysOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
@@ -61,11 +58,7 @@ export interface AuditorDecryptionHandlesOptions {
 	arguments:
 		AuditorDecryptionHandlesArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
-/**
- * Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts`
- * (two u32-limb handles per transferred amount, flattened in amount order). Aborts
- * if `parts` has an odd length.
- */
+/** Build one `[lo, hi]` handle pair per consecutive pair of point-encoded `parts`. */
 export function auditorDecryptionHandles(options: AuditorDecryptionHandlesOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
@@ -123,11 +116,6 @@ export interface EncryptedAmountsOptions {
 	package?: string;
 	arguments: EncryptedAmountsArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
-/**
- * Build one `EncryptedAmount` per 8 consecutive point-encoded `parts` (four limbs,
- * each a ciphertext + handle), in amount order. Aborts if `parts.length()` is not
- * a multiple of 8.
- */
 export function encryptedAmounts(options: EncryptedAmountsOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];
@@ -185,10 +173,6 @@ export interface ElgamalProofsOptions {
 	package?: string;
 	arguments: ElgamalProofsArguments | [parts: RawTransactionArgument<Array<Array<number>>>];
 }
-/**
- * Build one folded `ElGamalProof` per 4 consecutive parts (`a`, `b`, `z1`, `z2`),
- * in order. Aborts if `parts.length()` is not a multiple of 4.
- */
 export function elgamalProofs(options: ElgamalProofsOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
 	const argumentsTypes = ['vector<vector<u8>>'] satisfies (string | null)[];

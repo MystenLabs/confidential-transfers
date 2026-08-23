@@ -35,6 +35,7 @@ export type {
 	RekeyTokenAccountOptions,
 	SetDefaultPkAsSenderOptions,
 	ShareAccountOptions,
+	TokenAccountOptions,
 	TokenAuditor,
 	TokenBalance,
 	TokenKeyStatus,

@@ -153,7 +153,7 @@ export class Gated {
 				point(tokenAccount.publicKey.toBytes()),
 			],
 		});
-		tx.add(this.client.contra.shareAccount({ account }));
+		tx.add(await this.client.contra.shareAccount({ account }));
 		tx.setSender(signer.address);
 		await this.exec(tx, signer.keypair);
 	}

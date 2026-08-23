@@ -8,8 +8,7 @@
  * A batch of any size is covered by one `RangeProofs`: the commitments are
  * partitioned into power-of-two chunks (`batch_sizes`), each proven by its own
  * aggregated Bulletproof, because Sui's verifier caps one proof at
- * `MAX_BATCH_SIZE` commitments. The module is agnostic about what the commitments
- * open to — callers supply the commitments and the Fiat-Shamir DST.
+ * `MAX_BATCH_SIZE` commitments.
  */
 
 import { bcs } from '@mysten/sui/bcs';

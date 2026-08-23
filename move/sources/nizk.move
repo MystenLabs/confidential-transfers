@@ -7,27 +7,15 @@ use contra::twisted_elgamal::{Self, Encryption, PublicKey};
 use std::bcs;
 use sui::{
     group_ops::Element,
-    ristretto255::{
-        Self,
-        G,
-        Scalar,
-        g_add,
-        g_identity,
-        g_mul,
-        scalar_from_bytes,
-        scalar_from_u64,
-        scalar_mul,
-    }
+    ristretto255::{Self, G, Scalar, g_add, g_identity, g_mul, scalar_from_bytes, scalar_mul}
 };
-
-// Only the `#[test_only]` provers build responses; the on-chain verifiers never add scalars.
-#[test_only]
-use sui::ristretto255::scalar_add;
 
 // === Errors ===
 
 /// `verify_elgamal`: an empty batch is a vacuous statement, so it is never a valid one to verify.
 const EEmptyBatch: u64 = 0;
+
+// === Structs ===
 
 /// A shared-witness DDH proof of knowledge: one `w` with `images[k] = w * bases[k]` for all `k`.
 public struct DdhProof has drop {
@@ -111,7 +99,8 @@ public(package) fun verify_elgamal(
 }
 
 /// Fiat-Shamir challenge for a `DdhProof`. Binds, in order, the DST, every base, every image, and
-/// every per-pair Schnorr commitment.
+/// every per-pair Schnorr commitment. Unlike `challenge_elgamal`, `g`/`h` are not hashed: a DDH
+/// statement carries its bases explicitly, so they play no implicit role here.
 fun challenge_ddh(
     dst: vector<u8>,
     bases: &vector<Element<G>>,
@@ -182,6 +171,9 @@ fun is_valid_relation2(
 
 // === Test Helpers ===
 
+#[test_only]
+use sui::ristretto255::{scalar_add, scalar_from_u64};
+
 #[test]
 fun fiat_shamir_challenge_regression() {
     let dst = vector::tabulate!(21, |i| i as u8);
@@ -191,7 +183,7 @@ fun fiat_shamir_challenge_regression() {
 }
 
 #[test_only]
-public fun prove_ddh(
+public(package) fun prove_ddh(
     dst: vector<u8>,
     w: &Element<Scalar>,
     bases: &vector<Element<G>>,
@@ -210,7 +202,7 @@ public fun default_ddh_proof(): DdhProof {
 }
 
 #[test_only]
-public fun prove_elgamal(
+public(package) fun prove_elgamal(
     dst: vector<u8>,
     pk: &Element<G>,
     encryptions: &vector<Encryption>,
@@ -238,7 +230,7 @@ public fun prove_elgamal(
 }
 
 #[test_only]
-public fun default_elgamal_proof(): ElGamalProof {
+public(package) fun default_elgamal_proof(): ElGamalProof {
     ElGamalProof {
         a: g_identity(),
         b: g_identity(),
@@ -247,35 +239,10 @@ public fun default_elgamal_proof(): ElGamalProof {
     }
 }
 
-/// Build a DDH proof of knowledge of `sk` such that `ea.ciphertext - amount*h = sk*g` and
-/// `ea.decryption_handle = sk*pk` — i.e. that `ea` decrypts to `amount` under `sk` (where
-/// `pk = sk*g`).
+/// Build a DDH proof that `ea` decrypts to zero under `sk` (where `pk = sk*g`):
+/// `ea.ciphertext = w*g` and `ea.decryption_handle = w*pk` for the shared witness.
 #[test_only]
-public fun value_proof_for_testing(
-    dst: vector<u8>,
-    amount: u64,
-    ea: &Encryption,
-    sk: &Element<Scalar>,
-): DdhProof {
-    let g = twisted_elgamal::g();
-    let pk = g_mul(sk, &g);
-    let commitment_to_zero = ristretto255::g_sub(
-        ea.ciphertext(),
-        &g_mul(&scalar_from_u64(amount), &twisted_elgamal::h()),
-    );
-    prove_ddh(
-        dst,
-        sk,
-        &vector[g, commitment_to_zero],
-        &vector[pk, *ea.decryption_handle()],
-        &scalar_from_u64(1234), // randomness
-    )
-}
-
-/// Like `value_proof_for_testing` but for `amount = 0` — proves `ea.ciphertext = sk*g` and
-/// `ea.decryption_handle = sk*pk`, i.e. `ea` decrypts to zero under `sk`.
-#[test_only]
-public fun zero_proof_for_testing(
+public(package) fun zero_proof_for_testing(
     dst: vector<u8>,
     ea: &Encryption,
     sk: &Element<Scalar>,
