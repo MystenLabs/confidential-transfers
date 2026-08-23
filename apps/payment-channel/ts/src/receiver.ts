@@ -228,9 +228,7 @@ export class Receiver {
 				deadlineMs = pinned === null ? BigInt(tMs) : BigInt(tMs) + this.opts.gracePeriodMs;
 			}
 			if (pinned !== null) {
-				const inPrevious = parsed.previous_pks.some((pk) =>
-					bytesEqual(pk.element.bytes, pinned),
-				);
+				const inPrevious = parsed.previous_pks.some((pk) => bytesEqual(pk.element.bytes, pinned));
 				if (!inPrevious && BigInt(tMs) < deadlineMs) deadlineMs = BigInt(tMs);
 			}
 		}

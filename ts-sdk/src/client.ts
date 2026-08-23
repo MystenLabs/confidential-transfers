@@ -228,9 +228,7 @@ export class ContraClient {
 	 * On-chain aborts:
 	 * - `EAccountAlreadyRegistered` — `owner` already has an account (one per address).
 	 */
-	async newAccount({
-		owner,
-	}: NewAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
+	async newAccount({ owner }: NewAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
 			arguments: {

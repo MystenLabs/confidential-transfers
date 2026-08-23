@@ -468,7 +468,8 @@ export class EncryptedAmount {
 		table: DiscreteLogTable,
 	): bigint {
 		return this.limbs.reduce(
-			(acc, limb, k) => acc + (limb.decryptWithBlinding(blindingForLimb(k), table) << BigInt(16 * k)),
+			(acc, limb, k) =>
+				acc + (limb.decryptWithBlinding(blindingForLimb(k), table) << BigInt(16 * k)),
 			0n,
 		);
 	}

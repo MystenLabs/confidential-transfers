@@ -72,7 +72,7 @@ use contra::{
         VerifiedAuditorHandles,
         next,
         destroy_empty,
-        new as new_auditors
+        new as new_auditors,
     },
     balance::{Self, Balances, EncryptedCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},

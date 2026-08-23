@@ -9,9 +9,8 @@
  */
 
 import { useCurrentClient } from '@mysten/dapp-kit-react';
-import { useEffect, useRef, useState } from 'react';
-
 import { checkpointTimestampMs, listEvents } from 'contra-utils';
+import { useEffect, useRef, useState } from 'react';
 
 import type { TokenConfig } from '../sdk';
 
