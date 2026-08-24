@@ -249,7 +249,7 @@ export class Receiver {
 		if (object instanceof Error) {
 			throw new Error(`confidential token object not found: ${object.message}`);
 		}
-		return contraContracts.ConfidentialToken.parse(object.content).auditors;
+		return contraContracts.ConfidentialToken.parse(object.content).inner.V1!.auditors;
 	}
 
 	/** Whether `currentPks` is exactly the pinned auditor configuration. */

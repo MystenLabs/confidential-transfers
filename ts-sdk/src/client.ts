@@ -372,13 +372,16 @@ export class ContraClient {
 		};
 	}
 
-	/** Fetch and parse the on-chain `ConfidentialToken<T>` object. */
+	/**
+	 * Fetch and parse the on-chain `ConfidentialToken<T>` object, unwrapping its versioned
+	 * state enum to the only variant that exists today.
+	 */
 	async #getConfidentialToken(tokenType: string) {
 		const { object } = await this.#suiClient.core.getObject({
 			objectId: this.#getConfidentialTokenId(tokenType),
 			include: { content: true },
 		});
-		return contraContracts.ConfidentialToken.parse(object.content);
+		return contraContracts.ConfidentialToken.parse(object.content).inner.V1!;
 	}
 
 	/**

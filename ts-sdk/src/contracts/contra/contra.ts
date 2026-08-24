@@ -109,14 +109,26 @@ export const AccountRegistry = new MoveStruct({
 		id: bcs.Address,
 	},
 });
+/** Versioned state of a `ConfidentialToken<T>`. */
+export const ConfidentialTokenInner = new MoveEnum({
+	name: `${$moduleName}::ConfidentialTokenInner<phantom T>`,
+	fields: {
+		V1: new MoveStruct({
+			name: `ConfidentialTokenInner.V1`,
+			fields: {
+				is_active: bcs.bool(),
+				freeze_admins: vec_set.VecSet(bcs.Address),
+				policy: bcs.option(policy.Policy),
+				auditors: auditors.Auditors,
+			},
+		}),
+	},
+});
 export const ConfidentialToken = new MoveStruct({
 	name: `${$moduleName}::ConfidentialToken<phantom T>`,
 	fields: {
 		id: bcs.Address,
-		is_active: bcs.bool(),
-		freeze_admins: vec_set.VecSet(bcs.Address),
-		policy: bcs.option(policy.Policy),
-		auditors: auditors.Auditors,
+		inner: ConfidentialTokenInner,
 	},
 });
 export const Pool = new MoveStruct({

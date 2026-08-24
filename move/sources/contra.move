@@ -135,12 +135,23 @@ public struct AccountRegistry has key { id: UID }
 // === Main Types ===
 
 /// The representation of a confidential token.
+///
+/// Sui objects must be structs, so the token's state lives in the versioned `ConfidentialTokenInner`
+/// enum behind this wrapper: a package upgrade can add or remove fields by introducing a new
+/// variant without changing the object's type.
 public struct ConfidentialToken<phantom T> has key {
     id: UID,
-    is_active: bool, // Global freeze capability.
-    freeze_admins: VecSet<address>,
-    policy: Option<Policy>,
-    auditors: Auditors,
+    inner: ConfidentialTokenInner<T>,
+}
+
+/// Versioned state of a `ConfidentialToken<T>`.
+public enum ConfidentialTokenInner<phantom T> has store {
+    V1 {
+        is_active: bool, // Global freeze capability.
+        freeze_admins: VecSet<address>,
+        policy: Option<Policy>,
+        auditors: Auditors,
+    },
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -225,7 +236,11 @@ fun init(ctx: &mut TxContext) {
 /// Create an `Auth<T>` for `ctx.sender()` covering every operation the policy on `ct` leaves
 /// permissionless.
 public fun authorize_as_sender<T>(ct: &ConfidentialToken<T>, ctx: &TxContext): Auth<T> {
-    policy::as_sender<T>(&ct.policy, ctx)
+    match (&ct.inner) {
+        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
+            policy::as_sender<T>(token_policy, ctx)
+        },
+    }
 }
 
 /// Create an `Auth<T>` on behalf of `owner` covering the requested `operation`, authorized by
@@ -237,14 +252,22 @@ public fun authorize_with_witness<T, W: drop>(
     owner: address,
     witness: W,
 ): Auth<T> {
-    policy::with_witness<T, W>(&ct.policy, operation, owner, witness)
+    match (&ct.inner) {
+        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
+            policy::with_witness<T, W>(token_policy, operation, owner, witness)
+        },
+    }
 }
 
 /// Create an `Auth<T>` on behalf of an object identified by `uid`, covering every operation the
 /// policy on `ct` leaves permissionless. Holding `&mut UID` proves custody of the object, so the
 /// object self-authenticates as its own `owner` (the address derived from the UID).
 public fun authorize_as_object<T>(ct: &ConfidentialToken<T>, uid: &mut UID): Auth<T> {
-    policy::as_object<T>(&ct.policy, uid)
+    match (&ct.inner) {
+        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
+            policy::as_object<T>(token_policy, uid)
+        },
+    }
 }
 
 // === Creation Flows ===
@@ -278,10 +301,12 @@ public fun new_confidential_token<T>(
     (
         ConfidentialToken<T> {
             id,
-            is_active: true,
-            freeze_admins: vec_set::empty(),
-            policy: policy::permissionless(),
-            auditors: new_auditors(auditor_public_keys),
+            inner: ConfidentialTokenInner::V1 {
+                is_active: true,
+                freeze_admins: vec_set::empty(),
+                policy: policy::permissionless(),
+                auditors: new_auditors(auditor_public_keys),
+            },
         },
         ManagementCap { id: object::new(ctx) },
     )
@@ -325,10 +350,12 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
 /// without any `Auth`. Requires `T`'s registration permissionless and `default_pk` set.
 public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
     assert!(account.default_pk.is_some(), EDefaultPkNotSet);
-    assert!(
-        policy::is_permissionless(&ct.policy, PERMISSIONED_REGISTER),
-        ERegistrationNotPermissionless,
-    );
+    match (&ct.inner) {
+        ConfidentialTokenInner::V1 { policy: token_policy, .. } => assert!(
+            policy::is_permissionless(token_policy, PERMISSIONED_REGISTER),
+            ERegistrationNotPermissionless,
+        ),
+    };
     let pk = *account.default_pk.borrow();
     account.add_token_account<T>(pk);
 }
@@ -545,9 +572,11 @@ public fun batched_transfer<T>(
 
     if (withdrawn.is_some()) {
         let mut coins = withdrawn.destroy_some();
-        let auditor_data = ct
-            .auditors
-            .prepare_auditor_data(&coins, auditor_package, sender.session_id);
+        let auditor_data = match (&ct.inner) {
+            ConfidentialTokenInner::V1 { auditors, .. } => {
+                auditors.prepare_auditor_data(&coins, auditor_package, sender.session_id)
+            },
+        };
         // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order.
         coins.reverse();
         TransferBatch::Ok {
@@ -836,7 +865,9 @@ public fun issue_freeze_cap<T>(
     _t: &ManagementCap<T>,
     addr: address,
 ) {
-    ct.freeze_admins.insert(addr);
+    match (&mut ct.inner) {
+        ConfidentialTokenInner::V1 { freeze_admins, .. } => freeze_admins.insert(addr),
+    }
 }
 
 /// Revoke the freeze capability from the given address.
@@ -846,29 +877,42 @@ public fun revoke_freeze_cap<T>(
     _t: &ManagementCap<T>,
     addr: address,
 ) {
-    ct.freeze_admins.remove(&addr);
+    match (&mut ct.inner) {
+        ConfidentialTokenInner::V1 { freeze_admins, .. } => freeze_admins.remove(&addr),
+    }
 }
 
 /// Freeze the token globally. This prevents any transfers from happening until the token is
 /// unfrozen again.
 public fun global_freeze<T>(ct: &mut ConfidentialToken<T>, ctx: &mut TxContext) {
-    assert!(ct.freeze_admins.contains(&ctx.sender()), EAuthorizationError);
-    ct.is_active = false;
+    match (&mut ct.inner) {
+        ConfidentialTokenInner::V1 { is_active, freeze_admins, .. } => {
+            assert!(freeze_admins.contains(&ctx.sender()), EAuthorizationError);
+            *is_active = false;
+        },
+    };
     events::emit_global_freeze<T>();
 }
 
 /// Unfreeze the token globally. This allows transfers to happen again and can only be done by the
 /// token issuer.
 public fun global_unfreeze<T>(ct: &mut ConfidentialToken<T>, _cap: &TreasuryCap<T>) {
-    ct.is_active = true;
+    match (&mut ct.inner) {
+        ConfidentialTokenInner::V1 { is_active, .. } => *is_active = true,
+    };
     events::emit_global_unfreeze<T>();
 }
 
 /// Freeze the given account for token `T`. A frozen account cannot transfer, receive, wrap,
-/// or unwrap until unfrozen. Only addresses in `ct.freeze_admins` may call this.
+/// or unwrap until unfrozen. Only addresses in the token's `freeze_admins` may call this.
 public fun account_freeze<T>(ct: &ConfidentialToken<T>, account: &mut Account, ctx: &TxContext) {
     let admin = ctx.sender();
-    assert!(ct.freeze_admins.contains(&admin), EAuthorizationError);
+    match (&ct.inner) {
+        ConfidentialTokenInner::V1 { freeze_admins, .. } => assert!(
+            freeze_admins.contains(&admin),
+            EAuthorizationError,
+        ),
+    };
     let owner = account.owner;
     account[TokenAccountKey<T>()].is_frozen = true;
     events::emit_account_freeze<T>(admin, owner);
@@ -893,7 +937,11 @@ public fun set_policy<T, W>(
     _t: &mut TreasuryCap<T>,
     permissioned_operations: vector<u8>,
 ) {
-    policy::set<W>(&mut ct.policy, permissioned_operations);
+    match (&mut ct.inner) {
+        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
+            policy::set<W>(token_policy, permissioned_operations)
+        },
+    };
     events::emit_policy_update<T, W>(permissioned_operations);
 }
 
@@ -908,7 +956,9 @@ public fun update_auditors<T>(
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
 ) {
-    ct.auditors.update(current_pks, previous_pks);
+    match (&mut ct.inner) {
+        ConfidentialTokenInner::V1 { auditors, .. } => auditors.update(current_pks, previous_pks),
+    };
     events::emit_update_auditors<T>(current_pks, previous_pks);
 }
 
@@ -921,7 +971,10 @@ fun pk<T>(self: &TokenAccount<T>): &PublicKey {
 /// The token-wide gates every value-moving flow shares: the token is active and the deny list has
 /// no global pause.
 fun assert_token_active<T>(ct: &ConfidentialToken<T>, deny_list: &DenyList) {
-    assert!(ct.is_active && !is_frozen<T>(deny_list), ETransferDenied);
+    let is_active = match (&ct.inner) {
+        ConfidentialTokenInner::V1 { is_active, .. } => *is_active,
+    };
+    assert!(is_active && !is_frozen<T>(deny_list), ETransferDenied);
 }
 
 fun has_token<T>(account: &Account): bool {
