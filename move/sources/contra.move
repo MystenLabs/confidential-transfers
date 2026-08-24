@@ -144,9 +144,8 @@ public struct ConfidentialToken<phantom T> has key {
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
-/// Stored as a derived object of the `TokenRegistry`, as a sibling of `ConfidentialToken<T>` rather
-/// than a child of it, so the reserve's address does not depend on the token object's identity.
-/// Keeping the pool separate also reduces contention on non-unwrap operations.
+/// Stored as a derived object of the `TokenRegistry`, keyed by `T`, so there is one pool per token
+/// type. Kept separate from `ConfidentialToken<T>` to reduce contention on non-unwrap operations.
 /// Tokens are held at this object's address via Sui address balance to reduce contention on wrap
 /// operations.
 public struct Pool<phantom T> has key {
@@ -196,7 +195,7 @@ public enum TransferBatch<phantom T> {
 /// Key used for `ConfidentialToken` UID derivation.
 public struct TokenKey<phantom T>() has copy, drop, store;
 
-/// Key used for `Pool` UID derivation from the `TokenRegistry`.
+/// Key used for `Pool` UID derivation.
 public struct PoolKey<phantom T>() has copy, drop, store;
 
 /// Dynamic field key used for storing `TokenAccount`s in `Account`.
