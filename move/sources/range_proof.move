@@ -5,8 +5,7 @@
 ///
 /// A batch of any size is covered by one `RangeProofs`: the commitments are partitioned into
 /// power-of-two chunks (`batch_sizes`), each proven by its own aggregated Bulletproof, because
-/// Sui's verifier caps one proof at `MAX_BATCH_SIZE` commitments. The module is agnostic about
-/// what the commitments open to — callers supply the commitments and the Fiat-Shamir DST.
+/// Sui's verifier caps one proof at `MAX_BATCH_SIZE` commitments.
 module contra::range_proof;
 
 use sui::{group_ops::Element, rangeproofs, ristretto255::G};
@@ -17,13 +16,10 @@ const ERangeProofRequired: u64 = 0;
 
 // === Constants ===
 
-/// Bulletproof construction version. `0` is the original Bulletproofs construction
-/// (Bünz et al., 2018), the only version currently supported by
-/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255`.
+/// Bulletproof construction version.
 const BULLETPROOFS_VERSION: u8 = 0;
 
-/// Bit-length of the range check: every committed value must lie in `[0, 2^16)`. This is the
-/// per-limb bound of an `encrypted_amount::EncryptedAmount`, the only thing range-checked today.
+/// Bit-length of the range check: every committed value must lie in `[0, 2^16)`.
 const RANGE_BITS: u8 = 16;
 
 /// Maximum number of commitments covered by a single Bulletproof.
@@ -50,8 +46,9 @@ public fun new_range_proofs(proofs: vector<vector<u8>>): RangeProofs {
 }
 
 /// Verify every `commitment` opens to a value in `[0, 2^RANGE_BITS)`, via one Bulletproof per chunk
-/// of `batch_sizes`. An empty `self` skips the check — only reachable via the `#[test_only]`
-/// `assume_range_checked`, since `new_range_proofs` rejects empty input in production.
+/// of `batch_sizes`.
+/// An empty `self` skips the check — only reachable via the `#[test_only]`
+/// `assume_range_checked`.
 public(package) fun verify(
     self: RangeProofs,
     commitments: &vector<Element<G>>,
@@ -96,8 +93,13 @@ fun batch_sizes(n: u64): vector<u64> {
 // === Test Helpers ===
 
 /// `RangeProofs` that skips the range check — Move tests can't produce Bulletproof bytes, so they
-/// assume the range instead of proving it. Not reachable from production (`new_range_proofs` rejects
-/// the empty set this holds).
+/// assume the range instead of proving it.
+///
+/// WARNING: THE `#[test_only]` ATTRIBUTE BELOW IS LOAD-BEARING. IF THIS FUNCTION EVER BECAME
+/// CALLABLE IN PRODUCTION, ANY PTB COULD PASS AN EMPTY `RangeProofs` AND SKIP RANGE VERIFICATION
+/// ENTIRELY — OUT-OF-RANGE LIMBS (E.G. NEGATIVE-VALUE ENCODINGS) WOULD BE ACCEPTED, BREAKING THE
+/// NO-OVERDRAFT/NO-INFLATION GUARANTEE OF THE WHOLE PROTOCOL. IT IS THE ONLY WAY TO CONSTRUCT AN
+/// EMPTY `RangeProofs` (`new_range_proofs` REJECTS ONE). NEVER REMOVE `#[test_only]` FROM IT.
 #[test_only]
 public fun assume_range_checked(): RangeProofs {
     RangeProofs { proofs: vector[] }

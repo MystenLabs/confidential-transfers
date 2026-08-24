@@ -344,8 +344,7 @@ export function buildMintTx(config: TokenConfig): Transaction {
  *  `newAccount` when only the per-token TokenAccount is missing.
  *
  *  Calls (in order):
- *    1. `contraClient.newAccount`        — only when no Account exists yet (creates for the sender,
- *                                          keyed at the token account's public key).
+ *    1. `contraClient.newAccount`        — only when no Account exists yet (creates for the sender).
  *    2. `contraClient.register`          — registers the per-token TokenAccount under `Account.pk`.
  *    3. `contraClient.shareAccount`      — only when newAccount was used.
  *    4. `bu::mint_10`                    — fund the new account so the user can play.
@@ -364,9 +363,9 @@ export async function buildRegisterAccountTx(opts: {
 
 	const tx = new Transaction();
 	if (accountStatus === 'needs-account') {
-		const account = tx.add(contraClient.newAccount({ owner: tokenAccount.address }));
+		const account = tx.add(await contraClient.newAccount({ owner: tokenAccount.address }));
 		tx.add(await contraClient.register({ tokenAccount, account }));
-		tx.add(contraClient.shareAccount({ account }));
+		tx.add(await contraClient.shareAccount({ account }));
 	} else {
 		tx.add(await contraClient.register({ tokenAccount }));
 	}

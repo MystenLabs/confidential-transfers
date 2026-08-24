@@ -105,8 +105,7 @@ export type WellFormedLimb = {
 	ciphertext: Ciphertext;
 };
 
-/** An amount's four limbs plus the public key they're encrypted under. Callers fold each amount's
- *  limbs into a single `ElGamalNizk` consistency proof under its `pk` (see `ElGamalNizk.prove`). */
+/** An amount's four limbs plus the public key they're encrypted under. */
 export type WellFormedAmount = {
 	limbs: WellFormedLimb[];
 	pk: RistrettoPoint;
@@ -180,10 +179,8 @@ export function buildGVector(packageId: string, points: RistrettoPoint[]) {
 
 /**
  * Build an on-chain `vector<twisted_elgamal::PublicKey>` from ristretto points in a single
- * `decode::public_keys` call (each point is validated non-identity by `public_key`). Used for
- * `batched_transfer`'s receiver keys and the `update_auditors` / `new_confidential_token` auditor
- * keys — the elements need a nested `public_key(g_from_bytes(..))`, so a `makeMoveVec` of per-element
- * calls does not round-trip; the single decode call does.
+ * `decode::public_keys` call (each point is validated non-identity by `public_key`) — one PTB
+ * command instead of a `makeMoveVec` over per-element `public_key(g_from_bytes(..))` calls.
  */
 export function buildPublicKeyVector(packageId: string, points: RistrettoPoint[]) {
 	return decodeContracts.publicKeys({
@@ -253,8 +250,8 @@ export function buildEncryptedAmount(packageId: string, limbs: Ciphertext[]) {
 
 /**
  * Build an on-chain `vector<EncryptedAmount>` from `amounts` (each exactly 4 ciphertext limbs) in a
- * single `decode::encrypted_amounts` call — the elements need nested `decode::encryption` calls, so a
- * `makeMoveVec` of per-element calls does not round-trip; the single flat-bytes decode does.
+ * single `decode::encrypted_amounts` call — one PTB command instead of a `makeMoveVec` over
+ * per-amount constructor calls (9 commands each).
  */
 export function buildEncryptedAmounts(packageId: string, amounts: Ciphertext[][]) {
 	amounts.forEach((limbs) => {
@@ -376,8 +373,7 @@ export function buildInRangeAmount(
 
 /**
  * Wrap a ristretto255 point into an on-chain `twisted_elgamal::PublicKey` via `public_key`, which
- * asserts the point is non-identity. Every contra entry that keys a balance or installs an auditor
- * key takes a `PublicKey`, so callers build one through this helper.
+ * asserts the point is non-identity.
  */
 export function buildPublicKey(packageId: string, pk: RistrettoPoint) {
 	return twistedElgamalContracts.publicKey({
@@ -387,9 +383,7 @@ export function buildPublicKey(packageId: string, pk: RistrettoPoint) {
 }
 
 /**
- * Build an `Option<twisted_elgamal::PublicKey>` for an optional public key (e.g. the account's
- * optional default key passed to `set_default_pk_as_sender`, or an auditor key passed to
- * `update_auditor` / `new_confidential_token`). `option::some(public_key(pk))` when a point is
+ * Build an `Option<twisted_elgamal::PublicKey>`: `option::some(public_key(pk))` when a point is
  * given, `option::none` otherwise.
  */
 export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
@@ -412,8 +406,7 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
  * ciphertexts. `option::some` wrapping `auditors::new_auditor_package(handles, proof)` when `data` is
  * provided, `option::none` when auditing is disabled. `data.handles` are flattened in receiver order
  * (two per receiver), grouped into per-receiver `[lo, hi]` handle vectors on-chain by
- * `decode::auditor_decryption_handles`. Built entirely through `decode` calls (no `makeMoveVec`), so the
- * nested proof/handle structure round-trips on chain.
+ * `decode::auditor_decryption_handles` — one call instead of nested `makeMoveVec`s per receiver.
  */
 export function buildAuditorPackageOption(
 	packageId: string,

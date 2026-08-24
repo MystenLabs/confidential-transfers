@@ -10,16 +10,19 @@ use contra::{
 };
 use sui::{group_ops::Element, ristretto255::{G, Scalar, g_add, g_mul, scalar_from_u64}};
 
-#[test_only]
-use sui::ristretto255::g_identity;
-
-const U16_LIMBS: u64 = 4;
+// === Errors ===
 
 const EIndexOutOfBounds: u64 = 2;
 const EMismatchedBatchLength: u64 = 3;
 const EEncryptionProofFailed: u64 = 4;
 const ERangeProofFailed: u64 = 5;
 const EEmptyBatch: u64 = 6;
+
+// === Constants ===
+
+const U16_LIMBS: u64 = 4;
+
+// === Structs ===
 
 /// Encrypted u64 amount stored as four u16 limbs that may overflow to at most u32.
 /// The value is `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
@@ -31,15 +34,13 @@ public struct EncryptedAmount has copy, drop, store {
     l3: Encryption,
 }
 
-/// An `Encryption` proven (via an `ElGamalProof`) to be a valid twisted-ElGamal encryption under
-/// `pk` — knowledge of the blinding and message.
+/// An `Encryption` proven to be a valid twisted-ElGamal encryption under `pk`.
 public struct VerifiedEncryption has drop {
     encryption: Encryption,
     pk: PublicKey,
 }
 
-/// A four-limb `EncryptedAmount` whose limbs are proven (via an `ElGamalProof`) to be valid
-/// twisted-ElGamal encryptions under `pk` — knowledge of each limb's blinding and message.
+/// A four-limb `EncryptedAmount` whose limbs are proven to be valid twisted-ElGamal encryptions under `pk`.
 public struct VerifiedAmount has drop {
     amount: EncryptedAmount,
     pk: PublicKey,
@@ -62,7 +63,7 @@ public fun new_encrypted_amount(
     EncryptedAmount { l0, l1, l2, l3 }
 }
 
-/// Verify `amount`'s four limbs are valid encryptions under `pk` (one folded proof).
+/// Verify `amount`'s four limbs are valid encryptions under `pk`.
 public(package) fun verify_encrypted_amount(
     amount: EncryptedAmount,
     pk: PublicKey,
@@ -74,7 +75,7 @@ public(package) fun verify_encrypted_amount(
 }
 
 /// Verify `amount`'s four limbs together with the extra `encryption` under `pk` in one folded proof,
-/// returning the amount and the extra separately.
+/// returning the amount and the extra encryption separately.
 public(package) fun verify_encrypted_amount_and_encryption(
     amount: EncryptedAmount,
     encryption: Encryption,
@@ -95,7 +96,6 @@ public(package) fun verify_in_range(
     range_proofs: RangeProofs,
     dst: vector<u8>,
 ): vector<RangeVerifiedAmount> {
-    // Collect every limb commitment for the single batched range proof.
     let mut commitments = vector<Element<G>>[];
     amounts.do_ref!(|a| U16_LIMBS.do!(|i| commitments.push_back(*a.amount[i].ciphertext())));
     assert!(range_proofs.verify(&commitments, dst), ERangeProofFailed);
@@ -113,12 +113,6 @@ public(package) fun limbs(ea: &EncryptedAmount): vector<Encryption> {
 public(package) fun encryption(self: &VerifiedEncryption): &Encryption {
     &self.encryption
 }
-
-public(package) fun encryption_pk(self: &VerifiedEncryption): &PublicKey {
-    &self.pk
-}
-
-public use fun encryption_pk as VerifiedEncryption.pk;
 
 /// The verified encrypted amount carried by `self`.
 public(package) fun amount(self: &RangeVerifiedAmount): &EncryptedAmount {
@@ -281,6 +275,9 @@ public(package) fun add_assign(a: &mut EncryptedAmount, b: &EncryptedAmount) {
 }
 
 #[test_only]
+use sui::ristretto255::g_identity;
+
+#[test_only]
 use contra::nizk::prove_elgamal;
 
 /// Collapsed single-`Encryption` view of `ea` — the `public(package)` `collapse` exposed to
@@ -293,7 +290,7 @@ public fun collapse_for_testing(ea: &EncryptedAmount): Encryption {
 /// The four limb decryption handles of `ea`, in order — the `new_handles` argument `try_rekey`
 /// expects.
 #[test_only]
-public fun decryption_handles_for_testing(ea: &EncryptedAmount): vector<Element<G>> {
+public(package) fun decryption_handles_for_testing(ea: &EncryptedAmount): vector<Element<G>> {
     vector[
         *ea[0].decryption_handle(),
         *ea[1].decryption_handle(),

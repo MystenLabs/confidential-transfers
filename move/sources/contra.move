@@ -10,8 +10,7 @@
 /// 1. Create a new confidential token for a token type `T` (using the TreasuryCap), optionally
 ///    with an initial set of auditor public keys. Creation returns a `ManagementCap<T>`.
 /// 2. Set the freeze admins who can freeze the token globally or specific accounts (via the
-///    ManagementCap). Those admins may monitor the confidential token and freeze it or
-///    individual accounts if necessary.
+///    ManagementCap).
 /// 3. Unfreeze the token globally or a specific account (using the TreasuryCap).
 /// 4. Set the balance of an account directly, to emulate burn/seize (using the TreasuryCap).
 /// 5. Freeze specific accounts via the token's deny list, using
@@ -43,13 +42,12 @@
 ///    via `register_with_default_pk`.
 /// 2. Register a token account for a token type `T` under a key of your choice (`register`). Per-token
 ///    keys are independent of the account's default key.
-/// 3. Rotate a token's key with `rekey_token_account` (to any `new_pk`), and set/clear the account's default
+/// 3. Rotate a token's key with `rekey_token_account`, and set/clear the account's default
 ///    key with `set_default_pk_as_sender`.
 /// 4. Wrap a public coin into a confidential token, adding to the pending encrypted balance of an
 ///    account.
 /// 5. Transfer an encrypted amount to one or more token accounts. Every receiver must already have a
-///    `TokenAccount<T>`; for permissionless tokens anyone can create one on their behalf up front
-///    with `register_with_default_pk`. Auditor data is attached if set.
+///    `TokenAccount<T>`. Auditor data is attached if set.
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
@@ -112,6 +110,7 @@ const EBatchTooLarge: u64 = 10;
 const EReceiverNotRegistered: u64 = 11;
 const ERegistrationNotPermissionless: u64 = 12;
 const EDefaultPkNotSet: u64 = 13;
+const EZeroAmount: u64 = 14;
 
 // === Constants ===
 
@@ -135,8 +134,7 @@ public struct AccountRegistry has key { id: UID }
 
 // === Main Types ===
 
-/// The representation of a confidential token. Each `ConfidentialToken` corresponds to a public
-/// token type `T`.
+/// The representation of a confidential token.
 public struct ConfidentialToken<phantom T> has key {
     id: UID,
     is_active: bool, // Global freeze capability.
@@ -320,8 +318,7 @@ public fun share_account(account: Account) {
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    let session_id = account.derive_session_id<T>();
-    account.add_token_account<T>(pk, session_id);
+    account.add_token_account<T>(pk);
 }
 
 /// Permissionless `register`: create a `TokenAccount<T>` keyed under the account's `default_pk`,
@@ -333,20 +330,21 @@ public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialT
         ERegistrationNotPermissionless,
     );
     let pk = *account.default_pk.borrow();
-    let session_id = account.derive_session_id<T>();
-    account.add_token_account<T>(pk, session_id);
+    account.add_token_account<T>(pk);
 }
 
 /// Like `register_with_default_pk`, but a no-op if `account` already has a `TokenAccount<T>`.
+/// Useful when more than one user wants to register the same token account in parallel.
 public fun try_register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
     if (!account.has_token<T>()) account.register_with_default_pk(ct);
 }
 
 /// Create a `TokenAccount<T>` on `account`, keyed under `pk`. Aborts if the token is already
 /// registered. The caller is responsible for any authorization.
-fun add_token_account<T>(account: &mut Account, pk: PublicKey, session_id: SessionId) {
+fun add_token_account<T>(account: &mut Account, pk: PublicKey) {
     assert!(!account.has_token<T>(), ETokenAccountAlreadyRegistered);
     events::emit_new_registration<T>(account.owner, pk);
+    let session_id = account.derive_session_id<T>();
     df::add(
         &mut account.id,
         TokenAccountKey<T>(),
@@ -414,10 +412,8 @@ public fun rekey_token_account<T>(
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
-    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     assert!(
-        rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof),
+        account.rekey_token_account_internal<T>(auth, new_pk, new_handles, rekey_proof),
         ERekeyProofFailed,
     );
 }
@@ -435,25 +431,23 @@ public fun try_rekey_token_account_and_unpause<T>(
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
-    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
-    if (rekey_token_account_internal<T>(account, new_pk, new_handles, rekey_proof)) {
+    if (account.rekey_token_account_internal<T>(auth, new_pk, new_handles, rekey_proof)) {
         account[TokenAccountKey<T>()].accepts_deposits = true;
     } else {
         events::emit_try_token_rekey_failed<T>(owner);
     };
 }
 
-/// Shared re-key: re-key the token's balance to `new_pk` (see `balance::try_rekey`). On a verifying
-/// proof, emits `TokenRekeyedEvent` and returns `true`; otherwise leaves the token unchanged and
-/// returns `false`. Aborts if the token has unmerged pending deposits.
 fun rekey_token_account_internal<T>(
     account: &mut Account,
+    auth: &Auth<T>,
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ): bool {
+    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
+    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
@@ -468,7 +462,7 @@ fun rekey_token_account_internal<T>(
 // === Transfer flows ===
 
 /// Convert public coin to private tokens and add them to the public pending balance of `receiver`.
-/// Authorized by `auth`, which must be for the `PERMISSIONED_WRAP` operation; `auth` may be for any owner.
+/// Authorized by `auth`, which must be for the `PERMISSIONED_WRAP` operation.
 public fun wrap<T>(
     receiver: &mut Account,
     auth: &Auth<T>,
@@ -478,18 +472,14 @@ public fun wrap<T>(
     coin: Coin<T>,
     memo: vector<u8>,
 ) {
+    assert!(coin.value() > 0, EZeroAmount);
     assert!(auth.is_allowed(PERMISSIONED_WRAP), EAuthorizationError);
-    assert!(
-        ct.is_active &&
-        !is_frozen<T>(deny_list) &&
-        !is_receiver_denied<T>(deny_list, receiver.owner),
-        ETransferDenied,
-    );
+    ct.assert_token_active(deny_list);
+    assert!(!is_receiver_denied<T>(deny_list, receiver.owner), ETransferDenied);
     assert!(receiver.has_token<T>(), EReceiverNotRegistered);
     let owner = receiver.owner;
     let acc = &mut receiver[TokenAccountKey<T>()];
-    assert!(!acc.is_frozen, ETransferDenied);
-    assert!(acc.accepts_deposits, ETransferDenied);
+    assert!(!acc.is_frozen && acc.accepts_deposits, ETransferDenied);
     events::emit_wrap<T>(owner, coin.value(), memo);
     acc.balance.deposit_public(coin, &pool.id);
 }
@@ -512,7 +502,7 @@ public fun wrap<T>(
 ///
 /// Returns `TransferBatch::Ok` when `balance_proof` verifies, else `BalanceProofFailed`. Aborts if a
 /// proof or the auditor requirement fails. Call `add` once per receiver, in `receiver_amounts` order,
-/// then `finalize`. Authorized by any `Auth<T>` for `sender.owner`.
+/// then `finalize`.
 public fun batched_transfer<T>(
     sender: &mut Account,
     auth: &Auth<T>,
@@ -529,18 +519,16 @@ public fun batched_transfer<T>(
     balance_proof: DdhProof,
     auditor_package: Option<AuditorPackage>,
 ): TransferBatch<T> {
-    assert!(ct.is_active, ETransferDenied);
+    ct.assert_token_active(deny_list);
     assert!(auth.is_authenticated(sender.owner), EAuthorizationError);
-    assert!(
-        !is_sender_denied<T>(deny_list, sender.owner) && !is_frozen<T>(deny_list),
-        ETransferDenied,
-    );
+    assert!(!is_sender_denied<T>(deny_list, sender.owner), ETransferDenied);
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
 
     let sender_addr = sender.owner;
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
+
     let withdrawn = sender
         .balance
         .try_withdraw_batch(
@@ -609,8 +597,7 @@ public fun add_to_batch<T>(
             assert!(receiver.has_token<T>(), EReceiverNotRegistered);
 
             let receiver = &mut receiver[TokenAccountKey<T>()];
-            assert!(!receiver.is_frozen, ETransferDenied);
-            assert!(receiver.accepts_deposits, ETransferDenied);
+            assert!(!receiver.is_frozen && receiver.accepts_deposits, ETransferDenied);
 
             let coin = coins.pop_back();
             let (receiver_auditor_decryption_handles, auditor_pk) = next(&mut auditor_data);
@@ -647,7 +634,7 @@ public fun try_finalize<T>(batch: TransferBatch<T>): bool {
     match (batch) {
         TransferBatch::BalanceProofFailed => {
             // It is critical to make sure no events were emitted, or mutations were made before
-            // this point.
+            // this point (as the transaction would not abort in this case).
             events::emit_try_transfer_failed();
             false
         },
@@ -670,8 +657,6 @@ public fun finalize<T>(batch: TransferBatch<T>) {
 /// This must be done before pending encrypted and public deposits can be used in a transfer.
 /// To prevent overflows, the number of additions done with the active balance is limited,
 /// including the number of additions done with the pending deposits.
-/// Authorized by `auth`, which must be for `account.owner`. Any `Auth<T>` is accepted regardless
-/// of which operation it covers.
 public fun merge<T>(account: &mut Account, auth: &Auth<T>) {
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
     let owner = account.owner;
@@ -681,8 +666,6 @@ public fun merge<T>(account: &mut Account, auth: &Auth<T>) {
 
 /// This may be used to update the balance after merging many pending deposits before
 /// merging new deposits.
-/// Authorized by `auth`, which must be for `account.owner`. Any `Auth<T>` is accepted regardless
-/// of which operation it covers.
 public fun update_active_balance<T>(
     account: &mut Account,
     auth: &Auth<T>,
@@ -710,8 +693,7 @@ public fun update_active_balance<T>(
     events::emit_update_balance<T>(owner);
 }
 
-/// Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized by `auth`,
-/// which must be for the `PERMISSIONED_UNWRAP` operation and for `account.owner`.
+/// Take an amount of `Coin<T>` from the encrypted balance of `account`.
 /// The caller needs to provide a proof that the new balance is correct after taking the amount:
 /// - `new_balance` is the new encrypted balance of the account after taking the amount,
 /// - `amount` is the amount of coins taken from the balance,
@@ -793,13 +775,11 @@ fun try_unwrap_internal<T>(
     balance_proof: &DdhProof,
     ctx: &mut TxContext,
 ): (bool, Coin<T>) {
+    assert!(amount > 0, EZeroAmount);
     assert!(auth.is_allowed(PERMISSIONED_UNWRAP), EAuthorizationError);
     assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    assert!(ct.is_active, ETransferDenied);
-    assert!(
-        !is_frozen<T>(deny_list) && !is_sender_denied<T>(deny_list, account.owner),
-        ETransferDenied,
-    );
+    ct.assert_token_active(deny_list);
+    assert!(!is_sender_denied<T>(deny_list, account.owner), ETransferDenied);
     let owner = account.owner;
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
@@ -833,11 +813,11 @@ public fun owner(account: &Account): address {
 /// A function for the issuer to set the balance of an account directly.
 /// This is used in cases where the issuer needs to intervene.
 ///
-/// WARNING: This may break the consistency of the balance such that the number of confidential
-/// tokens in circulation does not match the amount of coins in the pool. It is the responsibility
-/// of the caller to ensure consistency is maintained when using this function.
-/// The balance's `terms` count is set to 1, so the caller is responsible for ensuring that the
-/// `EncryptedAmount` is in range.
+/// WARNING: THIS MAY BREAK THE CONSISTENCY OF THE BALANCE SUCH THAT THE NUMBER OF CONFIDENTIAL
+/// TOKENS IN CIRCULATION DOES NOT MATCH THE AMOUNT OF COINS IN THE POOL. IT IS THE RESPONSIBILITY
+/// OF THE CALLER TO ENSURE CONSISTENCY IS MAINTAINED WHEN USING THIS FUNCTION.
+/// THE BALANCE'S `terms` COUNT IS SET TO 1, SO THE CALLER IS RESPONSIBLE FOR ENSURING THAT THE
+/// `EncryptedAmount` IS IN RANGE.
 public fun set_balance_by_issuer<T>(
     _t: &mut TreasuryCap<T>,
     account: &mut Account,
@@ -895,8 +875,7 @@ public fun account_freeze<T>(ct: &ConfidentialToken<T>, account: &mut Account, c
 }
 
 /// Unfreeze the given account for token `T`. Only the token issuer (holder of `&TreasuryCap<T>`)
-/// may call this. The asymmetry — admins freeze, only the issuer unfreezes — mirrors
-/// `global_freeze` / `global_unfreeze`.
+/// may call this.
 public fun account_unfreeze<T>(_cap: &TreasuryCap<T>, account: &mut Account) {
     let owner = account.owner;
     account[TokenAccountKey<T>()].is_frozen = false;
@@ -907,8 +886,8 @@ public fun account_unfreeze<T>(_cap: &TreasuryCap<T>, account: &mut Account) {
 /// This allows implementing permissioned operations, but only the witness type is stored here - the
 /// logic must be handled in the corresponding flows.
 /// See `register_permissioned` for an example of how this can be implemented.
-/// Changing the witness type will break all in-flight permissioned calls using the old witness,
-/// and thus highly discouraged.
+/// WARNING: CHANGING THE WITNESS TYPE WILL BREAK ALL IN-FLIGHT PERMISSIONED CALLS USING THE OLD WITNESS,
+/// AND THUS HIGHLY DISCOURAGED.
 public fun set_policy<T, W>(
     ct: &mut ConfidentialToken<T>,
     _t: &mut TreasuryCap<T>,
@@ -939,7 +918,12 @@ fun pk<T>(self: &TokenAccount<T>): &PublicKey {
     self.balance.public_key()
 }
 
-/// Return whether the given account has registered for the given token type.
+/// The token-wide gates every value-moving flow shares: the token is active and the deny list has
+/// no global pause.
+fun assert_token_active<T>(ct: &ConfidentialToken<T>, deny_list: &DenyList) {
+    assert!(ct.is_active && !is_frozen<T>(deny_list), ETransferDenied);
+}
+
 fun has_token<T>(account: &Account): bool {
     df::exists(&account.id, TokenAccountKey<T>())
 }
@@ -955,13 +939,6 @@ fun derive_session_id<T>(account: &Account): SessionId {
         .take(20))
 }
 
-// === Syntactic Sugar ===
-
-#[syntax(index)]
-fun borrow<T>(acc: &Account, key: TokenAccountKey<T>): &TokenAccount<T> {
-    df::borrow(&acc.id, key)
-}
-
 #[syntax(index)]
 fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount<T> {
     df::borrow_mut(&mut acc.id, key)
@@ -971,6 +948,12 @@ fun borrow_mut<T>(acc: &mut Account, key: TokenAccountKey<T>): &mut TokenAccount
 
 #[test_only]
 use contra::twisted_elgamal::Encryption;
+
+#[test_only]
+#[syntax(index)]
+fun borrow<T>(acc: &Account, key: TokenAccountKey<T>): &TokenAccount<T> {
+    df::borrow(&acc.id, key)
+}
 
 #[test_only]
 public fun dst_ddh_for_testing<T>(account: &Account): vector<u8> {
@@ -983,12 +966,12 @@ public fun dst_elgamal_for_testing<T>(account: &Account): vector<u8> {
 }
 
 #[test_only]
-public fun dst_batch_ddh_for_testing<T>(account: &Account): vector<u8> {
+public(package) fun dst_batch_ddh_for_testing<T>(account: &Account): vector<u8> {
     account.derive_session_id<T>().batch_ddh()
 }
 
 #[test_only]
-public fun dst_auditor_elgamal_for_testing<T>(account: &Account): vector<u8> {
+public(package) fun dst_auditor_elgamal_for_testing<T>(account: &Account): vector<u8> {
     account.derive_session_id<T>().auditor_elgamal()
 }
 
@@ -1008,28 +991,26 @@ public fun balance<T>(account: &Account): Encryption {
 }
 
 #[test_only]
-public fun pending_encrypted_balance<T>(account: &Account): Encryption {
+public(package) fun pending_encrypted_balance<T>(account: &Account): Encryption {
     account[TokenAccountKey<T>()].balance.collapse_pending()
 }
 
 #[test_only]
-public fun account_is_frozen<T>(account: &Account): bool {
+public(package) fun account_is_frozen<T>(account: &Account): bool {
     account[TokenAccountKey<T>()].is_frozen
 }
 
 #[test_only]
-public fun accepts_deposits<T>(account: &Account): bool {
+public(package) fun accepts_deposits<T>(account: &Account): bool {
     account[TokenAccountKey<T>()].accepts_deposits
 }
 
-/// The account's optional default key (`none` if unset), as a raw group element. Off-chain readers
-/// decode the `default_pk` field straight from the account object rather than calling this.
 #[test_only]
-public fun default_pk(account: &Account): Option<Element<G>> {
+public(package) fun default_pk(account: &Account): Option<Element<G>> {
     account.default_pk.map!(|pk| *pk.as_element())
 }
 
 #[test_only]
-public fun token_public_key<T>(account: &Account): Element<G> {
+public(package) fun token_public_key<T>(account: &Account): Element<G> {
     *account[TokenAccountKey<T>()].pk().as_element()
 }

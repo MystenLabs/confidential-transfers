@@ -126,3 +126,20 @@ export async function listEvents(opts: {
 	}
 	return events;
 }
+
+/**
+ * Unix-ms timestamp of a checkpoint. `Event` carries a checkpoint sequence number but no
+ * timestamp, so callers resolve event times through the containing checkpoint's summary.
+ */
+export async function checkpointTimestampMs(
+	client: SuiGrpcClient,
+	sequenceNumber: bigint,
+): Promise<number | undefined> {
+	const { response } = await client.ledgerService.getCheckpoint({
+		checkpointId: { oneofKind: 'sequenceNumber', sequenceNumber },
+		readMask: { paths: ['sequence_number', 'summary.timestamp'] },
+	});
+	const ts = response.checkpoint?.summary?.timestamp;
+	if (ts?.seconds === undefined) return undefined;
+	return Number(ts.seconds) * 1000 + Math.floor((ts.nanos ?? 0) / 1e6);
+}

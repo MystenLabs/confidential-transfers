@@ -2,11 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { bcs } from '@mysten/sui/bcs';
-import { type ClientWithCoreApi } from '@mysten/sui/client';
+import { type SuiGrpcClient } from '@mysten/sui/grpc';
 import { type Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { normalizeStructTag, normalizeSuiAddress } from '@mysten/sui/utils';
-import { DiscreteLogTable, EncryptedAmount, TokenAccount, TransferEventBcs } from 'ts-sdk';
+import { checkpointTimestampMs, listEvents } from 'contra-utils';
+import {
+	contraContracts,
+	DiscreteLogTable,
+	EncryptedAmount,
+	eventsContracts,
+	TokenAccount,
+	TransferEventBcs,
+} from 'ts-sdk';
 
 import { type SignedTransfer } from './sender.ts';
 
@@ -23,6 +31,10 @@ const ChannelBcs = bcs.struct('Channel', {
 
 /** Default cap on the gas budget the receiver is willing to sponsor (0.2 SUI). */
 const DEFAULT_MAX_GAS_BUDGET = 200_000_000n;
+
+function bytesEqual(a: number[], b: Uint8Array): boolean {
+	return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
 
 /**
  * Receiver-side state machine. `init()` runs the channel acceptance checks and
@@ -51,11 +63,19 @@ const DEFAULT_MAX_GAS_BUDGET = 200_000_000n;
  *
  * `settle` later submits the latest verified transfer with both signatures.
  *
- * Note: a held transfer embeds auditor data built against the token's auditor
- * key at signing time. After the issuer rotates that key, it stays settleable
- * only during the token's rotation grace window (`previous_pks`), so the
- * receiver should know the token's official grace policy and settle — or ask
- * the sender to re-sign — before the window closes.
+ * ## Auditor-key rotations and the grace period
+ *
+ * A held transfer embeds auditor data built against the token's auditor key at
+ * signing time. After the issuer rotates that key, the transfer stays
+ * settleable only while the old key remains in the token's `previous_pks`
+ * grace set — so running a channel REQUIRES a token whose issuer publishes a
+ * known rotation grace period (e.g. 1 day) and honors it in `update_auditors`.
+ * The receiver pins the expected auditor key (`auditorPk`, `null` for a token
+ * with auditing disabled) and the published grace period (`gracePeriodMs`) at
+ * construction; `init()` checks the pin against the token's `current_pks`, and
+ * `lastTimeToSettle()` watches for a change: it returns `null` while the
+ * pinned configuration is still current, and otherwise the deadline (unix ms)
+ * by which the held transfer must be settled.
  */
 export class Receiver {
 	private accumulated = 0n;
@@ -64,7 +84,7 @@ export class Receiver {
 
 	constructor(
 		private readonly opts: {
-			suiClient: ClientWithCoreApi;
+			suiClient: SuiGrpcClient;
 			walletKeypair: Ed25519Keypair;
 			/** Receiver's contra TokenAccount (carries `sk_r`/`pk_r`). */
 			contraTokenAccount: TokenAccount;
@@ -75,6 +95,16 @@ export class Receiver {
 			contraPackageId: string;
 			/** payment_channel package id (used to whitelist the `get_auth` call). */
 			paymentChannelPackageId: string;
+			/** The shared `ConfidentialToken<tokenType>` object id. */
+			confidentialTokenId: string;
+			/**
+			 * The auditor public key (32-byte compressed ristretto point) held transfers are built
+			 * against, or `null` for a token with auditing disabled. `init()` checks it against the
+			 * token's `current_pks`; `lastTimeToSettle()` watches for it to rotate out.
+			 */
+			auditorPk: Uint8Array | null;
+			/** The token's published auditor-rotation grace period, in ms (e.g. 1 day). */
+			gracePeriodMs: bigint;
 			/** Discrete-log table for decryption (typically a 32-bit table). */
 			table: DiscreteLogTable;
 			/** Cap on the sponsored gas budget. Defaults to 0.2 SUI. */
@@ -139,7 +169,94 @@ export class Receiver {
 				`channel end_time_ms ${endTimeMs} leaves less than ${minRemainingMs}ms to settle`,
 			);
 		}
+		// The pinned auditor expectation must hold when the channel is accepted: transfers signed
+		// from here on embed auditor data for exactly this configuration.
+		const auditors = await this.fetchAuditors();
+		if (!this.matchesPinnedAuditor(auditors.current_pks)) {
+			throw new Error(
+				this.opts.auditorPk === null
+					? "expected the token's auditing to be disabled, but it has a current auditor key"
+					: "the token's current auditor key does not match the pinned auditorPk",
+			);
+		}
 		this.channel = { sender: normalizeSuiAddress(parsed.sender), endTimeMs };
+	}
+
+	/**
+	 * The deadline (unix ms) by which the held transfer must be settled, or `null` while the
+	 * pinned auditor configuration is still the token's current one (no deadline). Once the
+	 * configuration changes, the deadline is the on-chain `UpdateAuditorsEvent` time plus
+	 * `gracePeriodMs` — or the change time itself where settleability ends immediately (auditing
+	 * enabled on a pinned-`null` token; the pinned key dropped from `previous_pks`). A returned
+	 * deadline in the past means the held transfer can no longer settle: ask the sender to re-sign.
+	 */
+	async lastTimeToSettle(): Promise<bigint | null> {
+		const auditors = await this.fetchAuditors();
+		if (this.matchesPinnedAuditor(auditors.current_pks)) return null;
+
+		// The pinned configuration is no longer current: walk the token's auditor updates
+		// oldest-first to find when it stopped holding (and, for a rotation with grace, whether a
+		// later update dropped the key from `previous_pks` early).
+		const contraPkg = normalizeSuiAddress(this.opts.contraPackageId);
+		const eventType = normalizeStructTag(
+			`${contraPkg}::events::UpdateAuditorsEvent<${this.opts.tokenType}>`,
+		);
+		const updates = await listEvents({
+			client: this.opts.suiClient,
+			anyOf: [{ eventType: `${contraPkg}::events::UpdateAuditorsEvent` }],
+		});
+
+		// Track the latest streak of updates under which the pinned configuration does not hold:
+		// an update restoring it resets the streak; within a streak the deadline is its start plus
+		// the grace period, capped at the first update that ends settleability outright (auditing
+		// enabled on a pinned-`null` token aborts no-data transfers immediately; a key dropped
+		// from `previous_pks` loses its grace at that moment).
+		let deadlineMs: bigint | null = null;
+		for (const ev of updates) {
+			if (normalizeStructTag(ev.eventType) !== eventType || ev.checkpoint === undefined) {
+				continue;
+			}
+			const parsed = eventsContracts.UpdateAuditorsEvent.parse(ev.bcs);
+			if (this.matchesPinnedAuditor(parsed.current_pks)) {
+				deadlineMs = null;
+				continue;
+			}
+			const tMs = await checkpointTimestampMs(this.opts.suiClient, ev.checkpoint);
+			if (tMs === undefined) continue;
+			const pinned = this.opts.auditorPk;
+			if (deadlineMs === null) {
+				deadlineMs = pinned === null ? BigInt(tMs) : BigInt(tMs) + this.opts.gracePeriodMs;
+			}
+			if (pinned !== null) {
+				const inPrevious = parsed.previous_pks.some((pk) => bytesEqual(pk.element.bytes, pinned));
+				if (!inPrevious && BigInt(tMs) < deadlineMs) deadlineMs = BigInt(tMs);
+			}
+		}
+		if (deadlineMs === null) {
+			throw new Error('auditor configuration changed but no matching UpdateAuditorsEvent found');
+		}
+		return deadlineMs;
+	}
+
+	/** Fetch and parse the token's on-chain `Auditors` configuration. */
+	private async fetchAuditors() {
+		const {
+			objects: [object],
+		} = await this.opts.suiClient.core.getObjects({
+			objectIds: [this.opts.confidentialTokenId],
+			include: { content: true },
+		});
+		if (object instanceof Error) {
+			throw new Error(`confidential token object not found: ${object.message}`);
+		}
+		return contraContracts.ConfidentialToken.parse(object.content).auditors;
+	}
+
+	/** Whether `currentPks` is exactly the pinned auditor configuration. */
+	private matchesPinnedAuditor(currentPks: { element: { bytes: number[] } }[]): boolean {
+		const pinned = this.opts.auditorPk;
+		if (pinned === null) return currentPks.length === 0;
+		return currentPks.length === 1 && bytesEqual(currentPks[0].element.bytes, pinned);
 	}
 
 	/**

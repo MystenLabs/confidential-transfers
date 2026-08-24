@@ -138,13 +138,13 @@ export interface ContraOptions {
 	wasmUrl?: string | URL | Request | BufferSource;
 }
 
-/** Arguments to `ContraClient.transfer`. */
 /**
  * Auth-builder thunk for `transfer` / `unwrap` etc. The SDK calls it once
  * per consumption site within the same PTB.
  */
 export type AuthThunk = (tx: Transaction) => TransactionObjectArgument;
 
+/** Arguments to `ContraClient.transfer`. */
 export interface TransferOptions {
 	/** The sender's token account. */
 	tokenAccount: TokenAccount;
@@ -186,9 +186,7 @@ export interface BatchedTransferOptions {
 	 * chain. The order is preserved end-to-end: `recipients[i]` is credited to
 	 * `recipients[i].receiverAddress` with `recipients[i].memo`.
 	 *
-	 * Length must be in `[1, 7]`: Move can verify at most 8 aggregated
-	 * bulletproof range proofs in a single call, and one slot is consumed by
-	 * the sender's new-balance proof.
+	 * Length must be in `[1, 255]` (`MAX_BATCH_RECIPIENTS` in `contra.move`).
 	 */
 	recipients: readonly BatchedTransferRecipient[];
 	/**
@@ -238,6 +236,20 @@ export interface UpdateBalanceOptions {
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
+}
+
+/** Arguments to `ContraClient.tokenAccount`. */
+export interface TokenAccountOptions {
+	/** The owner address of the account. */
+	address: string;
+	/** The fully-qualified Move type of the token, e.g. `0x2::sui::SUI`. */
+	tokenType: string;
+	/**
+	 * The twisted ElGamal private key for this token's balance. When omitted a fresh key is
+	 * generated (e.g. for a first registration or a re-key target); the caller is responsible
+	 * for persisting it.
+	 */
+	privateKey?: PrivateKey;
 }
 
 /** Arguments to `ContraClient.newAccount`. */

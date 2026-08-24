@@ -192,8 +192,10 @@ export function createOperations(
 		await Promise.all(
 			users.map(async (user) => {
 				const tx = new Transaction();
-				const account = tx.add(client.contra.newAccount({ owner: user.tokenAccount.address }));
-				tx.add(client.contra.shareAccount({ account }));
+				const account = tx.add(
+					await client.contra.newAccount({ owner: user.tokenAccount.address }),
+				);
+				tx.add(await client.contra.shareAccount({ account }));
 				tx.setSender(user.address);
 				await exec(tx, user.keypair);
 			}),
@@ -227,12 +229,18 @@ export function createOperations(
 	 */
 	async function setupFreshUsersWithBalance(amounts: bigint[]): Promise<FreshUser[]> {
 		const users = await setupFreshUsers(amounts.length);
+		// `wrap` aborts on zero amounts (EZeroAmount), and a fresh account already holds a zero
+		// balance — skip the mint + wrap + merge for users provisioned with 0.
+		const funded = users
+			.map((user, i) => ({ user, amount: amounts[i] }))
+			.filter(({ amount }) => amount > 0n);
+		if (funded.length === 0) return users;
 		await tokenIssuer.mintMany(
-			users.map((user, i) => ({ recipient: user.address, amount: amounts[i] })),
+			funded.map(({ user, amount }) => ({ recipient: user.address, amount })),
 		);
 		await Promise.all(
-			users.map(async (user, i) => {
-				await wrapCoin(user.address, user.keypair, user.address, amounts[i]);
+			funded.map(async ({ user, amount }) => {
+				await wrapCoin(user.address, user.keypair, user.address, amount);
 				await mergeAndUpdate(user.tokenAccount, user.keypair);
 			}),
 		);

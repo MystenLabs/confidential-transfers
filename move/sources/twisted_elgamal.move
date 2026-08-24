@@ -25,7 +25,7 @@ use sui::{
 /// Homomorphic properties: Encryptions can be added and subtracted component-wise,
 /// yielding an encryption of the sum or difference of the plaintexts.
 ///
-/// Values up to at least ~2^32 can be decrypted.
+/// Values up to at least ~2^32 can be decrypted by the SDK.
 public struct Encryption has copy, drop, store {
     ciphertext: Element<G>,
     decryption_handle: Element<G>,
@@ -55,7 +55,7 @@ public fun public_key(element: Element<G>): PublicKey {
 }
 
 /// The underlying group element.
-public fun as_element(pk: &PublicKey): &Element<G> {
+public(package) fun as_element(pk: &PublicKey): &Element<G> {
     &pk.element
 }
 
@@ -106,12 +106,6 @@ public(package) fun add_assign_u64(e: &mut Encryption, amount: u64) {
     e.ciphertext = g_add(&e.ciphertext, &g_mul(&scalar_from_u64(amount), &h()));
 }
 
-#[test_only]
-public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
-    e1.ciphertext = g_sub(&e1.ciphertext, &e2.ciphertext);
-    e1.decryption_handle = g_sub(&e1.decryption_handle, &e2.decryption_handle);
-}
-
 /// Trivial encryption of zero without randomness.
 public(package) fun encrypt_zero(): Encryption {
     // TODO: consider changing to (pk, g)
@@ -129,6 +123,12 @@ public fun encrypt_zero_for_testing(): Encryption {
 #[test_only]
 public fun decryption_handle_for_testing(e: &Encryption): Element<G> {
     *e.decryption_handle()
+}
+
+#[test_only]
+public(package) fun sub_assign(e1: &mut Encryption, e2: &Encryption) {
+    e1.ciphertext = g_sub(&e1.ciphertext, &e2.ciphertext);
+    e1.decryption_handle = g_sub(&e1.decryption_handle, &e2.decryption_handle);
 }
 
 #[test_only]

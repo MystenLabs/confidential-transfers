@@ -19,6 +19,15 @@
 /// the channel's `TokenAccount<T>` — is then a plain `contra` move call with
 /// that auth, composed by the caller in the same PTB.
 ///
+/// # Auditor-key grace period requirement
+/// A held (signed-but-unsettled) transfer embeds auditor data built against the
+/// token's auditor key at signing time; after a rotation it only settles while
+/// the old key stays in the token's `previous_pks` grace set. Channels therefore
+/// REQUIRE a token whose issuer publishes a known rotation grace period (e.g.
+/// 1 day) and honors it in `update_auditors`. The receiver pins the expected
+/// auditor key, and settles — or asks the sender to re-sign — before the grace
+/// deadline (see the TS `Receiver.lastTimeToSettle`).
+///
 /// # State machine
 /// - `Initialized` — fresh channel; the sender has full control via
 ///   `get_auth` and uses it to set up the channel's contra account, fund it, etc.

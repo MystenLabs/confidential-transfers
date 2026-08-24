@@ -63,6 +63,7 @@ import type {
 	RekeyTokenAccountOptions,
 	SetDefaultPkAsSenderOptions,
 	ShareAccountOptions,
+	TokenAccountOptions,
 	TokenAuditor,
 	TokenBalance,
 	TokenKeyStatus,
@@ -94,10 +95,11 @@ export function contra(options: ContraOptions) {
 /**
  * Stateless client for the `contra` Move package.
  *
- * Each transaction-building method returns a thunk
- * `(tx: Transaction) => TransactionResult` that can be passed to
- * `tx.add(...)`. Methods that need encryption key material take a
- * `TokenAccount` directly — the client holds no per-account state.
+ * Every transaction-building method is async and resolves to a thunk
+ * `(tx: Transaction) => TransactionResult`, so the uniform call shape is
+ * `tx.add(await client.method(...))`. Methods that need encryption key
+ * material take a `TokenAccount` directly — the client holds no
+ * per-account state.
  */
 export class ContraClient {
 	#suiClient: ContraCompatibleClient;
@@ -194,6 +196,22 @@ export class ContraClient {
 	}
 
 	/**
+	 * Create a client-side `TokenAccount` bound to this client's package config — the
+	 * per-(address, tokenType) key holder that transaction-building methods take. When
+	 * `privateKey` is omitted a fresh key is generated (e.g. for a first registration or a
+	 * re-key target); the caller is responsible for persisting it.
+	 *
+	 * @example
+	 * ```ts
+	 * const tokenAccount = client.tokenAccount({ address, tokenType, privateKey: storedKey });
+	 * const { balance } = await client.getBalance(tokenAccount);
+	 * ```
+	 */
+	tokenAccount({ address, tokenType, privateKey }: TokenAccountOptions): TokenAccount {
+		return new TokenAccount(address, tokenType, this.#packageConfig, privateKey);
+	}
+
+	/**
 	 * Create a new account owned by `owner`, with no default key set. Permissionless — anyone can
 	 * create the account for any owner; it only reserves the owner's derived slot and sets no key.
 	 * Set a default key afterwards with `setDefaultPkAsSender` (needed only so others can
@@ -203,14 +221,14 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * const account = tx.add(contraClient.newAccount({ owner: address }));
-	 * tx.add(contraClient.shareAccount({ account }));
+	 * const account = tx.add(await contraClient.newAccount({ owner: address }));
+	 * tx.add(await contraClient.shareAccount({ account }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAccountAlreadyRegistered` — `owner` already has an account (one per address).
 	 */
-	newAccount({ owner }: NewAccountOptions) {
+	async newAccount({ owner }: NewAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return contraContracts.newAccount({
 			package: this.#packageConfig.packageId,
 			arguments: {
@@ -225,7 +243,9 @@ export class ContraClient {
 	 * argument must be a freshly-created account (e.g. the result of
 	 * `newAccount`) that has not yet been shared.
 	 */
-	shareAccount({ account }: ShareAccountOptions) {
+	async shareAccount({
+		account,
+	}: ShareAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return contraContracts.shareAccount({
 			package: this.#packageConfig.packageId,
 			arguments: { account },
@@ -352,11 +372,7 @@ export class ContraClient {
 		};
 	}
 
-	/**
-	 * Fetch and parse the on-chain `ConfidentialToken<T>` object. Used to read
-	 * `is_active` (global freeze) and the auditor key; the auditor exposure goes
-	 * through `getAuditor`.
-	 */
+	/** Fetch and parse the on-chain `ConfidentialToken<T>` object. */
 	async #getConfidentialToken(tokenType: string) {
 		const { object } = await this.#suiClient.core.getObject({
 			objectId: this.#getConfidentialTokenId(tokenType),
@@ -423,11 +439,9 @@ export class ContraClient {
 	 *
 	 * // In the same PTB as account creation:
 	 * const tx = new Transaction();
-	 * const account = tx.add(
-	 *   contraClient.newAccount({ owner: senderAddress, publicKey: tokenAccount.publicKey }),
-	 * );
+	 * const account = tx.add(await contraClient.newAccount({ owner: senderAddress }));
 	 * tx.add(await contraClient.register({ tokenAccount, account }));
-	 * tx.add(contraClient.shareAccount({ account }));
+	 * tx.add(await contraClient.shareAccount({ account }));
 	 * ```
 	 *
 	 * On-chain aborts:
@@ -466,7 +480,7 @@ export class ContraClient {
 	 * @example
 	 * ```ts
 	 * const tx = new Transaction();
-	 * tx.add(contraClient.tryRegisterWithDefaultPk({ receiver, tokenType }));
+	 * tx.add(await contraClient.tryRegisterWithDefaultPk({ receiver, tokenType }));
 	 * ```
 	 *
 	 * On-chain aborts:
@@ -474,7 +488,10 @@ export class ContraClient {
 	 * - `EDefaultPkNotSet` — `receiver`'s account has no default key.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — `receiver` has no `Account`.
 	 */
-	tryRegisterWithDefaultPk({ receiver, tokenType }: RegisterWithDefaultPkOptions) {
+	async tryRegisterWithDefaultPk({
+		receiver,
+		tokenType,
+	}: RegisterWithDefaultPkOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return (tx: Transaction): TransactionResult =>
 			tx.add(
 				contraContracts.tryRegisterWithDefaultPk({
@@ -514,6 +531,7 @@ export class ContraClient {
 	 * - `TokenAccountDoesNotExistError` — `receiver` has no `TokenAccount<T>`.
 	 *
 	 * On-chain aborts:
+	 * - `EZeroAmount` — the supplied coin has zero value.
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `ETransferDenied` — the token is paused, the deny list is globally frozen, the receiver
 	 *   is on the deny list, or the receiver's per-account freeze is active.
@@ -602,12 +620,7 @@ export class ContraClient {
 		return { shouldMerge, newBalance, balanceProof };
 	}
 
-	/**
-	 * Merge all pending deposits (both encrypted and public) into the active
-	 * balance. Internal: external callers should set `merge: true` on
-	 * `transfer` / `unwrap` / `updateBalance` and let those prepend the merge
-	 * call with the `auth` they already minted.
-	 */
+	/** Merge all pending deposits (both encrypted and public) into the active balance. */
 	#merge({ tokenAccount, auth }: { tokenAccount: TokenAccount; auth: TransactionObjectArgument }) {
 		return (tx: Transaction): TransactionResult =>
 			tx.add(
@@ -678,10 +691,7 @@ export class ContraClient {
 		};
 	}
 
-	/**
-	 * Helper composing `buildInRangeAmount` + `buildDdhProof` with the
-	 * generated `contra::update_active_balance` Move call for `tokenAccount`. Used by `updateBalance`.
-	 */
+	/** Add the `contra::update_active_balance` Move call with its proof arguments. */
 	#updateActiveBalance(
 		batchRangeProver: BatchRangeProver,
 		tx: Transaction,
@@ -725,19 +735,18 @@ export class ContraClient {
 	 *
 	 * @example
 	 * ```ts
-	 * const pauseFn = contraClient.pauseAccount({ tokenAccount });
 	 * const tx = new Transaction();
-	 * tx.add(pauseFn);
+	 * tx.add(await contraClient.pauseAccount({ tokenAccount }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — `tokenAccount.address` is not registered for the token.
 	 */
-	pauseAccount({
+	async pauseAccount({
 		tokenAccount,
 		auth,
-	}: PauseAccountOptions): (tx: Transaction) => TransactionResult {
+	}: PauseAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return (tx: Transaction) =>
 			this.#setAcceptsEncryptedDeposits(
 				tx,
@@ -754,19 +763,18 @@ export class ContraClient {
 	 *
 	 * @example
 	 * ```ts
-	 * const unpauseFn = contraClient.unpauseAccount({ tokenAccount });
 	 * const tx = new Transaction();
-	 * tx.add(unpauseFn);
+	 * tx.add(await contraClient.unpauseAccount({ tokenAccount }));
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — invalid `auth`.
 	 * - `sui::dynamic_field::EFieldDoesNotExist` — `tokenAccount.address` is not registered for the token.
 	 */
-	unpauseAccount({
+	async unpauseAccount({
 		tokenAccount,
 		auth,
-	}: UnpauseAccountOptions): (tx: Transaction) => TransactionResult {
+	}: UnpauseAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return (tx: Transaction) =>
 			this.#setAcceptsEncryptedDeposits(
 				tx,
@@ -815,18 +823,23 @@ export class ContraClient {
 	 *
 	 * @example
 	 * ```ts
-	 * const newTokenAccount = new TokenAccount(address, tokenType, packageConfig, randomScalar());
-	 * tx.add(client.contra.setDefaultPkAsSender({ account: address, defaultPk: newTokenAccount.publicKey }));
+	 * const newTokenAccount = client.contra.tokenAccount({ address, tokenType });
+	 * tx.add(
+	 *   await client.contra.setDefaultPkAsSender({
+	 *     account: address,
+	 *     defaultPk: newTokenAccount.publicKey,
+	 *   }),
+	 * );
 	 * ```
 	 *
 	 * On-chain aborts:
 	 * - `EAuthorizationError` — the transaction sender is not `account`.
 	 * - `EIdentityPublicKey` — `defaultPk` is the group identity.
 	 */
-	setDefaultPkAsSender({
+	async setDefaultPkAsSender({
 		account,
 		defaultPk,
-	}: SetDefaultPkAsSenderOptions): (tx: Transaction) => TransactionResult {
+	}: SetDefaultPkAsSenderOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return (tx: Transaction) =>
 			tx.add(
 				contraContracts.setDefaultPkAsSender({
@@ -868,19 +881,8 @@ export class ContraClient {
 		const shouldMerge =
 			merge && (pending.terms > 0 || pending.amount > 0n || pendingPublicBalance > 0n);
 
-		const activeLimbs = [
-			balance.ciphertext.l0,
-			balance.ciphertext.l1,
-			balance.ciphertext.l2,
-			balance.ciphertext.l3,
-		];
-		const pendingLimbs = [
-			pending.ciphertext.l0,
-			pending.ciphertext.l1,
-			pending.ciphertext.l2,
-			pending.ciphertext.l3,
-		];
-		const oldHandles = activeLimbs.map((limb, i) =>
+		const pendingLimbs = pending.ciphertext.limbs;
+		const oldHandles = balance.ciphertext.limbs.map((limb, i) =>
 			shouldMerge
 				? limb.decryptionHandle.add(pendingLimbs[i].decryptionHandle)
 				: limb.decryptionHandle,
@@ -947,30 +949,10 @@ export class ContraClient {
 	 * - `ERekeyProofFailed` — the re-key proof did not verify (e.g. a deposit raced the
 	 *   SDK's balance read). Use `tryRekeyTokenAccount` to soft-fail instead of aborting.
 	 */
-	async rekeyTokenAccount({
-		tokenAccount,
-		newTokenAccount,
-		merge = true,
-		auth,
-	}: RekeyTokenAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
-		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
-			tokenAccount,
-			newTokenAccount,
-			merge,
-		);
-		return (tx: Transaction) => {
-			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenAccount.tokenType);
-			if (shouldMerge) tx.add(this.#merge({ tokenAccount, auth: authArg }));
-			return this.#rekeyTokenAccountCall(
-				tx,
-				tokenAccount,
-				newTokenAccount.publicKey,
-				newHandles,
-				rekeyProof,
-				authArg,
-				false,
-			);
-		};
+	async rekeyTokenAccount(
+		options: RekeyTokenAccountOptions,
+	): Promise<(tx: Transaction) => TransactionResult> {
+		return this.#rekeyTokenAccountImpl(options, false);
 	}
 
 	/**
@@ -979,12 +961,16 @@ export class ContraClient {
 	 * `TryTokenRekeyFailedEvent` is emitted. Lets `setDefaultPkAsSender` and re-keys of several tokens ride
 	 * in one PTB without pausing.
 	 */
-	async tryRekeyTokenAccount({
-		tokenAccount,
-		newTokenAccount,
-		merge = true,
-		auth,
-	}: RekeyTokenAccountOptions): Promise<(tx: Transaction) => TransactionResult> {
+	async tryRekeyTokenAccount(
+		options: RekeyTokenAccountOptions,
+	): Promise<(tx: Transaction) => TransactionResult> {
+		return this.#rekeyTokenAccountImpl(options, true);
+	}
+
+	async #rekeyTokenAccountImpl(
+		{ tokenAccount, newTokenAccount, merge = true, auth }: RekeyTokenAccountOptions,
+		soft: boolean,
+	): Promise<(tx: Transaction) => TransactionResult> {
 		const { shouldMerge, newHandles, rekeyProof } = await this.#buildRekeyMaterial(
 			tokenAccount,
 			newTokenAccount,
@@ -1000,7 +986,7 @@ export class ContraClient {
 				newHandles,
 				rekeyProof,
 				authArg,
-				true,
+				soft,
 			);
 		};
 	}
@@ -1021,8 +1007,6 @@ export class ContraClient {
 	 * const tx = new Transaction();
 	 * tx.add(transferFn);
 	 * ```
-	 *
-	 * See `transferBatch` for the full list of SDK-thrown errors and on-chain aborts.
 	 */
 	async transfer({
 		tokenAccount,
@@ -1307,6 +1291,7 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
+	 * - `InvalidArgumentError` — `amount` is zero (the chain would abort with `EZeroAmount`).
 	 * - `InsufficientBalanceError` — `amount` exceeds the spendable balance (active, or
 	 *   active + pending when `merge` is `true`).
 	 * - `TokenAccountDoesNotExistError` — `tokenAccount.address` is not registered for
@@ -1325,6 +1310,9 @@ export class ContraClient {
 		merge = true,
 		auth,
 	}: UnwrapOptions): Promise<(tx: Transaction) => TransactionResult> {
+		if (amount <= 0n) {
+			throw new InvalidArgumentError(`Unwrap amount must be positive, got ${amount}.`);
+		}
 		const { address, tokenType } = tokenAccount;
 
 		const { batchRangeProver } = await this.#getBulletproofs();

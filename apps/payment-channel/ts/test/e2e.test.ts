@@ -36,6 +36,8 @@ describe('payment_channel e2e', () => {
 	let channelObjectId: string;
 	let channelTokenAccount: TokenAccount;
 	const lockedAmount = 100n;
+	// The token's published auditor-rotation grace period (see the Receiver class doc).
+	const GRACE_PERIOD_MS = 24n * 60n * 60n * 1000n;
 
 	beforeAll(async () => {
 		suiClient = grpcClientFor(NETWORK);
@@ -134,6 +136,9 @@ describe('payment_channel e2e', () => {
 			channelAddress: channelObjectId,
 			contraPackageId: deployment.contra.packageId,
 			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			confidentialTokenId: deployment.confidentialTokenId,
+			auditorPk: null,
+			gracePeriodMs: GRACE_PERIOD_MS,
 			table,
 		});
 		await receiver.init();
@@ -161,6 +166,9 @@ describe('payment_channel e2e', () => {
 			channelAddress: channelObjectId,
 			contraPackageId: deployment.contra.packageId,
 			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			confidentialTokenId: deployment.confidentialTokenId,
+			auditorPk: null,
+			gracePeriodMs: GRACE_PERIOD_MS,
 			table,
 		});
 		await expect(notTheReceiver.init()).rejects.toThrow(/is not this wallet/);
@@ -175,10 +183,36 @@ describe('payment_channel e2e', () => {
 			channelAddress: channelObjectId,
 			contraPackageId: deployment.contra.packageId,
 			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			confidentialTokenId: deployment.confidentialTokenId,
+			auditorPk: null,
+			gracePeriodMs: GRACE_PERIOD_MS,
 			table,
 		});
 		// The channel was activated with a ~10 minute window; demand a day.
 		await expect(receiver.init(24n * 60n * 60n * 1000n)).rejects.toThrow(/leaves less than/);
+	});
+
+	it('receiver init rejects a token whose auditor configuration differs from the pin', async () => {
+		const receiver = new Receiver({
+			suiClient,
+			walletKeypair: receiverKp,
+			contraTokenAccount: receiverTokenAccount,
+			tokenType: deployment.buType,
+			channelAddress: channelObjectId,
+			contraPackageId: deployment.contra.packageId,
+			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			confidentialTokenId: deployment.confidentialTokenId,
+			// The BU test token has auditing disabled, so pinning any key must be rejected.
+			auditorPk: new Uint8Array(32).fill(1),
+			gracePeriodMs: GRACE_PERIOD_MS,
+			table,
+		});
+		await expect(receiver.init()).rejects.toThrow(/auditor/);
+	});
+
+	it('lastTimeToSettle is null while the pinned auditor configuration is unchanged', async () => {
+		const receiver = await makeReceiver();
+		expect(await receiver.lastTimeToSettle()).toBeNull();
 	});
 
 	it('receiver rejects a settlement whose gas budget exceeds its cap', async () => {
@@ -315,6 +349,9 @@ describe('payment_channel e2e', () => {
 			channelAddress: shortChannelId,
 			contraPackageId: deployment.contra.packageId,
 			paymentChannelPackageId: deployment.paymentChannel.paymentChannelPackageId,
+			confidentialTokenId: deployment.confidentialTokenId,
+			auditorPk: null,
+			gracePeriodMs: GRACE_PERIOD_MS,
 			table,
 		});
 		await expect(receiver.init()).rejects.toThrow(/leaves less than/);

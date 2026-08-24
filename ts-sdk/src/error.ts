@@ -51,19 +51,6 @@ export class ReceiverDoesNotAcceptDepositsError extends ContraError {
 	}
 }
 
-/**
- * An operation requires the account's encrypted deposits to be paused
- * (`acceptsEncryptedDeposits === false`), but they are currently enabled.
- * Call `pauseAccount` first, then retry.
- */
-export class DepositsMustBePausedError extends ContraError {
-	readonly address: string;
-	constructor(address: string) {
-		super(`Account ${address} must have encrypted deposits paused; call pauseAccount first.`);
-		this.address = address;
-	}
-}
-
 /** A `TokenAccount<T>` object does not exist on chain for the given owner. */
 export class TokenAccountDoesNotExistError extends ContraError {
 	readonly address: string;

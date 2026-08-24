@@ -9,9 +9,9 @@
  */
 
 import { useCurrentClient } from '@mysten/dapp-kit-react';
+import { checkpointTimestampMs, listEvents } from 'contra-utils';
 import { useEffect, useRef, useState } from 'react';
 
-import { listEvents } from '../grpc/listEvents';
 import type { TokenConfig } from '../sdk';
 
 export interface ModuleEvent {
@@ -55,14 +55,8 @@ export function useActivityEvents(config: TokenConfig, enabled: boolean) {
 			const cache = timestampByCheckpointRef.current;
 			const cached = cache.get(checkpoint);
 			if (cached !== undefined) return cached;
-			const { response } = await client.ledgerService.getCheckpoint({
-				checkpointId: { oneofKind: 'sequenceNumber', sequenceNumber: checkpoint },
-				readMask: { paths: ['sequence_number', 'summary.timestamp'] },
-			});
-			const ts = response.checkpoint?.summary?.timestamp;
-			if (ts?.seconds === undefined) return undefined;
-			const ms = Number(ts.seconds) * 1000 + Math.floor((ts.nanos ?? 0) / 1e6);
-			cache.set(checkpoint, ms);
+			const ms = await checkpointTimestampMs(client, checkpoint);
+			if (ms !== undefined) cache.set(checkpoint, ms);
 			return ms;
 		};
 

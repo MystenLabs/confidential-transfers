@@ -424,10 +424,7 @@ export class EncryptedAmount {
 		);
 	}
 
-	/**
-	 * Trivially encrypt `value` with zero blinding, splitting it into
-	 * four u16 limbs. Matches the on-chain `from_value` helper.
-	 */
+	/** Trivially encrypt `value` with zero blinding, splitting it into four u16 limbs. */
 	static trivial(value: bigint): EncryptedAmount {
 		return new EncryptedAmount(
 			Ciphertext.trivial(value & 0xffffn),
@@ -437,27 +434,29 @@ export class EncryptedAmount {
 		);
 	}
 
+	/** The four limbs in order, `[l0, l1, l2, l3]`. */
+	get limbs(): [Ciphertext, Ciphertext, Ciphertext, Ciphertext] {
+		return [this.l0, this.l1, this.l2, this.l3];
+	}
+
 	/**
-	 * Combine the four limbs into a single `Ciphertext` encoding the
-	 * full u64 value, matching the on-chain
-	 * `EncryptedAmount::to_encryption()`.
+	 * Combine the four limbs into a single `Ciphertext` encoding the full u64
+	 * value, matching the on-chain `encrypted_amount::collapse`.
 	 */
 	collapse(): Ciphertext {
 		return this.l0.add(this.l1.shiftLeft(16).add(this.l2.shiftLeft(32).add(this.l3.shiftLeft(48))));
 	}
 
 	/**
-	 * Decrypt all four limbs and combine into the underlying u64
-	 * plaintext. Each limb is decrypted independently and shifted
-	 * into place: `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
+	 * Decrypt all four limbs and combine into the underlying u64 plaintext
+	 * `l0 + 2^16 * l1 + 2^32 * l2 + 2^48 * l3`.
 	 */
 	decrypt(privateKey: PrivateKey, table: DiscreteLogTable): bigint {
 		const inv = ristretto255.Point.Fn.inv(privateKey);
-		const d0 = this.l0.decryptWithInverse(inv, table);
-		const d1 = this.l1.decryptWithInverse(inv, table);
-		const d2 = this.l2.decryptWithInverse(inv, table);
-		const d3 = this.l3.decryptWithInverse(inv, table);
-		return d0 + (d1 << 16n) + (d2 << 32n) + (d3 << 48n);
+		return this.limbs.reduce(
+			(acc, limb, k) => acc + (limb.decryptWithInverse(inv, table) << BigInt(16 * k)),
+			0n,
+		);
 	}
 
 	/**
@@ -468,11 +467,11 @@ export class EncryptedAmount {
 		blindingForLimb: (limbIndex: number) => bigint,
 		table: DiscreteLogTable,
 	): bigint {
-		const d0 = this.l0.decryptWithBlinding(blindingForLimb(0), table);
-		const d1 = this.l1.decryptWithBlinding(blindingForLimb(1), table);
-		const d2 = this.l2.decryptWithBlinding(blindingForLimb(2), table);
-		const d3 = this.l3.decryptWithBlinding(blindingForLimb(3), table);
-		return d0 + (d1 << 16n) + (d2 << 32n) + (d3 << 48n);
+		return this.limbs.reduce(
+			(acc, limb, k) =>
+				acc + (limb.decryptWithBlinding(blindingForLimb(k), table) << BigInt(16 * k)),
+			0n,
+		);
 	}
 }
 

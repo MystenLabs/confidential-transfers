@@ -14,8 +14,7 @@
  *     TreasuryCap), optionally with an initial set of auditor public keys.
  *     Creation returns a `ManagementCap<T>`.
  * 2.  Set the freeze admins who can freeze the token globally or specific accounts
- *     (via the ManagementCap). Those admins may monitor the confidential token and
- *     freeze it or individual accounts if necessary.
+ *     (via the ManagementCap).
  * 3.  Unfreeze the token globally or a specific account (using the TreasuryCap).
  * 4.  Set the balance of an account directly, to emulate burn/seize (using the
  *     TreasuryCap).
@@ -52,14 +51,12 @@
  *     others can auto-register tokens for you via `register_with_default_pk`.
  * 2.  Register a token account for a token type `T` under a key of your choice
  *     (`register`). Per-token keys are independent of the account's default key.
- * 3.  Rotate a token's key with `rekey_token_account` (to any `new_pk`), and
- *     set/clear the account's default key with `set_default_pk_as_sender`.
+ * 3.  Rotate a token's key with `rekey_token_account`, and set/clear the account's
+ *     default key with `set_default_pk_as_sender`.
  * 4.  Wrap a public coin into a confidential token, adding to the pending
  *     encrypted balance of an account.
  * 5.  Transfer an encrypted amount to one or more token accounts. Every receiver
- *     must already have a `TokenAccount<T>`; for permissionless tokens anyone can
- *     create one on their behalf up front with `register_with_default_pk`. Auditor
- *     data is attached if set.
+ *     must already have a `TokenAccount<T>`. Auditor data is attached if set.
  * 6.  Unwrap an encrypted amount from a token account and convert it to public
  *     coins.
  *
@@ -488,7 +485,8 @@ export interface TryRegisterWithDefaultPkOptions {
 }
 /**
  * Like `register_with_default_pk`, but a no-op if `account` already has a
- * `TokenAccount<T>`.
+ * `TokenAccount<T>`. Useful when more than one user wants to register the same
+ * token account in parallel.
  */
 export function tryRegisterWithDefaultPk(options: TryRegisterWithDefaultPkOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -704,7 +702,7 @@ export interface WrapOptions {
 /**
  * Convert public coin to private tokens and add them to the public pending balance
  * of `receiver`. Authorized by `auth`, which must be for the `PERMISSIONED_WRAP`
- * operation; `auth` may be for any owner.
+ * operation.
  */
 export function wrap(options: WrapOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -784,7 +782,6 @@ export interface BatchedTransferOptions {
  * Returns `TransferBatch::Ok` when `balance_proof` verifies, else
  * `BalanceProofFailed`. Aborts if a proof or the auditor requirement fails. Call
  * `add` once per receiver, in `receiver_amounts` order, then `finalize`.
- * Authorized by any `Auth<T>` for `sender.owner`.
  */
 export function batchedTransfer(options: BatchedTransferOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -934,9 +931,7 @@ export interface MergeOptions {
  * Merge all pending deposits into the active balance. This must be done before
  * pending encrypted and public deposits can be used in a transfer. To prevent
  * overflows, the number of additions done with the active balance is limited,
- * including the number of additions done with the pending deposits. Authorized by
- * `auth`, which must be for `account.owner`. Any `Auth<T>` is accepted regardless
- * of which operation it covers.
+ * including the number of additions done with the pending deposits.
  */
 export function merge(options: MergeOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -975,9 +970,7 @@ export interface UpdateActiveBalanceOptions {
 }
 /**
  * This may be used to update the balance after merging many pending deposits
- * before merging new deposits. Authorized by `auth`, which must be for
- * `account.owner`. Any `Auth<T>` is accepted regardless of which operation it
- * covers.
+ * before merging new deposits.
  */
 export function updateActiveBalance(options: UpdateActiveBalanceOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -1028,10 +1021,9 @@ export interface UnwrapOptions {
 	typeArguments: [string];
 }
 /**
- * Take an amount of `Coin<T>` from the encrypted balance of `account`. Authorized
- * by `auth`, which must be for the `PERMISSIONED_UNWRAP` operation and for
- * `account.owner`. The caller needs to provide a proof that the new balance is
- * correct after taking the amount:
+ * Take an amount of `Coin<T>` from the encrypted balance of `account`. The caller
+ * needs to provide a proof that the new balance is correct after taking the
+ * amount:
  *
  * - `new_balance` is the new encrypted balance of the account after taking the
  *   amount,
@@ -1177,11 +1169,11 @@ export interface SetBalanceByIssuerOptions {
  * A function for the issuer to set the balance of an account directly. This is
  * used in cases where the issuer needs to intervene.
  *
- * WARNING: This may break the consistency of the balance such that the number of
- * confidential tokens in circulation does not match the amount of coins in the
- * pool. It is the responsibility of the caller to ensure consistency is maintained
- * when using this function. The balance's `terms` count is set to 1, so the caller
- * is responsible for ensuring that the `EncryptedAmount` is in range.
+ * WARNING: THIS MAY BREAK THE CONSISTENCY OF THE BALANCE SUCH THAT THE NUMBER OF
+ * CONFIDENTIAL TOKENS IN CIRCULATION DOES NOT MATCH THE AMOUNT OF COINS IN THE
+ * POOL. IT IS THE RESPONSIBILITY OF THE CALLER TO ENSURE CONSISTENCY IS MAINTAINED
+ * WHEN USING THIS FUNCTION. THE BALANCE'S `terms` COUNT IS SET TO 1, SO THE CALLER
+ * IS RESPONSIBLE FOR ENSURING THAT THE `EncryptedAmount` IS IN RANGE.
  */
 export function setBalanceByIssuer(options: SetBalanceByIssuerOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -1358,8 +1350,7 @@ export interface AccountUnfreezeOptions {
 }
 /**
  * Unfreeze the given account for token `T`. Only the token issuer (holder of
- * `&TreasuryCap<T>`) may call this. The asymmetry — admins freeze, only the issuer
- * unfreezes — mirrors `global_freeze` / `global_unfreeze`.
+ * `&TreasuryCap<T>`) may call this.
  */
 export function accountUnfreeze(options: AccountUnfreezeOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
@@ -1394,8 +1385,8 @@ export interface SetPolicyOptions {
  * Set a policy for the confidential token. This allows implementing permissioned
  * operations, but only the witness type is stored here - the logic must be handled
  * in the corresponding flows. See `register_permissioned` for an example of how
- * this can be implemented. Changing the witness type will break all in-flight
- * permissioned calls using the old witness, and thus highly discouraged.
+ * this can be implemented. WARNING: CHANGING THE WITNESS TYPE WILL BREAK ALL
+ * IN-FLIGHT PERMISSIONED CALLS USING THE OLD WITNESS, AND THUS HIGHLY DISCOURAGED.
  */
 export function setPolicy(options: SetPolicyOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

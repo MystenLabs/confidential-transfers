@@ -9,6 +9,8 @@
 
 export { grpcClientFor } from './grpc.js';
 export type { ContraNetwork } from './grpc.js';
+export { checkpointTimestampMs, listEvents } from './list_events.js';
+export type { EventQueryTerm, LedgerEvent } from './list_events.js';
 export { executeOrThrow, findObject, publishBytecodes, signExecuteAndWait } from './publish.js';
 export type { Bytecodes, CreatedObject, ExecutedTransaction, PublishResult } from './publish.js';
 export { createContraAccount, waitForSui } from './setup.js';

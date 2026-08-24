@@ -47,7 +47,7 @@ public struct Balances<phantom T> has store {
 }
 
 /// An `EncryptedAmount` summed from `terms` u16-bounded values, which is what bounds its limbs:
-/// each is at most `terms * (2^16 - 1)`. Not an upper bound itself — it is the multiplier.
+/// each is at most `terms * (2^16 - 1)`.
 public struct AccumulatedAmount has store {
     amount: EncryptedAmount,
     terms: u16,
@@ -95,10 +95,12 @@ public(package) fun deposit_encrypted<T>(self: &mut Balances<T>, coin: Encrypted
 
 /// Fold both kinds of pending deposit into the active balance, freeing their slots.
 public(package) fun merge_deposits<T>(self: &mut Balances<T>) {
-    self.active.merge_into(&mut self.pending);
+    self.active.merge(&mut self.pending);
     let value = self.public_balance;
-    self.public_balance = 0;
-    if (value > 0) self.active.add_assign_value(value);
+    if (value > 0) {
+        self.active.add_assign_value(value);
+        self.public_balance = 0;
+    }
 }
 
 // === Withdrawals ===
@@ -117,17 +119,15 @@ public(package) fun try_withdraw_public<T>(
     pool: &mut UID,
     ctx: &mut TxContext,
 ): Option<Coin<T>> {
-    let new_balance = self.verify_amount(
+    let verified = self.try_verify_and_replace_active(
+        amount,
         new_balance,
         new_balance_pok,
         new_balance_range_proofs,
+        balance_proof,
         session_id,
     );
-    let mut residual = self.balance_change(&new_balance);
-    residual.add_assign_u64(amount);
-    if (!self.try_replace_active(&new_balance, &residual, balance_proof, session_id)) {
-        return option::none()
-    };
+    if (!verified) return option::none();
     option::some(redeem_funds(withdraw_funds_from_object<T>(pool, amount), ctx))
 }
 
@@ -167,8 +167,7 @@ public(package) fun try_withdraw_batch<T>(
     option::some(receiver_amounts.map!(|amount| EncryptedCoin { amount }))
 }
 
-/// The verified amount `coin` carries, for a caller that must check something against it before
-/// crediting it to a receiver.
+/// The verified amount `coin` carries.
 public(package) fun amount<T>(coin: &EncryptedCoin<T>): &RangeVerifiedAmount {
     &coin.amount
 }
@@ -186,14 +185,14 @@ public(package) fun try_update_active<T>(
     balance_proof: &DdhProof,
     session_id: SessionId,
 ): bool {
-    let new_balance = self.verify_amount(
+    self.try_verify_and_replace_active(
+        0,
         new_balance,
         new_balance_pok,
         new_balance_range_proofs,
+        balance_proof,
         session_id,
-    );
-    let residual = self.balance_change(&new_balance);
-    self.try_replace_active(&new_balance, &residual, balance_proof, session_id)
+    )
 }
 
 /// Re-key `self` to `new_pk`, swapping each limb's decryption handle for the matching
@@ -224,7 +223,7 @@ public(package) fun try_rekey<T>(
 /// Overwrite `self` with `new` as its whole active balance, dropping every pending deposit. `new`
 /// is not range-checked and is counted as a single merge.
 ///
-/// WARNING: this may break consistency between the tokens in circulation and the funds in the pool.
+/// WARNING: THIS MAY BREAK CONSISTENCY BETWEEN THE TOKENS IN CIRCULATION AND THE FUNDS IN THE POOL.
 public(package) fun overwrite_unchecked<T>(self: &mut Balances<T>, new: EncryptedAmount) {
     self.active.amount = new;
     self.active.terms = 1;
@@ -287,6 +286,27 @@ fun verify_transfer_amounts<T>(
     (receiver_amounts, new_balance, total_sender)
 }
 
+fun try_verify_and_replace_active<T>(
+    self: &mut Balances<T>,
+    amount: u64,
+    new_balance: EncryptedAmount,
+    new_balance_pok: &ElGamalProof,
+    new_balance_range_proofs: RangeProofs,
+    balance_proof: &DdhProof,
+    session_id: SessionId,
+): bool {
+    let new_balance = self.verify_amount(
+        new_balance,
+        new_balance_pok,
+        new_balance_range_proofs,
+        session_id,
+    );
+    let mut residual = self.balance_change(&new_balance);
+    // `add_assign_u64` is a no-op for `amount = 0`.
+    residual.add_assign_u64(amount);
+    self.try_replace_active(&new_balance, &residual, balance_proof, session_id)
+}
+
 fun verify_amount<T>(
     self: &Balances<T>,
     amount: EncryptedAmount,
@@ -339,14 +359,8 @@ fun has_deposit_slot<T>(self: &Balances<T>): bool {
 
 // === AccumulatedAmount ===
 
-/// Collapsed (single-`Encryption`) view of `self`.
-#[test_only]
-fun collapse(self: &AccumulatedAmount): Encryption {
-    self.amount.collapse()
-}
-
 /// Fold `other` into `self`, leaving `other` empty. Both sides must be under the same key.
-fun merge_into(self: &mut AccumulatedAmount, other: &mut AccumulatedAmount) {
+fun merge(self: &mut AccumulatedAmount, other: &mut AccumulatedAmount) {
     self.amount.add_assign(&other.amount);
     self.terms = self.terms + other.terms;
     other.set_empty();
@@ -395,6 +409,11 @@ fun set_empty(self: &mut AccumulatedAmount) {
 }
 
 // === Test Helpers ===
+
+#[test_only]
+fun collapse(self: &AccumulatedAmount): Encryption {
+    self.amount.collapse()
+}
 
 #[test_only]
 public(package) fun collapse_active<T>(self: &Balances<T>): Encryption {

@@ -44,11 +44,17 @@ public struct Auth<phantom T> has drop {
 /// operation index exceeds `MAX_OPERATION_INDEX` or if `permissioned_operations` contains
 /// duplicates.
 fun new<W>(permissioned_operations: vector<u8>): Policy {
-    assert!(permissioned_operations.all!(|o| *o <= MAX_OPERATION_INDEX), EInvalidOperation);
-    assert!(is_unique(&permissioned_operations), EDuplicateOperation);
+    let bitmap = permissioned_operations.fold!(0u32, |acc, o| {
+        assert!(o <= MAX_OPERATION_INDEX, EInvalidOperation);
+        // The shift must follow the range assert: shifting by `o >= 32` aborts with a raw
+        // arithmetic error instead of `EInvalidOperation`.
+        let bit = 1u32 << o;
+        assert!(acc & bit == 0, EDuplicateOperation);
+        acc | bit
+    });
     Policy {
         witness_type: type_name::with_defining_ids<W>(),
-        permissioned_operations_bitmap: create_bitmap(permissioned_operations),
+        permissioned_operations_bitmap: bitmap,
     }
 }
 
@@ -57,10 +63,7 @@ public(package) fun permissionless(): Option<Policy> {
     option::none()
 }
 
-/// Update `policy` to gate `permissioned_operations` behind witness `W`. An empty
-/// `permissioned_operations` clears the policy entirely (every operation becomes permissionless
-/// again). Aborts if any operation index exceeds `MAX_OPERATION_INDEX` or if
-/// `permissioned_operations` contains duplicates.
+/// Update `policy` to gate `permissioned_operations` behind witness `W`.
 public(package) fun set<W>(policy: &mut Option<Policy>, permissioned_operations: vector<u8>) {
     if (permissioned_operations.is_empty()) {
         *policy = permissionless();
@@ -120,23 +123,6 @@ public(package) fun is_allowed<T>(auth: &Auth<T>, operation: u8): bool {
 /// True if `auth` authenticates `owner`.
 public(package) fun is_authenticated<T>(auth: &Auth<T>, owner: address): bool {
     auth.owner == owner
-}
-
-// === Helpers ===
-
-/// Return `true` iff `v` contains no duplicates.
-fun is_unique<T: copy + drop>(v: &vector<T>): bool {
-    let mut seen = vector[];
-    v.all!(|item| {
-        if (seen.contains(item)) false
-        else { seen.push_back(*item); true }
-    })
-}
-
-/// Build a `u32` bitmap with bit `o` set for each `o` in `operations`. Caller must ensure each
-/// `o <= MAX_OPERATION_INDEX`.
-fun create_bitmap(operations: vector<u8>): u32 {
-    operations.fold!(0, |acc, operation| acc | (1 << operation))
 }
 
 /// The bitmap of operations that `policy` leaves permissionless. When `policy` is `None`, every
