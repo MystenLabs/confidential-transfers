@@ -146,7 +146,10 @@ export const TokenKey = new MoveTuple({
 	name: `${$moduleName}::TokenKey<phantom T>`,
 	fields: [bcs.bool()],
 });
-export const PoolKey = new MoveTuple({ name: `${$moduleName}::PoolKey`, fields: [bcs.bool()] });
+export const PoolKey = new MoveTuple({
+	name: `${$moduleName}::PoolKey<phantom T>`,
+	fields: [bcs.bool()],
+});
 export const TokenAccountKey = new MoveTuple({
 	name: `${$moduleName}::TokenAccountKey<phantom T>`,
 	fields: [bcs.bool()],

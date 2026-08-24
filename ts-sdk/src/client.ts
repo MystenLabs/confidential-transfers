@@ -1,13 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { bcs } from '@mysten/sui/bcs';
 import type {
 	Transaction,
 	TransactionObjectArgument,
 	TransactionResult,
 } from '@mysten/sui/transactions';
-import { deriveObjectID, normalizeSuiAddress } from '@mysten/sui/utils';
+import { normalizeSuiAddress } from '@mysten/sui/utils';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 
 import { getBulletproofs, type BatchRangeProver, type Bulletproofs } from './bp.js';
@@ -34,6 +33,7 @@ import {
 	buildRangeProofs,
 	getAccountId,
 	getConfidentialTokenId,
+	getPoolId,
 	getTokenAccountId,
 	point,
 	PROTOCOL_AUDITOR_ELGAMAL,
@@ -134,11 +134,7 @@ export class ContraClient {
 
 	/** Return the shared pool object ID for the given token type. */
 	#getPoolId(tokenType: string): string {
-		return deriveObjectID(
-			this.#getConfidentialTokenId(tokenType),
-			`${this.#packageConfig.packageId}::contra::PoolKey`,
-			bcs.byteVector().serialize([]).toBytes(),
-		);
+		return getPoolId(this.#packageConfig, tokenType);
 	}
 
 	async #getAccountState(address: string, tokenType: string): Promise<AccountState> {
