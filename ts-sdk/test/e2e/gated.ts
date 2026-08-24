@@ -13,9 +13,8 @@
  */
 
 import { join } from 'node:path';
-import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
-import { deriveObjectID, SUI_DENY_LIST_OBJECT_ID } from '@mysten/sui/utils';
+import { SUI_DENY_LIST_OBJECT_ID } from '@mysten/sui/utils';
 import {
 	compileMovePackage,
 	patchMoveToml,
@@ -163,18 +162,11 @@ export class Gated {
 	 * token account via `gated::vault_wrap` (object-bound auth).
 	 */
 	async vaultWrap(vault: string, amount: bigint, signer: Signer): Promise<void> {
-		const pid = this.tokenIssuer.contraPackageId;
 		const coins = await this.client.core.listCoins({
 			owner: signer.address,
 			coinType: this.tokenIssuer.tokenType,
 		});
 		if (coins.objects.length === 0) throw new Error('no coins to wrap');
-
-		const poolId = deriveObjectID(
-			this.tokenIssuer.confidentialTokenId,
-			`${pid}::contra::PoolKey`,
-			bcs.byteVector().serialize([]).toBytes(),
-		);
 
 		const tx = new Transaction();
 		const [coin] = tx.splitCoins(tx.object(coins.objects[0].objectId), [amount]);
@@ -186,7 +178,7 @@ export class Gated {
 				tx.object(this.client.contra.getAccountId(vault)),
 				tx.object(this.tokenIssuer.confidentialTokenId),
 				tx.object(SUI_DENY_LIST_OBJECT_ID),
-				tx.object(poolId),
+				tx.object(this.tokenIssuer.poolId),
 				coin,
 				tx.pure.vector('u8', []),
 			],
@@ -202,18 +194,11 @@ export class Gated {
 	 * `receiver`.
 	 */
 	async wrap(receiver: FreshUser, amount: bigint): Promise<void> {
-		const pid = this.tokenIssuer.contraPackageId;
 		const coins = await this.client.core.listCoins({
 			owner: receiver.address,
 			coinType: this.tokenIssuer.tokenType,
 		});
 		if (coins.objects.length === 0) throw new Error('no coins to wrap');
-
-		const poolId = deriveObjectID(
-			this.tokenIssuer.confidentialTokenId,
-			`${pid}::contra::PoolKey`,
-			bcs.byteVector().serialize([]).toBytes(),
-		);
 
 		const tx = new Transaction();
 		const [coin] = tx.splitCoins(tx.object(coins.objects[0].objectId), [amount]);
@@ -224,7 +209,7 @@ export class Gated {
 				tx.object(this.client.contra.getAccountId(receiver.address)),
 				tx.object(this.tokenIssuer.confidentialTokenId),
 				tx.object(SUI_DENY_LIST_OBJECT_ID),
-				tx.object(poolId),
+				tx.object(this.tokenIssuer.poolId),
 				coin,
 				tx.pure.vector('u8', []),
 			],

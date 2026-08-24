@@ -12,10 +12,8 @@
  * test-only Move module (`move/gated`) published at the start of this suite.
  */
 
-import { bcs } from '@mysten/sui/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
-import { deriveObjectID } from '@mysten/sui/utils';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -357,12 +355,6 @@ describe('permissioned & uncovered flows (devnet)', () => {
 				.proveIsZero(ddhDst, user.tokenAccount.privateKey, pk);
 
 			const pid = contraInit.contraPackageId;
-			const poolId = deriveObjectID(
-				tokenIssuer.confidentialTokenId,
-				`${pid}::contra::PoolKey`,
-				bcs.byteVector().serialize([]).toBytes(),
-			);
-
 			const { batchRangeProver } = await getBulletproofs();
 			const tx = new Transaction();
 			const auth = tx.add(
@@ -392,7 +384,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						account: client.contra.getAccountId(user.address),
 						auth,
 						ct: tokenIssuer.confidentialTokenId,
-						pool: poolId,
+						pool: tokenIssuer.poolId,
 						newBalance: newBalanceEa,
 						newBalancePok,
 						newBalanceRangeProofs: newBalanceRange,

@@ -40,6 +40,8 @@ export class TokenIssuer {
 		readonly tokenType: string,
 		readonly treasuryCapId: string,
 		readonly confidentialTokenId: string,
+		/** The shared `Pool<tokenType>` reserve, created alongside the token. */
+		readonly poolId: string,
 		readonly managementCapId: string,
 		readonly denyCapId: string,
 		readonly contraPackageId: string,
@@ -121,6 +123,7 @@ export class TokenIssuer {
 		regTx.transferObjects([managementCap], address);
 		const created = await signExecuteAndWait(regTx, keypair, client);
 		const confidentialTokenId = findObject(created, 'ConfidentialToken');
+		const poolId = findObject(created, 'Pool');
 		const managementCapId = findObject(created, 'ManagementCap');
 		log('Confidential token registered');
 
@@ -158,6 +161,7 @@ export class TokenIssuer {
 			tokenType,
 			treasuryCapId,
 			confidentialTokenId,
+			poolId,
 			managementCapId,
 			denyCapId,
 			contraPackageId,

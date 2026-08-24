@@ -144,8 +144,9 @@ public struct ConfidentialToken<phantom T> has key {
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
-/// Stored as a derived object of `ConfidentialToken<T>` to reduce contention on non-unwrap
-/// operations.
+/// Stored as a derived object of the `TokenRegistry`, as a sibling of `ConfidentialToken<T>` rather
+/// than a child of it, so the reserve's address does not depend on the token object's identity.
+/// Keeping the pool separate also reduces contention on non-unwrap operations.
 /// Tokens are held at this object's address via Sui address balance to reduce contention on wrap
 /// operations.
 public struct Pool<phantom T> has key {
@@ -195,9 +196,8 @@ public enum TransferBatch<phantom T> {
 /// Key used for `ConfidentialToken` UID derivation.
 public struct TokenKey<phantom T>() has copy, drop, store;
 
-/// Key used for `Pool` UID derivation from `ConfidentialToken`.
-/// There is only one pool per token, so no parameter is needed.
-public struct PoolKey() has copy, drop, store;
+/// Key used for `Pool` UID derivation from the `TokenRegistry`.
+public struct PoolKey<phantom T>() has copy, drop, store;
 
 /// Dynamic field key used for storing `TokenAccount`s in `Account`.
 public struct TokenAccountKey<phantom T>() has copy, drop, store;
@@ -271,8 +271,8 @@ public fun new_confidential_token<T>(
     ctx: &mut TxContext,
 ): (ConfidentialToken<T>, ManagementCap<T>) {
     assert!(!derived_object::exists(&registry.id, TokenKey<T>()), EConfidentialTokenAlreadyExists);
-    let mut id = derived_object::claim(&mut registry.id, TokenKey<T>());
-    let pool_id = derived_object::claim(&mut id, PoolKey());
+    let id = derived_object::claim(&mut registry.id, TokenKey<T>());
+    let pool_id = derived_object::claim(&mut registry.id, PoolKey<T>());
     transfer::share_object(Pool<T> { id: pool_id });
     events::emit_new_confidential_token<T>();
     (

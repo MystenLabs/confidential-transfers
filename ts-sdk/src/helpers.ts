@@ -150,6 +150,16 @@ export function getConfidentialTokenId(
 	);
 }
 
+/** Derive the shared `Pool<tokenType>` object ID. */
+export function getPoolId(packageConfig: ContraPackageConfig, tokenType: string): string {
+	const normalizedType = normalizeStructTag(tokenType);
+	return deriveObjectID(
+		packageConfig.tokenRegistryId,
+		`${packageConfig.packageId}::contra::PoolKey<${normalizedType}>`,
+		bcs.byteVector().serialize([]).toBytes(),
+	);
+}
+
 /** Serialize a ristretto255 point into an on-chain `Element<G>`. */
 export function point(bytes: Uint8Array) {
 	return (tx: Transaction) =>
