@@ -124,8 +124,8 @@ const PERMISSIONED_UNWRAP: u8 = 2;
 
 // === Registries ===
 
-/// Registry of tokens for confidential transactions. Each `ConfidentialToken`'s
-/// UID is derived from this registry.
+/// Registry of tokens for confidential transactions. Each token's `ConfidentialToken` and `Pool`
+/// UIDs are derived from this registry.
 public struct TokenRegistry has key { id: UID }
 
 /// Registry of accounts for confidential transactions. Each `Account`'s UID is
