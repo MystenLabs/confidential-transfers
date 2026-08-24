@@ -9,9 +9,10 @@
 mod checks;
 mod move_types;
 mod sealing;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 #[path = "test/utils.rs"]
-mod test_utils;
+#[doc(hidden)]
+pub mod test_utils;
 pub mod types;
 
 use fastcrypto::ed25519::Ed25519KeyPair;

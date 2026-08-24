@@ -2,77 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::test_utils::{encrypt_amount, transfer_request, TEST_BLINDINGS};
+use crate::test_utils::{
+    encrypt_amount, seal_bytes_to_all, seal_to_all, transfer_request, TEST_BLINDINGS,
+};
 use crate::types::{
     EncryptionPublicKey, EncryptionPublicKeyBytes, SealedRequest, WrappedPayloadKey,
     MAX_ENCLAVE_KEYS, WRAPPED_PAYLOAD_KEY_LENGTH,
 };
 use crate::{EnclaveKeyPair, GuardianError};
-use anyhow::{anyhow, ensure, Result};
-use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
-use chacha20poly1305::ChaCha20Poly1305 as PayloadCipher;
 use fastcrypto::groups::ristretto255::RistrettoScalar;
 use fastcrypto::twisted_elgamal::{PrivateKey, PublicKey};
-use hpke::{OpModeS, Serializable};
 use std::collections::BTreeMap;
 
 const PAYLOAD_TAG_LENGTH: usize = 16;
-
-/// BCS-serialize and encrypt a request once, then wrap its payload key for every enclave.
-fn seal_to_all(enc_pks: &[EncryptionPublicKey], req: &UnsealedRequest) -> Result<SealedRequest> {
-    seal_bytes_to_all(enc_pks, &bcs::to_bytes(req)?)
-}
-
-fn seal_bytes_to_all(enc_pks: &[EncryptionPublicKey], plaintext: &[u8]) -> Result<SealedRequest> {
-    ensure!(!enc_pks.is_empty(), "no enclave keys to seal to");
-    ensure!(
-        enc_pks.len() <= MAX_ENCLAVE_KEYS,
-        "too many enclave keys: {}; maximum is {MAX_ENCLAVE_KEYS}",
-        enc_pks.len()
-    );
-    let mut rng = rand::thread_rng();
-    let payload_key = PayloadCipher::generate_key(&mut rng);
-    let payload_nonce = PayloadCipher::generate_nonce(&mut rng);
-    let encrypted_payload = PayloadCipher::new(&payload_key)
-        .encrypt(
-            &payload_nonce,
-            Payload {
-                msg: plaintext,
-                aad: &[SEALED_REQUEST_VERSION],
-            },
-        )
-        .map_err(|e| anyhow!("payload encryption failed: {e}"))?;
-    let mut wrapped_keys = BTreeMap::new();
-    for pk in enc_pks {
-        let enc_pk = EncryptionPublicKeyBytes::from(pk);
-        let entry = match wrapped_keys.entry(enc_pk) {
-            std::collections::btree_map::Entry::Vacant(entry) => entry,
-            std::collections::btree_map::Entry::Occupied(_) => {
-                return Err(anyhow!("duplicate enclave encryption public key"));
-            }
-        };
-        let (encapped, wrapped_key) =
-            hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256, _>(
-                &OpModeS::Base,
-                pk,
-                HPKE_INFO,
-                payload_key.as_ref(),
-                &[SEALED_REQUEST_VERSION],
-                &mut rng,
-            )
-            .map_err(|e| anyhow!("seal failed: {e}"))?;
-        entry.insert(WrappedPayloadKey {
-            encapped_key: encapped.to_bytes().into(),
-            encrypted_key: wrapped_key.try_into().unwrap(),
-        });
-    }
-    Ok(SealedRequest {
-        version: SEALED_REQUEST_VERSION,
-        payload_nonce: payload_nonce.into(),
-        encrypted_payload,
-        wrapped_keys,
-    })
-}
 
 fn encryption_key(keypair: &EnclaveKeyPair) -> EncryptionPublicKey {
     keypair.enclave_keys().enc_pk.clone()
