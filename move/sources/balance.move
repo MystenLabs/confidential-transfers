@@ -302,6 +302,7 @@ fun try_verify_and_replace_active<T>(
         session_id,
     );
     let mut residual = self.balance_change(&new_balance);
+    // `add_assign_u64` is a no-op for `amount = 0`.
     residual.add_assign_u64(amount);
     self.try_replace_active(&new_balance, &residual, balance_proof, session_id)
 }

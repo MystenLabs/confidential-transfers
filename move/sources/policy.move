@@ -46,8 +46,11 @@ public struct Auth<phantom T> has drop {
 fun new<W>(permissioned_operations: vector<u8>): Policy {
     let bitmap = permissioned_operations.fold!(0u32, |acc, o| {
         assert!(o <= MAX_OPERATION_INDEX, EInvalidOperation);
-        assert!(acc & (1 << o) == 0, EDuplicateOperation);
-        acc | (1 << o)
+        // The shift must follow the range assert: shifting by `o >= 32` aborts with a raw
+        // arithmetic error instead of `EInvalidOperation`.
+        let bit = 1u32 << o;
+        assert!(acc & bit == 0, EDuplicateOperation);
+        acc | bit
     });
     Policy {
         witness_type: type_name::with_defining_ids<W>(),
