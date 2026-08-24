@@ -439,6 +439,16 @@ export class EncryptedAmount {
 		return [this.l0, this.l1, this.l2, this.l3];
 	}
 
+	/** Add two encrypted amounts limb by limb. */
+	add(other: EncryptedAmount): EncryptedAmount {
+		return new EncryptedAmount(
+			this.l0.add(other.l0),
+			this.l1.add(other.l1),
+			this.l2.add(other.l2),
+			this.l3.add(other.l3),
+		);
+	}
+
 	/**
 	 * Combine the four limbs into a single `Ciphertext` encoding the full u64
 	 * value, matching the on-chain `encrypted_amount::collapse`.

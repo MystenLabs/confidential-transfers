@@ -14,6 +14,7 @@ export {
 	computeTableEntries,
 } from './twisted_elgamal.js';
 export { TokenAccount } from './token_account.js';
+export { GuardianApproval, GuardianClient } from './guardian.js';
 export { G, randomScalar, scalarToBytes, pointFromBcs } from './ristretto255.js';
 export type { RistrettoPoint } from './ristretto255.js';
 export { point, getConfidentialTokenId } from './helpers.js';
@@ -44,3 +45,9 @@ export type {
 	UnwrapOptions,
 	WrapOptions,
 } from './types.js';
+export type {
+	GuardianClientOptions,
+	GuardianTransferRecipient,
+	GuardianTransferRequest,
+	GuardianUnwrapRequest,
+} from './guardian.js';

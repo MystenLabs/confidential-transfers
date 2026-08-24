@@ -19,6 +19,7 @@ import {
 	ReceiverDoesNotAcceptDepositsError,
 	TokenAccountDoesNotExistError,
 } from './error.js';
+import type { GuardianApproval } from './guardian.js';
 import {
 	buildAuditorPackageOption,
 	buildDdhProof,
@@ -576,6 +577,8 @@ export class ContraClient {
 		shouldMerge: boolean;
 		newBalance: WellFormedLimb[];
 		balanceProof: DdhNizk;
+		oldEncryptedBalance: EncryptedAmount;
+		oldBalance: bigint;
 	}> {
 		// TODO: consider exposing a function that receives the object from the caller,
 		// so that the caller could fetch it differently.
@@ -592,12 +595,12 @@ export class ContraClient {
 			throw new InsufficientBalanceError(amount, spendable, shouldMerge ? 'total' : 'active');
 		}
 
-		const oldBalance = shouldMerge
+		const oldEncryptedBalance = shouldMerge
 			? balance.ciphertext
-					.collapse()
-					.add(pending.ciphertext.collapse())
-					.add(Ciphertext.trivial(pendingPublicBalance))
-			: balance.ciphertext.collapse();
+					.add(pending.ciphertext)
+					.add(EncryptedAmount.trivial(pendingPublicBalance))
+			: balance.ciphertext;
+		const oldBalanceCiphertext = oldEncryptedBalance.collapse();
 
 		const pk = tokenAccount.publicKey;
 		const ddhDst = tokenAccount.dst(PROTOCOL_DDH);
@@ -613,11 +616,17 @@ export class ContraClient {
 			newBalance[3].ciphertext,
 		)
 			.collapse()
-			.subtract(oldBalance)
+			.subtract(oldBalanceCiphertext)
 			.add(diff)
 			.proveIsZero(ddhDst, tokenAccount.privateKey, pk);
 
-		return { shouldMerge, newBalance, balanceProof };
+		return {
+			shouldMerge,
+			newBalance,
+			balanceProof,
+			oldEncryptedBalance,
+			oldBalance: spendable,
+		};
 	}
 
 	/** Merge all pending deposits (both encrypted and public) into the active balance. */
@@ -1015,12 +1024,14 @@ export class ContraClient {
 		memo,
 		merge = true,
 		auth,
+		guardian,
 	}: TransferOptions): Promise<(tx: Transaction) => TransactionResult> {
 		return this.transferBatch({
 			tokenAccount,
 			recipients: [{ receiverAddress, amount, memo }],
 			merge,
 			auth,
+			guardian,
 		});
 	}
 
@@ -1090,6 +1101,7 @@ export class ContraClient {
 		recipients,
 		merge = true,
 		auth,
+		guardian,
 	}: BatchedTransferOptions): Promise<(tx: Transaction) => TransactionResult> {
 		if (recipients.length === 0 || recipients.length > MAX_BATCH_RECIPIENTS) {
 			throw new InvalidArgumentError(
@@ -1153,12 +1165,34 @@ export class ContraClient {
 			totalBlinding,
 		);
 
-		const { shouldMerge, newBalance, balanceProof } = await this.#createBalanceUpdate(
-			tokenAccount,
-			totalAmount,
-			merge,
-			totalSenderEnc,
+		const { shouldMerge, newBalance, balanceProof, oldEncryptedBalance, oldBalance } =
+			await this.#createBalanceUpdate(tokenAccount, totalAmount, merge, totalSenderEnc);
+		const newEncryptedBalance = new EncryptedAmount(
+			newBalance[0].ciphertext,
+			newBalance[1].ciphertext,
+			newBalance[2].ciphertext,
+			newBalance[3].ciphertext,
 		);
+		const guardianApproval = guardian
+			? await guardian.approveTransfer({
+					senderPk,
+					oldEncryptedBalance,
+					newEncryptedBalance,
+					recipients: prepared.map(({ receiverPk, encAmountReceiver, recipient }) => ({
+						receiverPk,
+						encryptedAmount: new EncryptedAmount(
+							encAmountReceiver[0].ciphertext,
+							encAmountReceiver[1].ciphertext,
+							encAmountReceiver[2].ciphertext,
+							encAmountReceiver[3].ciphertext,
+						),
+						amount: recipient.amount,
+						blinding: collapseBlindings(encAmountReceiver),
+					})),
+					senderPrivateKey: tokenAccount.privateKey,
+					oldBalance,
+				})
+			: undefined;
 
 		const { batchRangeProver } = await this.#getBulletproofs();
 
@@ -1233,6 +1267,12 @@ export class ContraClient {
 						seedPoint: point(randomness.seedPoint.toBytes()),
 						balanceProof: buildDdhProof(pid, balanceProof),
 						auditorPackage: buildAuditorPackageOption(pid, auditorData),
+						approval: buildApprovalOption(
+							pid,
+							tokenType,
+							this.#getConfidentialTokenId(tokenType),
+							guardianApproval,
+						),
 					},
 				}),
 			);
@@ -1309,20 +1349,32 @@ export class ContraClient {
 		amount,
 		merge = true,
 		auth,
+		guardian,
 	}: UnwrapOptions): Promise<(tx: Transaction) => TransactionResult> {
 		if (amount <= 0n) {
 			throw new InvalidArgumentError(`Unwrap amount must be positive, got ${amount}.`);
 		}
 		const { address, tokenType } = tokenAccount;
 
-		const { batchRangeProver } = await this.#getBulletproofs();
-
-		const { shouldMerge, newBalance, balanceProof } = await this.#createBalanceUpdate(
-			tokenAccount,
-			amount,
-			merge,
-			Ciphertext.trivial(amount),
+		const { shouldMerge, newBalance, balanceProof, oldEncryptedBalance, oldBalance } =
+			await this.#createBalanceUpdate(tokenAccount, amount, merge, Ciphertext.trivial(amount));
+		const newEncryptedBalance = new EncryptedAmount(
+			newBalance[0].ciphertext,
+			newBalance[1].ciphertext,
+			newBalance[2].ciphertext,
+			newBalance[3].ciphertext,
 		);
+		const guardianApproval = guardian
+			? await guardian.approveUnwrap({
+					senderPk: tokenAccount.publicKey,
+					oldEncryptedBalance,
+					newEncryptedBalance,
+					amount,
+					senderPrivateKey: tokenAccount.privateKey,
+					oldBalance,
+				})
+			: undefined;
+		const { batchRangeProver } = await this.#getBulletproofs();
 
 		return (tx: Transaction): TransactionResult => {
 			const authArg = auth ? auth(tx) : this.#asSenderAuth(tx, tokenType);
@@ -1357,6 +1409,12 @@ export class ContraClient {
 						newBalanceRangeProofs: newBalanceRange,
 						amount,
 						balanceProof: buildDdhProof(pid, balanceProof),
+						approval: buildApprovalOption(
+							pid,
+							tokenType,
+							this.#getConfidentialTokenId(tokenType),
+							guardianApproval,
+						),
 					},
 				}),
 			);
@@ -1442,6 +1500,23 @@ function buildAuditorData(
 		perLimb.map((l) => l.instance),
 	);
 	return { handles, proof };
+}
+
+/** Build the optional authority approval consumed by a protected operation. */
+function buildApprovalOption(
+	contraPackageId: string,
+	tokenType: string,
+	confidentialTokenId: string,
+	approval?: GuardianApproval,
+) {
+	if (approval) {
+		return (tx: Transaction) => approval.addToTransaction(tx, tokenType, confidentialTokenId);
+	}
+	return (tx: Transaction) =>
+		tx.moveCall({
+			target: '0x1::option::none',
+			typeArguments: [`${contraPackageId}::authority::Approval<${tokenType}>`],
+		});
 }
 
 /** Build a `vector<u8>` memo argument; an absent or empty string encodes as an empty vector. */

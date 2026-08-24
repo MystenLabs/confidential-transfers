@@ -33,8 +33,11 @@
 	"packageManager": "pnpm@10.10.0",
 	"dependencies": {
 		"@contra/bulletproofs-wasm": "file:../utils/bulletproofs-wasm",
+		"@hpke/chacha20poly1305": "^1.8.0",
+		"@hpke/core": "^1.9.0",
 		"@mysten/bcs": "^2.1.0",
 		"@mysten/sui": "^2.24.0",
+		"@noble/ciphers": "^2.3.0",
 		"@noble/curves": "^2.3.0",
 		"@noble/hashes": "^2.3.0"
 	},

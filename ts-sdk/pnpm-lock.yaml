@@ -11,12 +11,21 @@ importers:
       '@contra/bulletproofs-wasm':
         specifier: file:../utils/bulletproofs-wasm
         version: file:../utils/bulletproofs-wasm
+      '@hpke/chacha20poly1305':
+        specifier: ^1.8.0
+        version: 1.8.0
+      '@hpke/core':
+        specifier: ^1.9.0
+        version: 1.9.0
       '@mysten/bcs':
         specifier: ^2.1.0
         version: 2.1.0
       '@mysten/sui':
         specifier: ^2.24.0
         version: 2.24.0(typescript@5.9.3)
+      '@noble/ciphers':
+        specifier: ^2.3.0
+        version: 2.3.0
       '@noble/curves':
         specifier: ^2.3.0
         version: 2.3.0
@@ -326,6 +335,18 @@ packages:
     peerDependencies:
       graphql: ^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0 || ^17.0.0
 
+  '@hpke/chacha20poly1305@1.8.0':
+    resolution: {integrity: sha512-FcBfAQ+Y99vMNJP2yrZ9wpL8V0GOwp1+zMyzvc6alasrBygfFjFm1yeUtyADJCu/27C3Lm5mJzx6u7pwg+cX5w==}
+    engines: {node: '>=16.0.0'}
+
+  '@hpke/common@1.10.1':
+    resolution: {integrity: sha512-moJwhmtLtuxiUzzNp1jpfBfx8yefKoO9D/RCR9dmwrnc7qjJqId1rEtQz+lSlU5cabX8daToMSx/7HayXOiaFw==}
+    engines: {node: '>=16.0.0'}
+
+  '@hpke/core@1.9.0':
+    resolution: {integrity: sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q==}
+    engines: {node: '>=16.0.0'}
+
   '@ianvs/prettier-plugin-sort-imports@4.7.1':
     resolution: {integrity: sha512-jmTNYGlg95tlsoG3JLCcuC4BrFELJtLirLAkQW/71lXSyOhVt/Xj7xWbbGcuVbNq1gwWgSyMrPjJc9Z30hynVw==}
     peerDependencies:
@@ -383,6 +404,10 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
+
+  '@noble/ciphers@2.3.0':
+    resolution: {integrity: sha512-Clu/xdfgVTf9o7ngLOURaxePwR0j8sjclKEtVij10/jGulwFsPWCvvRgG/XjUVf8Nei+jLG6uwyXzUTGY1DQrw==}
+    engines: {node: '>= 20.19.0'}
 
   '@noble/curves@2.3.0':
     resolution: {integrity: sha512-v7cY+4oWYPQszRj6ZFGzTVL7uP2TaLo1xMhWHzYC5wj0ZhOXQ5x+sBre8rF3hi8cAoi0bh1qXoovoOkdFtvqEg==}
@@ -1322,6 +1347,16 @@ snapshots:
     dependencies:
       graphql: 16.14.2
 
+  '@hpke/chacha20poly1305@1.8.0':
+    dependencies:
+      '@hpke/common': 1.10.1
+
+  '@hpke/common@1.10.1': {}
+
+  '@hpke/core@1.9.0':
+    dependencies:
+      '@hpke/common': 1.10.1
+
   '@ianvs/prettier-plugin-sort-imports@4.7.1(prettier@3.9.6)':
     dependencies:
       '@babel/generator': 7.29.8
@@ -1403,6 +1438,8 @@ snapshots:
       '@emnapi/runtime': 1.10.0
       '@tybys/wasm-util': 0.10.3
     optional: true
+
+  '@noble/ciphers@2.3.0': {}
 
   '@noble/curves@2.3.0':
     dependencies:
@@ -1917,8 +1954,11 @@ snapshots:
   ts-sdk@file:(typescript@5.9.3):
     dependencies:
       '@contra/bulletproofs-wasm': file:../utils/bulletproofs-wasm
+      '@hpke/chacha20poly1305': 1.8.0
+      '@hpke/core': 1.9.0
       '@mysten/bcs': 2.1.0
       '@mysten/sui': 2.24.0(typescript@5.9.3)
+      '@noble/ciphers': 2.3.0
       '@noble/curves': 2.3.0
       '@noble/hashes': 2.3.0
     transitivePeerDependencies:

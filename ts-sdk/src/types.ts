@@ -4,6 +4,7 @@
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
+import type { GuardianClient } from './guardian.js';
 import type { RistrettoPoint } from './ristretto255.js';
 import type { TokenAccount } from './token_account.js';
 import type { DiscreteLogTable, EncryptedAmount, PrivateKey } from './twisted_elgamal.js';
@@ -165,6 +166,8 @@ export interface TransferOptions {
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
+	/** Guardian used to approve this operation when the token has an authority enabled. */
+	guardian?: GuardianClient;
 }
 
 /** A single (receiver, amount, memo) entry in a batched transfer. */
@@ -200,6 +203,8 @@ export interface BatchedTransferOptions {
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
+	/** Guardian used to approve this operation when the token has an authority enabled. */
+	guardian?: GuardianClient;
 }
 
 /** Arguments to `ContraClient.unwrap`. */
@@ -219,6 +224,8 @@ export interface UnwrapOptions {
 	 * `as_sender` auth.
 	 */
 	auth?: AuthThunk;
+	/** Guardian used to approve this operation when the token has an authority enabled. */
+	guardian?: GuardianClient;
 }
 
 /** Arguments to `ContraClient.updateBalance`. */
