@@ -20,6 +20,7 @@ const $moduleName = '@local-pkg/contra::range_proof';
 export const RangeProofs = new MoveStruct({
 	name: `${$moduleName}::RangeProofs`,
 	fields: {
+		version: bcs.u8(),
 		proofs: bcs.vector(bcs.vector(bcs.u8())),
 	},
 });
@@ -31,8 +32,9 @@ export interface NewRangeProofsOptions {
 	arguments: NewRangeProofsArguments | [proofs: RawTransactionArgument<Array<Array<number>>>];
 }
 /**
- * Wrap `proofs` into `RangeProofs`; rejects an empty set so the range check can't
- * be skipped on chain.
+ * Wrap `proofs` into a `RangeProofs` to be checked as aggregated 16-bit
+ * Bulletproofs; rejects an empty set, which would verify vacuously over an empty
+ * batch.
  */
 export function newRangeProofs(options: NewRangeProofsOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
