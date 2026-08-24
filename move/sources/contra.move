@@ -237,9 +237,7 @@ fun init(ctx: &mut TxContext) {
 /// permissionless.
 public fun authorize_as_sender<T>(ct: &ConfidentialToken<T>, ctx: &TxContext): Auth<T> {
     match (&ct.inner) {
-        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
-            policy::as_sender<T>(token_policy, ctx)
-        },
+        ConfidentialTokenInner::V1 { policy, .. } => policy::as_sender<T>(policy, ctx),
     }
 }
 
@@ -253,8 +251,8 @@ public fun authorize_with_witness<T, W: drop>(
     witness: W,
 ): Auth<T> {
     match (&ct.inner) {
-        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
-            policy::with_witness<T, W>(token_policy, operation, owner, witness)
+        ConfidentialTokenInner::V1 { policy, .. } => {
+            policy::with_witness<T, W>(policy, operation, owner, witness)
         },
     }
 }
@@ -264,9 +262,7 @@ public fun authorize_with_witness<T, W: drop>(
 /// object self-authenticates as its own `owner` (the address derived from the UID).
 public fun authorize_as_object<T>(ct: &ConfidentialToken<T>, uid: &mut UID): Auth<T> {
     match (&ct.inner) {
-        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
-            policy::as_object<T>(token_policy, uid)
-        },
+        ConfidentialTokenInner::V1 { policy, .. } => policy::as_object<T>(policy, uid),
     }
 }
 
@@ -351,8 +347,8 @@ public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
 public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
     assert!(account.default_pk.is_some(), EDefaultPkNotSet);
     match (&ct.inner) {
-        ConfidentialTokenInner::V1 { policy: token_policy, .. } => assert!(
-            policy::is_permissionless(token_policy, PERMISSIONED_REGISTER),
+        ConfidentialTokenInner::V1 { policy, .. } => assert!(
+            policy::is_permissionless(policy, PERMISSIONED_REGISTER),
             ERegistrationNotPermissionless,
         ),
     };
@@ -938,8 +934,8 @@ public fun set_policy<T, W>(
     permissioned_operations: vector<u8>,
 ) {
     match (&mut ct.inner) {
-        ConfidentialTokenInner::V1 { policy: token_policy, .. } => {
-            policy::set<W>(token_policy, permissioned_operations)
+        ConfidentialTokenInner::V1 { policy, .. } => {
+            policy::set<W>(policy, permissioned_operations)
         },
     };
     events::emit_policy_update<T, W>(permissioned_operations);
