@@ -143,10 +143,10 @@ public struct ConfidentialToken<phantom T> has key {
 /// Versioned state of a `ConfidentialToken<T>`. Each variant holds its fields in a struct, so a
 /// flow reads them through one `inner()` call rather than a getter per field.
 public enum ConfidentialTokenInner<phantom T> has drop, store {
-    V1(ConfidentialTokenInnerV1),
+    V1(ConfidentialTokenV1),
 }
 
-public struct ConfidentialTokenInnerV1 has drop, store {
+public struct ConfidentialTokenV1 has drop, store {
     is_active: bool, // Global freeze capability.
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
@@ -170,10 +170,10 @@ public struct Account has key {
 
 /// Versioned state of an `Account`. See `ConfidentialTokenInner`.
 public enum AccountInner has drop, store {
-    V1(AccountInnerV1),
+    V1(AccountV1),
 }
 
-public struct AccountInnerV1 has drop, store {
+public struct AccountV1 has drop, store {
     owner: address,
     default_pk: Option<PublicKey>,
 }
@@ -302,7 +302,7 @@ public fun new_confidential_token<T>(
     (
         ConfidentialToken<T> {
             id,
-            inner: ConfidentialTokenInner::V1(ConfidentialTokenInnerV1 {
+            inner: ConfidentialTokenInner::V1(ConfidentialTokenV1 {
                 is_active: true,
                 freeze_admins: vec_set::empty(),
                 policy: policy::permissionless(),
@@ -329,7 +329,7 @@ public use fun new_account as AccountRegistry.new;
 public fun new_account(registry: &mut AccountRegistry, owner: address): Account {
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    Account { id, inner: AccountInner::V1(AccountInnerV1 { owner, default_pk: option::none() }) }
+    Account { id, inner: AccountInner::V1(AccountV1 { owner, default_pk: option::none() }) }
 }
 
 /// Share the account object.
@@ -943,25 +943,25 @@ public fun update_auditors<T>(
 // === Helpers ===
 
 /// The current variant's fields. A later variant adds an arm here and nowhere else.
-fun token_inner<T>(ct: &ConfidentialToken<T>): &ConfidentialTokenInnerV1 {
+fun token_inner<T>(ct: &ConfidentialToken<T>): &ConfidentialTokenV1 {
     match (&ct.inner) {
         ConfidentialTokenInner::V1(inner) => inner,
     }
 }
 
-fun token_inner_mut<T>(ct: &mut ConfidentialToken<T>): &mut ConfidentialTokenInnerV1 {
+fun token_inner_mut<T>(ct: &mut ConfidentialToken<T>): &mut ConfidentialTokenV1 {
     match (&mut ct.inner) {
         ConfidentialTokenInner::V1(inner) => inner,
     }
 }
 
-fun account_inner(account: &Account): &AccountInnerV1 {
+fun account_inner(account: &Account): &AccountV1 {
     match (&account.inner) {
         AccountInner::V1(inner) => inner,
     }
 }
 
-fun account_inner_mut(account: &mut Account): &mut AccountInnerV1 {
+fun account_inner_mut(account: &mut Account): &mut AccountV1 {
     match (&mut account.inner) {
         AccountInner::V1(inner) => inner,
     }

@@ -109,8 +109,8 @@ export const AccountRegistry = new MoveStruct({
 		id: bcs.Address,
 	},
 });
-export const ConfidentialTokenInnerV1 = new MoveStruct({
-	name: `${$moduleName}::ConfidentialTokenInnerV1`,
+export const ConfidentialTokenV1 = new MoveStruct({
+	name: `${$moduleName}::ConfidentialTokenV1`,
 	fields: {
 		is_active: bcs.bool(),
 		freeze_admins: vec_set.VecSet(bcs.Address),
@@ -126,7 +126,7 @@ export const ConfidentialTokenInnerV1 = new MoveStruct({
 export const ConfidentialTokenInner = new MoveEnum({
 	name: `${$moduleName}::ConfidentialTokenInner<phantom T>`,
 	fields: {
-		V1: ConfidentialTokenInnerV1,
+		V1: ConfidentialTokenV1,
 	},
 });
 export const ConfidentialToken = new MoveStruct({
@@ -142,8 +142,8 @@ export const Pool = new MoveStruct({
 		id: bcs.Address,
 	},
 });
-export const AccountInnerV1 = new MoveStruct({
-	name: `${$moduleName}::AccountInnerV1`,
+export const AccountV1 = new MoveStruct({
+	name: `${$moduleName}::AccountV1`,
 	fields: {
 		owner: bcs.Address,
 		default_pk: bcs.option(twisted_elgamal.PublicKey),
@@ -153,7 +153,7 @@ export const AccountInnerV1 = new MoveStruct({
 export const AccountInner = new MoveEnum({
 	name: `${$moduleName}::AccountInner`,
 	fields: {
-		V1: AccountInnerV1,
+		V1: AccountV1,
 	},
 });
 export const Account = new MoveStruct({
