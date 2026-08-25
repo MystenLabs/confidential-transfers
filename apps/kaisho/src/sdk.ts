@@ -267,7 +267,7 @@ export async function fetchFreezeAdmins(
 	if (object instanceof Error) {
 		return { admins: [], isActive: null };
 	}
-	const fields = contraContracts.ConfidentialToken.parse(object.content);
+	const fields = contraContracts.ConfidentialToken.parse(object.content).inner.V1!;
 	return {
 		admins: fields.freeze_admins.contents.map((a) => a.toLowerCase()),
 		isActive: fields.is_active,

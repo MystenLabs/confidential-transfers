@@ -109,14 +109,31 @@ export const AccountRegistry = new MoveStruct({
 		id: bcs.Address,
 	},
 });
-export const ConfidentialToken = new MoveStruct({
-	name: `${$moduleName}::ConfidentialToken<phantom T>`,
+export const ConfidentialTokenV1 = new MoveStruct({
+	name: `${$moduleName}::ConfidentialTokenV1`,
 	fields: {
-		id: bcs.Address,
 		is_active: bcs.bool(),
 		freeze_admins: vec_set.VecSet(bcs.Address),
 		policy: bcs.option(policy.Policy),
 		auditors: auditors.Auditors,
+	},
+});
+/**
+ * Versioned state of a `ConfidentialToken<T>`. Each variant holds its fields in a
+ * struct, so a flow reads them through one `inner()` call rather than a getter per
+ * field.
+ */
+export const ConfidentialTokenInner = new MoveEnum({
+	name: `${$moduleName}::ConfidentialTokenInner<phantom T>`,
+	fields: {
+		V1: ConfidentialTokenV1,
+	},
+});
+export const ConfidentialToken = new MoveStruct({
+	name: `${$moduleName}::ConfidentialToken<phantom T>`,
+	fields: {
+		id: bcs.Address,
+		inner: ConfidentialTokenInner,
 	},
 });
 export const Pool = new MoveStruct({
@@ -125,12 +142,25 @@ export const Pool = new MoveStruct({
 		id: bcs.Address,
 	},
 });
+export const AccountV1 = new MoveStruct({
+	name: `${$moduleName}::AccountV1`,
+	fields: {
+		owner: bcs.Address,
+		default_pk: bcs.option(twisted_elgamal.PublicKey),
+	},
+});
+/** Versioned state of an `Account`. See `ConfidentialTokenInner`. */
+export const AccountInner = new MoveEnum({
+	name: `${$moduleName}::AccountInner`,
+	fields: {
+		V1: AccountV1,
+	},
+});
 export const Account = new MoveStruct({
 	name: `${$moduleName}::Account`,
 	fields: {
 		id: bcs.Address,
-		owner: bcs.Address,
-		default_pk: bcs.option(twisted_elgamal.PublicKey),
+		inner: AccountInner,
 	},
 });
 export const TokenAccount = new MoveStruct({
@@ -1321,8 +1351,8 @@ export interface AccountFreezeOptions {
 }
 /**
  * Freeze the given account for token `T`. A frozen account cannot transfer,
- * receive, wrap, or unwrap until unfrozen. Only addresses in `ct.freeze_admins`
- * may call this.
+ * receive, wrap, or unwrap until unfrozen. Only addresses in the token's
+ * `freeze_admins` may call this.
  */
 export function accountFreeze(options: AccountFreezeOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';
