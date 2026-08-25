@@ -1,0 +1,26 @@
+[package]
+name = "contra-guardian-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bcs.workspace = true
+fastcrypto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+prost-types = "0.14"
+serde_yaml = "0.9"
+sui-crypto = { version = "0.3.1", features = ["bech32", "ed25519", "secp256k1", "secp256r1"] }
+sui-rpc = "0.3.2"
+sui-sdk-types = { version = "0.3.2", features = ["serde"] }
+sui-transaction-builder = "0.3.2"
+
+[[bin]]
+name = "contra-guardian-cli"
+path = "src/main.rs"
