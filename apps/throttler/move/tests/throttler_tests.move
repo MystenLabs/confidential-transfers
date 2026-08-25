@@ -92,7 +92,7 @@ fun do_throttled_unwrap(
         throttled_pool,
         new_balance,
         new_balance_pok,
-        range_proof::assume_range_checked(),
+        range_proof::new_range_proof_for_testing(),
         amount,
         &balance_proof,
         clock,

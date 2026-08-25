@@ -232,7 +232,7 @@ fun test_simple_flow() {
         &mut pool,
         new_balance,
         new_balance_consistency_proof,
-        range_proof::assume_range_checked(),
+        range_proof::new_range_proof_for_testing(),
         taken_amount,
         &sum_proof,
         scenario.ctx(),
@@ -394,7 +394,7 @@ fun test_batched_transfer() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            range_proof::assume_range_checked(),
+            range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
             option::none(),
@@ -562,7 +562,7 @@ fun test_batched_transfer_with_auditor() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            range_proof::assume_range_checked(),
+            range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
@@ -735,7 +735,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            range_proof::assume_range_checked(),
+            range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
@@ -897,7 +897,7 @@ fun test_batched_transfer_auditor_wrong_handle_count() {
             new_balance_ea,
             *total_sender.decryption_handle(),
             sender_consistency_proof,
-            range_proof::assume_range_checked(),
+            range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
@@ -1120,7 +1120,7 @@ fun test_unwrap_zero_amount_aborts() {
         &mut pool,
         zero_balance,
         nizk::default_elgamal_proof(),
-        range_proof::assume_range_checked(),
+        range_proof::new_range_proof_for_testing(),
         0,
         &nizk::default_ddh_proof(),
         scenario.ctx(),
@@ -1237,7 +1237,7 @@ fun transfer<T>(
             new_balance,
             total_sender_handle,
             sender_consistency_proof,
-            range_proof::assume_range_checked(),
+            range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
             option::none(),
@@ -2401,7 +2401,7 @@ fun test_account_freeze_blocks_unwrap() {
         &mut pool,
         new_balance,
         new_balance_consistency_proof,
-        range_proof::assume_range_checked(),
+        range_proof::new_range_proof_for_testing(),
         taken_amount,
         &sum_proof,
         scenario.ctx(),
@@ -2441,7 +2441,7 @@ fun verify_encrypted_amount_dst_match_succeeds() {
     let verified = encrypted_amount::verify_encrypted_amount(ea, public_key(pk), &proof, dst);
     encrypted_amount::verify_in_range(
         vector[verified],
-        range_proof::assume_range_checked(),
+        range_proof::new_range_proof_for_testing(),
         b"range-proof-dst-21byt",
     );
 }
@@ -2482,9 +2482,9 @@ fun verify_encrypted_amount_dst_mismatch_fails() {
     encrypted_amount::verify_encrypted_amount(ea, public_key(pk), &proof, verifier_dst);
 }
 
-/// The production `RangeProofs` constructor rejects an empty proof set, so a batch verified on chain
-/// can never skip its range check (only the `#[test_only]` `assume_range_checked` produces an empty
-/// set).
+/// The production `RangeProofs` constructor rejects an empty proof set: over an empty batch the
+/// per-chunk check would range over nothing and report success (only the `#[test_only]`
+/// `new_range_proof_for_testing` skips verification).
 #[test, expected_failure(abort_code = ::contra::range_proof::ERangeProofRequired)]
 fun empty_range_proofs_rejected() {
     range_proof::new_range_proofs(vector[]);
