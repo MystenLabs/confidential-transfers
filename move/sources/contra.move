@@ -135,10 +135,6 @@ public struct AccountRegistry has key { id: UID }
 // === Main Types ===
 
 /// The representation of a confidential token.
-///
-/// Sui objects must be structs, so the token's state lives in the versioned `ConfidentialTokenInner`
-/// enum behind this wrapper: a package upgrade can add or remove fields by introducing a new
-/// variant without changing the object's type.
 public struct ConfidentialToken<phantom T> has key {
     id: UID,
     inner: ConfidentialTokenInner<T>,
@@ -164,10 +160,6 @@ public struct Pool<phantom T> has key {
 }
 
 /// Base account that stores token accounts as dynamic fields.
-///
-/// Like `ConfidentialToken<T>`, the mutable state lives in a versioned enum behind the object
-/// wrapper. Reads go through the `owner` / `default_pk` accessors rather than matching inline, so a
-/// later variant touches those few functions instead of every call site.
 public struct Account has key {
     id: UID,
     inner: AccountInner,
