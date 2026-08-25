@@ -1059,7 +1059,7 @@ public(package) fun accepts_deposits<T>(account: &Account): bool {
 }
 
 #[test_only]
-public(package) fun default_pk_element(account: &Account): Option<Element<G>> {
+public(package) fun default_pk_as_element(account: &Account): Option<Element<G>> {
     account.inner().default_pk.map!(|pk| *pk.as_element())
 }
 
