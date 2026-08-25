@@ -109,19 +109,24 @@ export const AccountRegistry = new MoveStruct({
 		id: bcs.Address,
 	},
 });
-/** Versioned state of a `ConfidentialToken<T>`. */
+export const ConfidentialTokenInnerV1 = new MoveStruct({
+	name: `${$moduleName}::ConfidentialTokenInnerV1`,
+	fields: {
+		is_active: bcs.bool(),
+		freeze_admins: vec_set.VecSet(bcs.Address),
+		policy: bcs.option(policy.Policy),
+		auditors: auditors.Auditors,
+	},
+});
+/**
+ * Versioned state of a `ConfidentialToken<T>`. Each variant holds its fields in a
+ * struct, so a flow reads them through one `inner()` call rather than a getter per
+ * field.
+ */
 export const ConfidentialTokenInner = new MoveEnum({
 	name: `${$moduleName}::ConfidentialTokenInner<phantom T>`,
 	fields: {
-		V1: new MoveStruct({
-			name: `ConfidentialTokenInner.V1`,
-			fields: {
-				is_active: bcs.bool(),
-				freeze_admins: vec_set.VecSet(bcs.Address),
-				policy: bcs.option(policy.Policy),
-				auditors: auditors.Auditors,
-			},
-		}),
+		V1: ConfidentialTokenInnerV1,
 	},
 });
 export const ConfidentialToken = new MoveStruct({
@@ -137,17 +142,18 @@ export const Pool = new MoveStruct({
 		id: bcs.Address,
 	},
 });
-/** Versioned state of an `Account`. */
+export const AccountInnerV1 = new MoveStruct({
+	name: `${$moduleName}::AccountInnerV1`,
+	fields: {
+		owner: bcs.Address,
+		default_pk: bcs.option(twisted_elgamal.PublicKey),
+	},
+});
+/** Versioned state of an `Account`. See `ConfidentialTokenInner`. */
 export const AccountInner = new MoveEnum({
 	name: `${$moduleName}::AccountInner`,
 	fields: {
-		V1: new MoveStruct({
-			name: `AccountInner.V1`,
-			fields: {
-				owner: bcs.Address,
-				default_pk: bcs.option(twisted_elgamal.PublicKey),
-			},
-		}),
+		V1: AccountInnerV1,
 	},
 });
 export const Account = new MoveStruct({
