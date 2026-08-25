@@ -457,11 +457,10 @@ public fun try_rekey_token_account_and_unpause<T>(
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
-    let owner = account.owner();
     if (account.rekey_token_account_internal<T>(auth, new_pk, new_handles, rekey_proof)) {
         account[TokenAccountKey<T>()].accepts_deposits = true;
     } else {
-        events::emit_try_token_rekey_failed<T>(owner);
+        events::emit_try_token_rekey_failed<T>(account.owner());
     };
 }
 
@@ -850,9 +849,8 @@ public fun set_balance_by_issuer<T>(
     account: &mut Account,
     new_balance: EncryptedAmount,
 ) {
-    let owner = account.owner();
     account[TokenAccountKey<T>()].balance.overwrite_unchecked(new_balance);
-    events::emit_set_balance_by_issuer<T>(owner, new_balance);
+    events::emit_set_balance_by_issuer<T>(account.owner(), new_balance);
 }
 
 /// Allow the given address to freeze the token globally or freeze individual accounts
@@ -897,17 +895,15 @@ public fun global_unfreeze<T>(ct: &mut ConfidentialToken<T>, _cap: &TreasuryCap<
 public fun account_freeze<T>(ct: &ConfidentialToken<T>, account: &mut Account, ctx: &TxContext) {
     let admin = ctx.sender();
     assert!(ct.inner().freeze_admins.contains(&admin), EAuthorizationError);
-    let owner = account.owner();
     account[TokenAccountKey<T>()].is_frozen = true;
-    events::emit_account_freeze<T>(admin, owner);
+    events::emit_account_freeze<T>(admin, account.owner());
 }
 
 /// Unfreeze the given account for token `T`. Only the token issuer (holder of `&TreasuryCap<T>`)
 /// may call this.
 public fun account_unfreeze<T>(_cap: &TreasuryCap<T>, account: &mut Account) {
-    let owner = account.owner();
     account[TokenAccountKey<T>()].is_frozen = false;
-    events::emit_account_unfreeze<T>(owner);
+    events::emit_account_unfreeze<T>(account.owner());
 }
 
 /// Set a policy for the confidential token.
