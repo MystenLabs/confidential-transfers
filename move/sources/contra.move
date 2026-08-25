@@ -472,9 +472,9 @@ fun rekey_token_account_internal<T>(
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ): bool {
-    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
     let owner = account.owner();
+    assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
+    assert!(auth.is_authenticated(owner), EAuthorizationError);
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
     if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
@@ -501,9 +501,9 @@ public fun wrap<T>(
     assert!(coin.value() > 0, EZeroAmount);
     assert!(auth.is_allowed(PERMISSIONED_WRAP), EAuthorizationError);
     ct.assert_token_active(deny_list);
-    assert!(!is_receiver_denied<T>(deny_list, receiver.owner()), ETransferDenied);
-    assert!(receiver.has_token<T>(), EReceiverNotRegistered);
     let owner = receiver.owner();
+    assert!(!is_receiver_denied<T>(deny_list, owner), ETransferDenied);
+    assert!(receiver.has_token<T>(), EReceiverNotRegistered);
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen && acc.accepts_deposits, ETransferDenied);
     events::emit_wrap<T>(owner, coin.value(), memo);
@@ -546,12 +546,12 @@ public fun batched_transfer<T>(
     auditor_package: Option<AuditorPackage>,
 ): TransferBatch<T> {
     ct.assert_token_active(deny_list);
-    assert!(auth.is_authenticated(sender.owner()), EAuthorizationError);
-    assert!(!is_sender_denied<T>(deny_list, sender.owner()), ETransferDenied);
+    let sender_addr = sender.owner();
+    assert!(auth.is_authenticated(sender_addr), EAuthorizationError);
+    assert!(!is_sender_denied<T>(deny_list, sender_addr), ETransferDenied);
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
 
-    let sender_addr = sender.owner();
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
 
@@ -685,8 +685,8 @@ public fun finalize<T>(batch: TransferBatch<T>) {
 /// To prevent overflows, the number of additions done with the active balance is limited,
 /// including the number of additions done with the pending deposits.
 public fun merge<T>(account: &mut Account, auth: &Auth<T>) {
-    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
     let owner = account.owner();
+    assert!(auth.is_authenticated(owner), EAuthorizationError);
     account[TokenAccountKey<T>()].balance.merge_deposits();
     events::emit_merge_deposits<T>(owner);
 }
@@ -701,8 +701,8 @@ public fun update_active_balance<T>(
     new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
 ) {
-    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
     let owner = account.owner();
+    assert!(auth.is_authenticated(owner), EAuthorizationError);
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
     assert!(
@@ -804,10 +804,10 @@ fun try_unwrap_internal<T>(
 ): (bool, Coin<T>) {
     assert!(amount > 0, EZeroAmount);
     assert!(auth.is_allowed(PERMISSIONED_UNWRAP), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
-    ct.assert_token_active(deny_list);
-    assert!(!is_sender_denied<T>(deny_list, account.owner()), ETransferDenied);
     let owner = account.owner();
+    assert!(auth.is_authenticated(owner), EAuthorizationError);
+    ct.assert_token_active(deny_list);
+    assert!(!is_sender_denied<T>(deny_list, owner), ETransferDenied);
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
     let withdrawn = account
