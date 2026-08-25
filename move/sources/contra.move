@@ -823,19 +823,6 @@ public fun owner(account: &Account): address {
     }
 }
 
-/// The account's optional default key. Copied out — `PublicKey` is `copy`.
-fun default_pk(account: &Account): Option<PublicKey> {
-    match (&account.inner) {
-        AccountInner::V1 { default_pk, .. } => *default_pk,
-    }
-}
-
-fun default_pk_mut(account: &mut Account): &mut Option<PublicKey> {
-    match (&mut account.inner) {
-        AccountInner::V1 { default_pk, .. } => default_pk,
-    }
-}
-
 // === Admin ===
 
 /// A function for the issuer to set the balance of an account directly.
@@ -942,8 +929,8 @@ public fun update_auditors<T>(
 
 // === Helpers ===
 
-/// Accessors for the current `ConfidentialTokenInner` variant. Reads go through these rather than
-/// matching inline, so a later variant touches only this block.
+/// Accessors for the current `ConfidentialTokenInner` and `AccountInner` variants. Reads go
+/// through these rather than matching inline, so a later variant touches only this block.
 fun is_active<T>(ct: &ConfidentialToken<T>): bool {
     match (&ct.inner) {
         ConfidentialTokenInner::V1 { is_active, .. } => *is_active,
@@ -989,6 +976,19 @@ fun auditors<T>(ct: &ConfidentialToken<T>): &Auditors {
 fun auditors_mut<T>(ct: &mut ConfidentialToken<T>): &mut Auditors {
     match (&mut ct.inner) {
         ConfidentialTokenInner::V1 { auditors, .. } => auditors,
+    }
+}
+
+/// The account's optional default key. Copied out — `PublicKey` is `copy`.
+fun default_pk(account: &Account): Option<PublicKey> {
+    match (&account.inner) {
+        AccountInner::V1 { default_pk, .. } => *default_pk,
+    }
+}
+
+fun default_pk_mut(account: &mut Account): &mut Option<PublicKey> {
+    match (&mut account.inner) {
+        AccountInner::V1 { default_pk, .. } => default_pk,
     }
 }
 
