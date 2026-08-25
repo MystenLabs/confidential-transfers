@@ -141,7 +141,7 @@ public struct ConfidentialToken<phantom T> has key {
 }
 
 /// Versioned state of a `ConfidentialToken<T>`.
-public enum ConfidentialTokenInner<phantom T> has store {
+public enum ConfidentialTokenInner<phantom T> has drop, store {
     V1 {
         is_active: bool, // Global freeze capability.
         freeze_admins: VecSet<address>,
@@ -166,7 +166,7 @@ public struct Account has key {
 }
 
 /// Versioned state of an `Account`.
-public enum AccountInner has store {
+public enum AccountInner has drop, store {
     V1 { owner: address, default_pk: Option<PublicKey> },
 }
 
