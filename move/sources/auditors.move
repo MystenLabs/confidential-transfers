@@ -33,7 +33,7 @@ const U32_LIMBS: u64 = 2;
 ///
 /// Currently each holds **at most one** key (asserted by `new` / `update`). May be extended to
 /// support multiple auditors in the future.
-public struct Auditors has drop, store {
+public struct Auditors has store {
     current_pks: vector<PublicKey>,
     previous_pks: vector<PublicKey>,
 }
