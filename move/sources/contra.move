@@ -268,11 +268,6 @@ public fun authorize_as_object<T>(ct: &ConfidentialToken<T>, uid: &mut UID): Aut
 
 // === Creation Flows ===
 
-use fun token_inner as ConfidentialToken.inner;
-use fun token_inner_mut as ConfidentialToken.inner_mut;
-use fun account_inner as Account.inner;
-use fun account_inner_mut as Account.inner_mut;
-
 public use fun new_confidential_token as TokenRegistry.new;
 public use fun share_confidential_token as ConfidentialToken.share;
 
@@ -945,11 +940,15 @@ fun token_inner<T>(ct: &ConfidentialToken<T>): &ConfidentialTokenV1 {
     }
 }
 
+use fun token_inner as ConfidentialToken.inner;
+
 fun token_inner_mut<T>(ct: &mut ConfidentialToken<T>): &mut ConfidentialTokenV1 {
     match (&mut ct.inner) {
         ConfidentialTokenInner::V1(inner) => inner,
     }
 }
+
+use fun token_inner_mut as ConfidentialToken.inner_mut;
 
 fun account_inner(account: &Account): &AccountV1 {
     match (&account.inner) {
@@ -957,11 +956,15 @@ fun account_inner(account: &Account): &AccountV1 {
     }
 }
 
+use fun account_inner as Account.inner;
+
 fun account_inner_mut(account: &mut Account): &mut AccountV1 {
     match (&mut account.inner) {
         AccountInner::V1(inner) => inner,
     }
 }
+
+use fun account_inner_mut as Account.inner_mut;
 
 fun pk<T>(self: &TokenAccount<T>): &PublicKey {
     self.balance.public_key()
