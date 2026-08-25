@@ -137,12 +137,24 @@ export const Pool = new MoveStruct({
 		id: bcs.Address,
 	},
 });
+/** Versioned state of an `Account`. */
+export const AccountInner = new MoveEnum({
+	name: `${$moduleName}::AccountInner`,
+	fields: {
+		V1: new MoveStruct({
+			name: `AccountInner.V1`,
+			fields: {
+				owner: bcs.Address,
+				default_pk: bcs.option(twisted_elgamal.PublicKey),
+			},
+		}),
+	},
+});
 export const Account = new MoveStruct({
 	name: `${$moduleName}::Account`,
 	fields: {
 		id: bcs.Address,
-		owner: bcs.Address,
-		default_pk: bcs.option(twisted_elgamal.PublicKey),
+		inner: AccountInner,
 	},
 });
 export const TokenAccount = new MoveStruct({
@@ -1333,8 +1345,8 @@ export interface AccountFreezeOptions {
 }
 /**
  * Freeze the given account for token `T`. A frozen account cannot transfer,
- * receive, wrap, or unwrap until unfrozen. Only addresses in `ct.freeze_admins`
- * may call this.
+ * receive, wrap, or unwrap until unfrozen. Only addresses in the token's
+ * `freeze_admins` may call this.
  */
 export function accountFreeze(options: AccountFreezeOptions) {
 	const packageAddress = options.package ?? '@local-pkg/contra';

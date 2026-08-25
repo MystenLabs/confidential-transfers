@@ -164,10 +164,18 @@ public struct Pool<phantom T> has key {
 }
 
 /// Base account that stores token accounts as dynamic fields.
+///
+/// Like `ConfidentialToken<T>`, the mutable state lives in a versioned enum behind the object
+/// wrapper. Reads go through the `owner` / `default_pk` accessors rather than matching inline, so a
+/// later variant touches those few functions instead of every call site.
 public struct Account has key {
     id: UID,
-    owner: address,
-    default_pk: Option<PublicKey>,
+    inner: AccountInner,
+}
+
+/// Versioned state of an `Account`.
+public enum AccountInner has store {
+    V1 { owner: address, default_pk: Option<PublicKey> },
 }
 
 /// A user's account for one confidential token.
@@ -324,7 +332,7 @@ public use fun new_account as AccountRegistry.new;
 public fun new_account(registry: &mut AccountRegistry, owner: address): Account {
     assert!(!derived_object::exists(&registry.id, AccountKey(owner)), EAccountAlreadyRegistered);
     let id = derived_object::claim(&mut registry.id, AccountKey(owner));
-    Account { id, owner, default_pk: option::none() }
+    Account { id, inner: AccountInner::V1 { owner, default_pk: option::none() } }
 }
 
 /// Share the account object.
@@ -338,21 +346,21 @@ public fun share_account(account: Account) {
 /// which must be for the `PERMISSIONED_REGISTER` operation and for `account.owner`.
 public fun register<T>(account: &mut Account, auth: &Auth<T>, pk: PublicKey) {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
     account.add_token_account<T>(pk);
 }
 
 /// Permissionless `register`: create a `TokenAccount<T>` keyed under the account's `default_pk`,
 /// without any `Auth`. Requires `T`'s registration permissionless and `default_pk` set.
 public fun register_with_default_pk<T>(account: &mut Account, ct: &ConfidentialToken<T>) {
-    assert!(account.default_pk.is_some(), EDefaultPkNotSet);
+    assert!(account.default_pk().is_some(), EDefaultPkNotSet);
     match (&ct.inner) {
         ConfidentialTokenInner::V1 { policy, .. } => assert!(
             policy::is_permissionless(policy, PERMISSIONED_REGISTER),
             ERegistrationNotPermissionless,
         ),
     };
-    let pk = *account.default_pk.borrow();
+    let pk = account.default_pk().destroy_some();
     account.add_token_account<T>(pk);
 }
 
@@ -366,7 +374,7 @@ public fun try_register_with_default_pk<T>(account: &mut Account, ct: &Confident
 /// registered. The caller is responsible for any authorization.
 fun add_token_account<T>(account: &mut Account, pk: PublicKey) {
     assert!(!account.has_token<T>(), ETokenAccountAlreadyRegistered);
-    events::emit_new_registration<T>(account.owner, pk);
+    events::emit_new_registration<T>(account.owner(), pk);
     let session_id = account.derive_session_id<T>();
     df::add(
         &mut account.id,
@@ -390,7 +398,7 @@ public fun set_accepts_encrypted_deposits<T>(
     accepts_encrypted_deposits: bool,
 ) {
     // TODO: consider checking PERMISSIONED_REGISTER
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
     account[TokenAccountKey<T>()].accepts_deposits = accepts_encrypted_deposits;
 }
 
@@ -401,7 +409,7 @@ public fun set_default_pk_as_sender(
     default_pk: Option<PublicKey>,
     ctx: &TxContext,
 ) {
-    assert!(ctx.sender() == account.owner, EAuthorizationError);
+    assert!(ctx.sender() == account.owner(), EAuthorizationError);
     account.set_default_pk_internal(default_pk);
 }
 
@@ -413,13 +421,13 @@ public fun set_default_pk_as_object(
     default_pk: Option<PublicKey>,
     uid: &mut UID,
 ) {
-    assert!(uid.to_inner().to_address() == account.owner, EAuthorizationError);
+    assert!(uid.to_inner().to_address() == account.owner(), EAuthorizationError);
     account.set_default_pk_internal(default_pk);
 }
 
 fun set_default_pk_internal(account: &mut Account, default_pk: Option<PublicKey>) {
-    account.default_pk = default_pk;
-    events::emit_default_pk_rotated(account.owner, default_pk);
+    *account.default_pk_mut() = default_pk;
+    events::emit_default_pk_rotated(account.owner(), default_pk);
 }
 
 /// Re-key token `T`'s balance from its current key to `new_pk`, swapping each limb's decryption
@@ -454,7 +462,7 @@ public fun try_rekey_token_account_and_unpause<T>(
     new_handles: vector<Element<G>>,
     rekey_proof: DdhProof,
 ) {
-    let owner = account.owner;
+    let owner = account.owner();
     if (account.rekey_token_account_internal<T>(auth, new_pk, new_handles, rekey_proof)) {
         account[TokenAccountKey<T>()].accepts_deposits = true;
     } else {
@@ -470,8 +478,8 @@ fun rekey_token_account_internal<T>(
     rekey_proof: DdhProof,
 ): bool {
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    let owner = account.owner;
+    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
+    let owner = account.owner();
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
     if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
@@ -498,9 +506,9 @@ public fun wrap<T>(
     assert!(coin.value() > 0, EZeroAmount);
     assert!(auth.is_allowed(PERMISSIONED_WRAP), EAuthorizationError);
     ct.assert_token_active(deny_list);
-    assert!(!is_receiver_denied<T>(deny_list, receiver.owner), ETransferDenied);
+    assert!(!is_receiver_denied<T>(deny_list, receiver.owner()), ETransferDenied);
     assert!(receiver.has_token<T>(), EReceiverNotRegistered);
-    let owner = receiver.owner;
+    let owner = receiver.owner();
     let acc = &mut receiver[TokenAccountKey<T>()];
     assert!(!acc.is_frozen && acc.accepts_deposits, ETransferDenied);
     events::emit_wrap<T>(owner, coin.value(), memo);
@@ -543,12 +551,12 @@ public fun batched_transfer<T>(
     auditor_package: Option<AuditorPackage>,
 ): TransferBatch<T> {
     ct.assert_token_active(deny_list);
-    assert!(auth.is_authenticated(sender.owner), EAuthorizationError);
-    assert!(!is_sender_denied<T>(deny_list, sender.owner), ETransferDenied);
+    assert!(auth.is_authenticated(sender.owner()), EAuthorizationError);
+    assert!(!is_sender_denied<T>(deny_list, sender.owner()), ETransferDenied);
     assert!(!receiver_amounts.is_empty(), EEmptyTransferBatch);
     assert!(receiver_amounts.length() <= MAX_BATCH_RECIPIENTS, EBatchTooLarge);
 
-    let sender_addr = sender.owner;
+    let sender_addr = sender.owner();
     let sender = &mut sender[TokenAccountKey<T>()];
     assert!(!sender.is_frozen, ETransferDenied);
 
@@ -617,7 +625,7 @@ public fun add_to_batch<T>(
         } => {
             assert!(!coins.is_empty(), ETooManyReceivers);
 
-            let receiver_addr = receiver.owner;
+            let receiver_addr = receiver.owner();
             assert!(!is_receiver_denied<T>(deny_list, receiver_addr), ETransferDenied);
             assert!(receiver.has_token<T>(), EReceiverNotRegistered);
 
@@ -683,8 +691,8 @@ public fun finalize<T>(batch: TransferBatch<T>) {
 /// To prevent overflows, the number of additions done with the active balance is limited,
 /// including the number of additions done with the pending deposits.
 public fun merge<T>(account: &mut Account, auth: &Auth<T>) {
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    let owner = account.owner;
+    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
+    let owner = account.owner();
     account[TokenAccountKey<T>()].balance.merge_deposits();
     events::emit_merge_deposits<T>(owner);
 }
@@ -699,8 +707,8 @@ public fun update_active_balance<T>(
     new_balance_range_proofs: RangeProofs,
     balance_proof: &DdhProof,
 ) {
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
-    let owner = account.owner;
+    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
+    let owner = account.owner();
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
     assert!(
@@ -802,10 +810,10 @@ fun try_unwrap_internal<T>(
 ): (bool, Coin<T>) {
     assert!(amount > 0, EZeroAmount);
     assert!(auth.is_allowed(PERMISSIONED_UNWRAP), EAuthorizationError);
-    assert!(auth.is_authenticated(account.owner), EAuthorizationError);
+    assert!(auth.is_authenticated(account.owner()), EAuthorizationError);
     ct.assert_token_active(deny_list);
-    assert!(!is_sender_denied<T>(deny_list, account.owner), ETransferDenied);
-    let owner = account.owner;
+    assert!(!is_sender_denied<T>(deny_list, account.owner()), ETransferDenied);
+    let owner = account.owner();
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
     let withdrawn = account
@@ -830,7 +838,22 @@ fun try_unwrap_internal<T>(
 }
 
 public fun owner(account: &Account): address {
-    account.owner
+    match (&account.inner) {
+        AccountInner::V1 { owner, .. } => *owner,
+    }
+}
+
+/// The account's optional default key. Copied out — `PublicKey` is `copy`.
+fun default_pk(account: &Account): Option<PublicKey> {
+    match (&account.inner) {
+        AccountInner::V1 { default_pk, .. } => *default_pk,
+    }
+}
+
+fun default_pk_mut(account: &mut Account): &mut Option<PublicKey> {
+    match (&mut account.inner) {
+        AccountInner::V1 { default_pk, .. } => default_pk,
+    }
 }
 
 // === Admin ===
@@ -848,7 +871,7 @@ public fun set_balance_by_issuer<T>(
     account: &mut Account,
     new_balance: EncryptedAmount,
 ) {
-    let owner = account.owner;
+    let owner = account.owner();
     account[TokenAccountKey<T>()].balance.overwrite_unchecked(new_balance);
     events::emit_set_balance_by_issuer<T>(owner, new_balance);
 }
@@ -909,7 +932,7 @@ public fun account_freeze<T>(ct: &ConfidentialToken<T>, account: &mut Account, c
             EAuthorizationError,
         ),
     };
-    let owner = account.owner;
+    let owner = account.owner();
     account[TokenAccountKey<T>()].is_frozen = true;
     events::emit_account_freeze<T>(admin, owner);
 }
@@ -917,7 +940,7 @@ public fun account_freeze<T>(ct: &ConfidentialToken<T>, account: &mut Account, c
 /// Unfreeze the given account for token `T`. Only the token issuer (holder of `&TreasuryCap<T>`)
 /// may call this.
 public fun account_unfreeze<T>(_cap: &TreasuryCap<T>, account: &mut Account) {
-    let owner = account.owner;
+    let owner = account.owner();
     account[TokenAccountKey<T>()].is_frozen = false;
     events::emit_account_unfreeze<T>(owner);
 }
@@ -1055,8 +1078,8 @@ public(package) fun accepts_deposits<T>(account: &Account): bool {
 }
 
 #[test_only]
-public(package) fun default_pk(account: &Account): Option<Element<G>> {
-    account.default_pk.map!(|pk| *pk.as_element())
+public(package) fun default_pk_element(account: &Account): Option<Element<G>> {
+    account.default_pk().map!(|pk| *pk.as_element())
 }
 
 #[test_only]

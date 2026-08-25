@@ -1381,7 +1381,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
         scenario.ctx(),
     );
     // The default key is now pk_new, but the token's balance still lags under pk_old.
-    assert_eq!(account_1.default_pk(), option::some(pk_new));
+    assert_eq!(account_1.default_pk_element(), option::some(pk_new));
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
     contra::rekey_token_account<TestCurrency>(
         &mut account_1,
