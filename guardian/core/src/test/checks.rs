@@ -1,6 +1,6 @@
 use super::*;
 use crate::move_types::MoveElement;
-use crate::test_utils::{blinding, encrypt_amount, TEST_BLINDINGS};
+use crate::test_utils::{blinding, encrypt_amount, plaintext_amount, TEST_BLINDINGS};
 use crate::types::Recipient;
 use fastcrypto::pedersen::{Blinding, PedersenCommitment};
 use fastcrypto::twisted_elgamal::Ciphertext;
@@ -23,7 +23,7 @@ fn recipient(receiver: u64, amount: u64) -> Recipient {
     Recipient {
         receiver_pk: pk(receiver),
         encrypted_amount: encrypt_amount(amount, &pk(receiver), TEST_BLINDINGS),
-        amount,
+        amount: plaintext_amount(amount),
         blinding: blinding(TEST_BLINDINGS),
     }
 }
@@ -367,7 +367,7 @@ fn rejects_amount_not_matching_its_ciphertext() {
             Recipient {
                 receiver_pk: pk(RECIPIENT_2),
                 encrypted_amount: encrypt_amount(19, &pk(RECIPIENT_2), TEST_BLINDINGS), // amount claims 20
-                amount: 20,
+                amount: plaintext_amount(20),
                 blinding: blinding(TEST_BLINDINGS),
             },
         ],
@@ -392,7 +392,7 @@ fn rejects_incorrect_ciphertext_or_blinding_for_second_amount_limb() {
         recipients: vec![Recipient {
             receiver_pk: pk(RECIPIENT_1),
             encrypted_amount: encrypt_amount(2 << 16, &pk(RECIPIENT_1), TEST_BLINDINGS), // amount claims 1 << 16
-            amount: 1 << 16,
+            amount: plaintext_amount(1 << 16),
             blinding: blinding(TEST_BLINDINGS),
         }],
     };
@@ -410,7 +410,7 @@ fn rejects_incorrect_ciphertext_or_blinding_for_second_amount_limb() {
         recipients: vec![Recipient {
             receiver_pk: pk(RECIPIENT_1),
             encrypted_amount: encrypt_amount(1 << 16, &pk(RECIPIENT_1), TEST_BLINDINGS),
-            amount: 1 << 16,
+            amount: plaintext_amount(1 << 16),
             blinding: blinding(incorrect_blindings),
         }],
     };
@@ -430,7 +430,7 @@ fn rejects_amount_encrypted_to_the_wrong_recipient() {
             Recipient {
                 receiver_pk: pk(RECIPIENT_1),
                 encrypted_amount: encrypt_amount(30, &pk(ATTACKER), TEST_BLINDINGS), // encrypted to attacker
-                amount: 30,
+                amount: plaintext_amount(30),
                 blinding: blinding(TEST_BLINDINGS),
             },
             recipient(RECIPIENT_2, 20),
@@ -451,7 +451,7 @@ fn recipient_amount_mismatch_precedes_new_balance_mismatch() {
         recipients: vec![Recipient {
             receiver_pk: pk(RECIPIENT_1),
             encrypted_amount: encrypt_amount(50, &pk(RECIPIENT_1), TEST_BLINDINGS),
-            amount: 60, // encrypted amount is 50
+            amount: plaintext_amount(60), // encrypted amount is 50
             blinding: blinding(TEST_BLINDINGS),
         }],
     };
