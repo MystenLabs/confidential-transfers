@@ -7,11 +7,8 @@ use fastcrypto::groups::ristretto255::RistrettoScalar;
 use fastcrypto::twisted_elgamal::{Ciphertext, PrivateKey, PublicKey};
 
 use crate::move_types::{Binding, GuardianRequest};
-use crate::types::{EncryptedAmount, UnsealedRequest};
-use crate::{GuardianError, Result};
-
-/// Matches Contra's on-chain `MAX_BATCH_RECIPIENTS`.
-const MAX_BATCH_RECIPIENTS: usize = 255;
+use crate::types::{EncryptedAmount, UnsealedRequest, U16_LIMBS};
+use crate::{GuardianError, Result, MAX_BATCH_RECIPIENTS};
 
 /// An operation binding that can only be constructed after all plaintext checks pass.
 #[derive(Debug)]
@@ -43,7 +40,9 @@ fn verify_binding(req: &UnsealedRequest) -> Result<VerifiedBinding> {
 
             let total_txn_amount = recipients
                 .iter()
-                .try_fold(0u64, |total, recipient| total.checked_add(recipient.amount))
+                .try_fold(0u64, |total, recipient| {
+                    total.checked_add(collapse_plaintext(&recipient.amount))
+                })
                 .ok_or(GuardianError::TransferAmountOverflow)?;
             let new_balance = old_balance
                 .checked_sub(total_txn_amount)
@@ -53,9 +52,10 @@ fn verify_binding(req: &UnsealedRequest) -> Result<VerifiedBinding> {
             let mut receiver_pks = Vec::with_capacity(recipients.len());
             let mut encrypted_amounts = Vec::with_capacity(recipients.len());
             for (i, recipient) in recipients.iter().enumerate() {
+                let amount = collapse_plaintext(&recipient.amount);
                 collapse(&recipient.encrypted_amount)
                     .verify(
-                        &RistrettoScalar::from(recipient.amount),
+                        &RistrettoScalar::from(amount),
                         &recipient.receiver_pk,
                         &recipient.blinding,
                     )
@@ -96,6 +96,14 @@ fn verify_binding(req: &UnsealedRequest) -> Result<VerifiedBinding> {
         }
     };
     Ok(VerifiedBinding(binding))
+}
+
+/// Collapse four little-endian u16 limbs into one u64.
+fn collapse_plaintext(limbs: &[u16; U16_LIMBS]) -> u64 {
+    limbs
+        .iter()
+        .rev()
+        .fold(0u64, |amount, limb| (amount << 16) + u64::from(*limb))
 }
 
 /// Verify that the collapsed encrypted balance opens to `plaintext` under `x_a`.

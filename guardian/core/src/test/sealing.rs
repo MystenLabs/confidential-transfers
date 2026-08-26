@@ -140,14 +140,14 @@ fn rejects_corrupted_encapsulated_or_encrypted_payload_key() {
     sealed.wrapped_keys.get_mut(&enc_pk).unwrap().encapped_key[0] ^= 1;
     assert_eq!(
         keypair.unseal(&sealed).err(),
-        Some(GuardianError::NotARecipient)
+        Some(GuardianError::PayloadKeyUnwrapFailed)
     );
 
     let mut sealed = seal_to_all(&[encryption_key(&keypair)], &transfer_request()).unwrap();
     sealed.wrapped_keys.get_mut(&enc_pk).unwrap().encrypted_key[0] ^= 1;
     assert_eq!(
         keypair.unseal(&sealed).err(),
-        Some(GuardianError::NotARecipient)
+        Some(GuardianError::PayloadKeyUnwrapFailed)
     );
 }
 

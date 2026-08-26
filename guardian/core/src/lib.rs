@@ -27,6 +27,9 @@ use crate::types::{
     EnclaveKeys, EnclaveResponse, EncryptionPublicKeyBytes, SealedRequest, UnsealedRequest,
 };
 
+/// Matches Contra's on-chain `MAX_BATCH_RECIPIENTS`.
+const MAX_BATCH_RECIPIENTS: usize = 255;
+
 /// Result type returned by Guardian validation and unsealing operations.
 pub type Result<T> = std::result::Result<T, GuardianError>;
 
@@ -35,10 +38,12 @@ pub type Result<T> = std::result::Result<T, GuardianError>;
 pub enum GuardianError {
     #[error("transfer has no recipients")]
     EmptyTransfer,
-    #[error("transfer has {0} recipients; maximum is 255")]
+    #[error("transfer has {0} recipients; maximum is {MAX_BATCH_RECIPIENTS}")]
     TooManyRecipients(usize),
     #[error("not a recipient")]
     NotARecipient,
+    #[error("failed to unwrap payload key")]
+    PayloadKeyUnwrapFailed,
     #[error("invalid sealed request")]
     InvalidSealedRequest,
     #[error("sealed body is not a BCS UnsealedRequest")]
@@ -122,7 +127,7 @@ impl EnclaveKeyPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{blinding, encrypt_amount};
+    use crate::test_utils::{blinding, encrypt_amount, plaintext_amount};
     use crate::types::{Recipient, UnsealedRequest};
     use fastcrypto::encoding::{Encoding, Hex};
     use fastcrypto::groups::ristretto255::RistrettoScalar;
@@ -145,7 +150,7 @@ mod tests {
             recipients: vec![Recipient {
                 encrypted_amount: encrypt_amount(50, &pk_b, [32533, 0, 0, 0]),
                 receiver_pk: pk_b,
-                amount: 50,
+                amount: plaintext_amount(50),
                 blinding: blinding([32533, 0, 0, 0]),
             }],
             x_a,

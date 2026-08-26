@@ -26,6 +26,11 @@ const SEALED_REQUEST_VERSION: u8 = 1;
 /// Fixed per-limb encryption randomness for tests.
 pub const TEST_BLINDINGS: [u64; U16_LIMBS] = [1, 2, 3, 4];
 
+/// Split a u64 into canonical little-endian u16 limbs.
+pub(crate) fn plaintext_amount(value: u64) -> [u16; U16_LIMBS] {
+    std::array::from_fn(|i| (value >> (16 * i)) as u16)
+}
+
 /// Encrypt the canonical little-endian u16 limbs of `value` with the supplied blindings.
 pub fn encrypt_amount(value: u64, pk: &PublicKey, blindings: [u64; U16_LIMBS]) -> EncryptedAmount {
     let limbs: [u64; U16_LIMBS] = std::array::from_fn(|i| (value >> (16 * i)) & u16::MAX as u64);
@@ -64,7 +69,7 @@ pub fn transfer_request() -> UnsealedRequest {
         recipients: vec![Recipient {
             encrypted_amount: encrypt_amount(40, &pk_b, TEST_BLINDINGS),
             receiver_pk: pk_b,
-            amount: 40,
+            amount: plaintext_amount(40),
             blinding: blinding(TEST_BLINDINGS),
         }],
         x_a,
