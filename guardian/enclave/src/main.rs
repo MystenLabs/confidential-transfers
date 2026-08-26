@@ -9,6 +9,7 @@ use hpke::Serializable;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
+    println!("guardian enclave PCR rollout test 2");
 
     let keys = EnclaveKeyPair::generate();
     let public_keys = keys.enclave_keys();
