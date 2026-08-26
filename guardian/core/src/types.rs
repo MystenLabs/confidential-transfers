@@ -132,8 +132,8 @@ pub struct Recipient {
     pub receiver_pk: PublicKey,
     /// Exact encrypted amount included in the on-chain transfer.
     pub encrypted_amount: EncryptedAmount,
-    /// Claimed plaintext amount checked against `encrypted_amount`.
-    pub amount: u64,
+    /// Claimed little-endian plaintext limbs checked against `encrypted_amount`.
+    pub amount: [u16; U16_LIMBS],
     /// Blinding of the collapsed `encrypted_amount`.
     pub blinding: Blinding,
 }

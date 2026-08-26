@@ -47,7 +47,7 @@ pub(super) fn unseal(
         .get(&enc_pk)
         .ok_or(GuardianError::NotARecipient)?;
     let encapped =
-        EncappedKey::from_bytes(&wrapped.encapped_key).map_err(|_| GuardianError::NotARecipient)?;
+        EncappedKey::from_bytes(&wrapped.encapped_key).expect("32-byte X25519 public key");
 
     // Open the payload key with this enclave's HPKE private key.
     let payload_key = hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
@@ -58,7 +58,7 @@ pub(super) fn unseal(
         &wrapped.encrypted_key,
         &[request.version],
     )
-    .map_err(|_| GuardianError::NotARecipient)?;
+    .map_err(|_| GuardianError::PayloadKeyUnwrapFailed)?;
 
     // Decrypt and authenticate the shared request.
     let cipher = PayloadCipher::new_from_slice(&payload_key)
