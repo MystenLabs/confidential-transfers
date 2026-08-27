@@ -24,7 +24,7 @@ import type { DdhNizk } from './nizk.js';
 import { ElGamalNizk } from './nizk.js';
 import { type RistrettoPoint } from './ristretto255.js';
 import type { Ciphertext } from './twisted_elgamal.js';
-import type { ContraPackageConfig } from './types.js';
+import type { ContraPackageConfig, TokenBalance } from './types.js';
 
 /** BCS layout of the Fiat-Shamir transcript: an ordered list of length-prefixed byte chunks. */
 const FIAT_SHAMIR_TRANSCRIPT = bcs.vector(bcs.vector(bcs.u8()));
@@ -59,6 +59,11 @@ export const PROTOCOL_AUDITOR_ELGAMAL = 0x07;
  * produced by `TokenAccount.decryptWithProof`.
  */
 export const PROTOCOL_VERIFIED_DEC = 100;
+
+/** Whether a `merge` would fold anything in. */
+export function hasPendingDeposits(balance: TokenBalance): boolean {
+	return balance.pending.terms > 0 || balance.pendingPublicBalance > 0n;
+}
 
 /** 20-byte per-account `session_id`: first 20 bytes of {@link getTokenAccountUniqueId}. */
 export function newSessionId(
