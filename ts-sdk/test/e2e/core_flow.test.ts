@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { ContraAuditor } from '../../src/auditor.js';
 import { TransferEvent as TransferEventBcs } from '../../src/contracts/contra/events.js';
+import { hasPendingDeposits } from '../../src/helpers.js';
 import { G, pointFromBcs, randomScalar } from '../../src/ristretto255.js';
 import { TokenAccount } from '../../src/token_account.js';
 import { EncryptedAmount } from '../../src/twisted_elgamal.js';
@@ -38,6 +39,7 @@ describe('core user flows (devnet)', () => {
 	let expectBalance: Harness['expectBalance'];
 	let expectBalances: Harness['expectBalances'];
 	let setupFreshUsers: Harness['setupFreshUsers'];
+	let setupFreshUsersWithBalance: Harness['setupFreshUsersWithBalance'];
 
 	let user1: Ed25519Keypair;
 	let user1Address: string;
@@ -62,6 +64,7 @@ describe('core user flows (devnet)', () => {
 			expectBalance,
 			expectBalances,
 			setupFreshUsers,
+			setupFreshUsersWithBalance,
 		} = await createHarness());
 
 		// Create user keypairs.
@@ -672,6 +675,59 @@ describe('core user flows (devnet)', () => {
 			await expectBalance(rotated2, {
 				balance: wrapAmount + extra - 1n * ONE,
 				pending: 0n,
+				pendingPublicBalance: 0n,
+				balanceTerms: 1,
+			});
+		},
+	);
+	it(
+		'zero-value deposits occupy terms and merge back out in one call',
+		{ timeout: 300_000 },
+		async () => {
+			// A deposit's term is charged per ciphertext, not per unit of value, so a zero-valued
+			// transfer leg still consumes one of the receiver's bounded deposit slots while
+			// leaving `pending.amount` at zero. `updateBalance` recovers those slots in one PTB:
+			// `merge` clears `pending.terms` and the re-statement resets `active.terms`.
+			const [sender, receiver] = await setupFreshUsersWithBalance([2n * ONE, 0n]);
+
+			const ZERO_LEGS = 3;
+			for (let i = 0; i < ZERO_LEGS; i++) {
+				await transfer(sender.tokenAccount, sender.keypair, receiver.address, 0n);
+			}
+
+			// Every leg is charged a term even though the pending set decrypts to zero.
+			await expectBalance(receiver.tokenAccount, {
+				balance: 0n,
+				pending: 0n,
+				pendingPublicBalance: 0n,
+				balanceTerms: 1,
+			});
+
+			const stuck = await client.contra.getBalance(receiver.tokenAccount);
+			expect(stuck.pending.terms).toBe(ZERO_LEGS);
+			expect(hasPendingDeposits(stuck)).toBe(true);
+
+			// One call, one PTB: merge + re-state.
+			await mergeAndUpdate(receiver.tokenAccount, receiver.keypair);
+
+			await expectBalance(receiver.tokenAccount, {
+				balance: 0n,
+				pending: 0n,
+				pendingPublicBalance: 0n,
+				balanceTerms: 1,
+			});
+
+			// Merging alone would carry the terms into `active`; the re-statement hands the slots back.
+			const after = await client.contra.getBalance(receiver.tokenAccount);
+			expect(after.pending.terms).toBe(0);
+			expect(after.balance.terms).toBe(1);
+			expect(hasPendingDeposits(after)).toBe(false);
+
+			// The account still receives normally afterwards.
+			await transfer(sender.tokenAccount, sender.keypair, receiver.address, ONE);
+			await expectBalance(receiver.tokenAccount, {
+				balance: 0n,
+				pending: ONE,
 				pendingPublicBalance: 0n,
 				balanceTerms: 1,
 			});

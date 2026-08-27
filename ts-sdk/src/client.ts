@@ -35,6 +35,7 @@ import {
 	getAccountId,
 	getConfidentialTokenId,
 	getTokenAccountId,
+	hasPendingDeposits,
 	point,
 	PROTOCOL_AUDITOR_ELGAMAL,
 	PROTOCOL_BATCH_DDH,
@@ -582,10 +583,10 @@ export class ContraClient {
 	}> {
 		// TODO: consider exposing a function that receives the object from the caller,
 		// so that the caller could fetch it differently.
-		const { balance, pending, pendingPublicBalance } = await this.getBalance(tokenAccount);
+		const tokenBalance = await this.getBalance(tokenAccount);
+		const { balance, pending, pendingPublicBalance } = tokenBalance;
 
-		const hasPendingDeposits = pending.amount > 0n || pendingPublicBalance > 0n;
-		const shouldMerge = merge && hasPendingDeposits;
+		const shouldMerge = merge && hasPendingDeposits(tokenBalance);
 
 		const spendable = shouldMerge
 			? balance.amount + pending.amount + pendingPublicBalance
@@ -876,13 +877,13 @@ export class ContraClient {
 	}> {
 		const oldPk = tokenAccount.publicKey;
 		const newPk = newTokenAccount.publicKey;
-		const { balance, pending, pendingPublicBalance } = await this.getBalance(tokenAccount);
+		const tokenBalance = await this.getBalance(tokenAccount);
+		const { balance, pending } = tokenBalance;
 
 		// `rekey_token_account` requires an empty pending balance; merge folds pending (encrypted + public)
 		// into active first. Public deposits contribute a zero handle, so they don't affect the
 		// handle mapping — only the encrypted pending handles do.
-		const shouldMerge =
-			merge && (pending.terms > 0 || pending.amount > 0n || pendingPublicBalance > 0n);
+		const shouldMerge = merge && hasPendingDeposits(tokenBalance);
 
 		const pendingLimbs = pending.ciphertext.limbs;
 		const oldHandles = balance.ciphertext.limbs.map((limb, i) =>
