@@ -51,9 +51,14 @@
 /// 6. Unwrap an encrypted amount from a token account and convert it to public coins.
 ///
 /// ## Authentication:
-/// Some functions require authorization via an `&Auth<T>` argument. Under the default
-/// permissionless policy any `Auth<T>` is accepted; permissioning narrows which constructors
-/// produce a valid `Auth<T>`. The caller constructs the `Auth<T>` via one of three constructors:
+/// Some functions require authorization via an `&Auth<T>` argument. An `Auth<T>` carries two
+/// independent claims: an authenticated `owner`, and the bitmap of operations it covers.
+///
+/// The bitmap only ever narrows the *permissioned* operations; the permissionless ones check
+/// `owner` alone. Naming an address in an `Auth<T>` is therefore a claim that the contract has
+/// verified control of that account.
+///
+/// The caller constructs the `Auth<T>` via one of three constructors:
 /// - `authorize_as_sender`: authenticates `ctx.sender()`. The standard path for end-user wallets
 ///   and permissionless operations.
 /// - `authorize_as_object`: authenticates the address derived from a given object's `UID`. Use this
@@ -62,6 +67,11 @@
 ///   this to implement custom permissioned operations: the issuer's contract holds `W`, performs
 ///   its own checks (e.g. KYC, screening, rate limiting), and creates an `Auth<T>` for the
 ///   requested operation.
+///
+/// Two rules follow for contracts minting with `authorize_with_witness`:
+/// - Only name an `owner` whose control of the account has been verified.
+/// - Use the `Auth<T>` internally rather than returning it: handing one back grants the caller every
+///   permissionless operation on `owner`'s account.
 ///
 module contra::contra;
 
