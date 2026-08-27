@@ -55,6 +55,9 @@ public fun gated_wrap<T>(
     coin: Coin<T>,
     memo: vector<u8>,
 ) {
+    // `wrap` credits its `receiver` argument and never reads `auth.owner`, and this auth is
+    // consumed here rather than returned, so the address named is inert. A wrapper that handed its
+    // `Auth<T>` back would have to name an owner whose control of the account it had verified.
     let auth = ct.authorize_with_witness(WRAP_OP, receiver.owner(), GatedWitness {});
     contra::wrap(receiver, &auth, ct, deny_list, pool, coin, memo);
 }

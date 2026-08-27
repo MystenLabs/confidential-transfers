@@ -32,6 +32,9 @@ public struct Policy has drop, store {
 
 /// A capability authorizing a set of operations on behalf of `owner`. The phantom `T` tags the
 /// auth with the consuming domain so an auth minted for one context cannot be used in another.
+///
+/// Only the operations an issuer can permission consult `operations`. The flows that cannot be
+/// gated authorize on `owner` alone, so naming an `owner` claims verified control of it.
 public struct Auth<phantom T> has drop {
     /// Bitmap with bit `o` set iff operation `o` is allowed.
     operations: u32,
