@@ -101,7 +101,7 @@ fn accepts_valid_transfer_and_unwrap_scenarios() {
     let Binding::Transfer {
         sender_pk,
         receiver_pks,
-        encrypted_amounts,
+        receiver_encrypted_amounts,
         ..
     } = verify_binding(&req).unwrap().0
     else {
@@ -111,7 +111,7 @@ fn accepts_valid_transfer_and_unwrap_scenarios() {
     let expected_receiver_pks: Vec<MoveElement> = [RECIPIENT_1, RECIPIENT_2]
         .map(|seed| pk(seed).as_point().into())
         .into();
-    let expected_encrypted_amounts = vec![
+    let expected_receiver_encrypted_amounts = vec![
         encrypt_amount(30, &pk(RECIPIENT_1), TEST_BLINDINGS),
         encrypt_amount(20, &pk(RECIPIENT_2), TEST_BLINDINGS),
     ];
@@ -124,8 +124,8 @@ fn accepts_valid_transfer_and_unwrap_scenarios() {
         bcs::to_bytes(&expected_receiver_pks).unwrap()
     );
     assert_eq!(
-        bcs::to_bytes(&encrypted_amounts).unwrap(),
-        bcs::to_bytes(&expected_encrypted_amounts).unwrap()
+        bcs::to_bytes(&receiver_encrypted_amounts).unwrap(),
+        bcs::to_bytes(&expected_receiver_encrypted_amounts).unwrap()
     );
 
     // Transfer to a zero-amount recipient.
