@@ -113,7 +113,7 @@ pub(crate) enum Binding {
         receiver_pks: Vec<MoveElement>,
         old_encrypted_balance: EncryptedAmount,
         new_encrypted_balance: EncryptedAmount,
-        encrypted_amounts: Vec<EncryptedAmount>,
+        receiver_encrypted_amounts: Vec<EncryptedAmount>,
     },
     Unwrap {
         sender_pk: MoveElement,
@@ -178,7 +178,7 @@ mod tests {
             receiver_pks: vec![element(RistrettoPoint::generator())],
             old_encrypted_balance: zero_amount(),
             new_encrypted_balance: zero_amount(),
-            encrypted_amounts: vec![zero_amount()],
+            receiver_encrypted_amounts: vec![zero_amount()],
         }
     }
 
@@ -199,7 +199,7 @@ mod tests {
             receiver_pks: vec![element(RistrettoPoint::generator())],
             old_encrypted_balance: tagged_amount(10),
             new_encrypted_balance: tagged_amount(20),
-            encrypted_amounts: vec![tagged_amount(30)],
+            receiver_encrypted_amounts: vec![tagged_amount(30)],
         };
         assert_eq!(
             Hex::encode(binding.digest()),

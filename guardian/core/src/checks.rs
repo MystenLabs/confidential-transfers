@@ -50,7 +50,7 @@ fn verify_binding(req: &UnsealedRequest) -> Result<VerifiedBinding> {
             verify_balance_opening(old_encrypted_balance, x_a, *old_balance)?;
 
             let mut receiver_pks = Vec::with_capacity(recipients.len());
-            let mut encrypted_amounts = Vec::with_capacity(recipients.len());
+            let mut receiver_encrypted_amounts = Vec::with_capacity(recipients.len());
             for (i, recipient) in recipients.iter().enumerate() {
                 let amount = collapse_plaintext(&recipient.amount);
                 collapse(&recipient.encrypted_amount)
@@ -61,7 +61,7 @@ fn verify_binding(req: &UnsealedRequest) -> Result<VerifiedBinding> {
                     )
                     .map_err(|_| GuardianError::RecipientAmountMismatch { recipient: i })?;
                 receiver_pks.push(recipient.receiver_pk.as_point().into());
-                encrypted_amounts.push(recipient.encrypted_amount.clone());
+                receiver_encrypted_amounts.push(recipient.encrypted_amount.clone());
             }
 
             verify_balance_opening(new_encrypted_balance, x_a, new_balance)?;
@@ -71,7 +71,7 @@ fn verify_binding(req: &UnsealedRequest) -> Result<VerifiedBinding> {
                 receiver_pks,
                 old_encrypted_balance: old_encrypted_balance.clone(),
                 new_encrypted_balance: new_encrypted_balance.clone(),
-                encrypted_amounts,
+                receiver_encrypted_amounts,
             }
         }
         UnsealedRequest::UnwrapRequest {
