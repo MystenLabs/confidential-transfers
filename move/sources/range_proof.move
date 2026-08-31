@@ -66,7 +66,7 @@ public(package) fun verify(
     if (version == VERSION_TESTING) return true;
     // The only non-testing version — a new construction must add its own branch below.
     assert!(version == VERSION_BULLETPROOFS_16, EUnsupportedVersion);
-    let sizes = batch_sizes(commitments.length());
+    let sizes = batch_sizes(commitments.length(), MAX_BATCH_SIZE);
     if (proofs.length() != sizes.length()) return false;
     let mut offset = 0;
     sizes.zip_map_ref!(&proofs, |chunk, range_proof| {
@@ -83,13 +83,14 @@ public(package) fun verify(
     }).all!(|ok| *ok)
 }
 
-/// Canonical Bulletproof chunking for `n` commitments: greedily take as many `MAX_BATCH_SIZE`
-/// chunks as fit, then halve the chunk size and repeat until `n` is exhausted.
-/// Examples (`MAX_BATCH_SIZE = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
-fun batch_sizes(n: u64): vector<u64> {
+/// Canonical chunking of `n` commitments for a construction whose aggregator covers at most
+/// `max_batch_size` commitments per proof: greedily take as many `max_batch_size` chunks as fit,
+/// then halve the chunk size and repeat until `n` is exhausted.
+/// Examples (`max_batch_size = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
+fun batch_sizes(n: u64, max_batch_size: u64): vector<u64> {
     let mut sizes = vector[];
     let mut remaining = n;
-    let mut chunk = MAX_BATCH_SIZE;
+    let mut chunk = max_batch_size;
     while (remaining > 0) {
         while (remaining >= chunk) {
             sizes.push_back(chunk);
