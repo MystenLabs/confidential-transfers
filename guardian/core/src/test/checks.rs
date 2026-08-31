@@ -1,7 +1,7 @@
 use super::*;
 use crate::move_types::MoveElement;
 use crate::test_utils::{blinding, encrypt_amount, plaintext_amount, TEST_BLINDINGS};
-use crate::types::Recipient;
+use crate::types::TransferRecipient;
 use fastcrypto::pedersen::{Blinding, PedersenCommitment};
 use fastcrypto::twisted_elgamal::Ciphertext;
 
@@ -19,8 +19,8 @@ fn pk(seed: u64) -> PublicKey {
 }
 
 /// A consistent recipient whose encrypted limbs encode the claimed amount for its public key.
-fn recipient(receiver: u64, amount: u64) -> Recipient {
-    Recipient {
+fn recipient(receiver: u64, amount: u64) -> TransferRecipient {
+    TransferRecipient {
         receiver_pk: pk(receiver),
         encrypted_amount: encrypt_amount(amount, &pk(receiver), TEST_BLINDINGS),
         amount: plaintext_amount(amount),
@@ -33,7 +33,7 @@ struct Transfer {
     claimed_old_balance: u64,
     old_balance_to_encrypt: u64,
     new_balance_to_encrypt: u64,
-    recipients: Vec<Recipient>,
+    recipients: Vec<TransferRecipient>,
 }
 
 impl Transfer {
@@ -364,7 +364,7 @@ fn rejects_amount_not_matching_its_ciphertext() {
         new_balance_to_encrypt: 50,
         recipients: vec![
             recipient(RECIPIENT_1, 30),
-            Recipient {
+            TransferRecipient {
                 receiver_pk: pk(RECIPIENT_2),
                 encrypted_amount: encrypt_amount(19, &pk(RECIPIENT_2), TEST_BLINDINGS), // amount claims 20
                 amount: plaintext_amount(20),
@@ -389,7 +389,7 @@ fn rejects_incorrect_ciphertext_or_blinding_for_second_amount_limb() {
         claimed_old_balance: 3 << 16,
         old_balance_to_encrypt: 3 << 16,
         new_balance_to_encrypt: 2 << 16,
-        recipients: vec![Recipient {
+        recipients: vec![TransferRecipient {
             receiver_pk: pk(RECIPIENT_1),
             encrypted_amount: encrypt_amount(2 << 16, &pk(RECIPIENT_1), TEST_BLINDINGS), // amount claims 1 << 16
             amount: plaintext_amount(1 << 16),
@@ -407,7 +407,7 @@ fn rejects_incorrect_ciphertext_or_blinding_for_second_amount_limb() {
         claimed_old_balance: 2 << 16,
         old_balance_to_encrypt: 2 << 16,
         new_balance_to_encrypt: 1 << 16,
-        recipients: vec![Recipient {
+        recipients: vec![TransferRecipient {
             receiver_pk: pk(RECIPIENT_1),
             encrypted_amount: encrypt_amount(1 << 16, &pk(RECIPIENT_1), TEST_BLINDINGS),
             amount: plaintext_amount(1 << 16),
@@ -427,7 +427,7 @@ fn rejects_amount_encrypted_to_the_wrong_recipient() {
         old_balance_to_encrypt: 100,
         new_balance_to_encrypt: 50,
         recipients: vec![
-            Recipient {
+            TransferRecipient {
                 receiver_pk: pk(RECIPIENT_1),
                 encrypted_amount: encrypt_amount(30, &pk(ATTACKER), TEST_BLINDINGS), // encrypted to attacker
                 amount: plaintext_amount(30),
@@ -448,7 +448,7 @@ fn recipient_amount_mismatch_precedes_new_balance_mismatch() {
         claimed_old_balance: 100,
         old_balance_to_encrypt: 100,
         new_balance_to_encrypt: 50, // should be 40 based on the claimed amount
-        recipients: vec![Recipient {
+        recipients: vec![TransferRecipient {
             receiver_pk: pk(RECIPIENT_1),
             encrypted_amount: encrypt_amount(50, &pk(RECIPIENT_1), TEST_BLINDINGS),
             amount: plaintext_amount(60), // encrypted amount is 50

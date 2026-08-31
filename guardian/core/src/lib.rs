@@ -16,7 +16,7 @@ pub mod test_utils;
 pub mod types;
 
 use fastcrypto::ed25519::Ed25519KeyPair;
-use fastcrypto::traits::{KeyPair, Signer};
+use fastcrypto::traits::{AllowedRng, KeyPair, Signer};
 use hpke::kem::X25519HkdfSha256;
 use hpke::Kem;
 #[cfg(test)]
@@ -68,11 +68,10 @@ pub struct EnclaveKeyPair {
 }
 
 impl EnclaveKeyPair {
-    /// Generate fresh keys from the operating system RNG at boot.
-    pub fn generate() -> Self {
-        let mut rng = rand::thread_rng();
-        let (hpke_sk, hpke_pk) = X25519HkdfSha256::gen_keypair(&mut rng);
-        let signing_sk = Ed25519KeyPair::generate(&mut rng);
+    /// Generate fresh keys with rng.
+    pub fn generate(rng: &mut impl AllowedRng) -> Self {
+        let (hpke_sk, hpke_pk) = X25519HkdfSha256::gen_keypair(rng);
+        let signing_sk = Ed25519KeyPair::generate(rng);
         let enclave_keys = EnclaveKeys {
             signing_pk: signing_sk.public().clone(),
             enc_pk: hpke_pk,
@@ -88,17 +87,7 @@ impl EnclaveKeyPair {
     #[cfg(test)]
     fn from_seed_for_testing() -> Self {
         let mut rng = StdRng::from_seed([0; 32]);
-        let (hpke_sk, hpke_pk) = X25519HkdfSha256::gen_keypair(&mut rng);
-        let signing_sk = Ed25519KeyPair::generate(&mut rng);
-        let enclave_keys = EnclaveKeys {
-            signing_pk: signing_sk.public().clone(),
-            enc_pk: hpke_pk,
-        };
-        Self {
-            signing_sk,
-            hpke_sk,
-            enclave_keys,
-        }
+        Self::generate(&mut rng)
     }
 
     /// Return the public keys encoded into attestation `user_data` and parsed by
@@ -128,7 +117,7 @@ impl EnclaveKeyPair {
 mod tests {
     use super::*;
     use crate::test_utils::{blinding, encrypt_amount, plaintext_amount};
-    use crate::types::{Recipient, UnsealedRequest};
+    use crate::types::{TransferRecipient, UnsealedRequest};
     use fastcrypto::encoding::{Encoding, Hex};
     use fastcrypto::groups::ristretto255::RistrettoScalar;
     use fastcrypto::twisted_elgamal::{PrivateKey, PublicKey};
@@ -147,7 +136,7 @@ mod tests {
         let req = UnsealedRequest::TransferRequest {
             old_encrypted_balance: encrypt_amount(100, &pk_a, [0, 0, 0, 0]),
             new_encrypted_balance: encrypt_amount(50, &pk_a, [10097, 0, 0, 0]),
-            recipients: vec![Recipient {
+            recipients: vec![TransferRecipient {
                 encrypted_amount: encrypt_amount(50, &pk_b, [32533, 0, 0, 0]),
                 receiver_pk: pk_b,
                 amount: plaintext_amount(50),

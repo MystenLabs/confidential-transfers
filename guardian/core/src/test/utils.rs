@@ -16,8 +16,8 @@ use hpke::{OpModeS, Serializable};
 use std::collections::BTreeMap;
 
 use crate::types::{
-    EncryptedAmount, EncryptionPublicKey, EncryptionPublicKeyBytes, Recipient, SealedRequest,
-    UnsealedRequest, WrappedPayloadKey, MAX_ENCLAVE_KEYS, U16_LIMBS,
+    EncryptedAmount, EncryptionPublicKey, EncryptionPublicKeyBytes, SealedRequest,
+    TransferRecipient, UnsealedRequest, WrappedPayloadKey, MAX_ENCLAVE_KEYS, U16_LIMBS,
 };
 
 const HPKE_INFO: &[u8] = b"contra-guardian-request";
@@ -66,7 +66,7 @@ pub fn transfer_request() -> UnsealedRequest {
     UnsealedRequest::TransferRequest {
         old_encrypted_balance: encrypt_amount(100, &pk_a, TEST_BLINDINGS),
         new_encrypted_balance: encrypt_amount(60, &pk_a, TEST_BLINDINGS),
-        recipients: vec![Recipient {
+        recipients: vec![TransferRecipient {
             encrypted_amount: encrypt_amount(40, &pk_b, TEST_BLINDINGS),
             receiver_pk: pk_b,
             amount: plaintext_amount(40),
