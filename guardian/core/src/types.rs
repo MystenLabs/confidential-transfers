@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Matches `guardian::guardian::MAX_GUARDIAN_ENCLAVE_KEYS`.
-pub const MAX_ENCLAVE_KEYS: usize = 16;
+pub const MAX_ENCLAVE_KEYS: usize = 64;
 
 /// Matches the four limbs in `contra::encrypted_amount::EncryptedAmount`.
 pub const U16_LIMBS: usize = 4;
@@ -34,8 +34,7 @@ impl From<&EncryptionPublicKey> for EncryptionPublicKeyBytes {
     }
 }
 
-/// The enclave's public keys. Their BCS encoding is the 32-byte signing key followed by the
-/// 32-byte encryption key expected in attestation `user_data`.
+/// The enclave's public keys.
 #[derive(Serialize, Deserialize)]
 pub struct EnclaveKeys {
     /// Ed25519 public key registered on chain for response verification.
@@ -66,6 +65,8 @@ mod encryption_public_key_serde {
 }
 
 /// One shared encrypted payload and one wrapped payload key per live on-chain enclave key.
+// TODO: Replace the per-recipient HPKE encryption with a construction that directly encapsulates
+// the shared payload key.
 #[derive(Serialize, Deserialize)]
 pub struct SealedRequest {
     pub(crate) version: u8,
@@ -88,7 +89,7 @@ pub enum UnsealedRequest {
     TransferRequest {
         old_encrypted_balance: EncryptedAmount,
         new_encrypted_balance: EncryptedAmount,
-        recipients: Vec<Recipient>,
+        recipients: Vec<TransferRecipient>,
         /// Sender secret key used only to verify the balance openings and derive `sender_pk`.
         x_a: PrivateKey,
         /// Plaintext value of `old_encrypted_balance`.
@@ -127,7 +128,7 @@ impl<'de> Deserialize<'de> for EncryptedAmount {
 
 /// One transfer recipient, including its on-chain fields and enclave-only plaintext witnesses.
 #[derive(Serialize, Deserialize)]
-pub struct Recipient {
+pub struct TransferRecipient {
     /// Recipient key included in the on-chain transfer.
     pub receiver_pk: PublicKey,
     /// Exact encrypted amount included in the on-chain transfer.

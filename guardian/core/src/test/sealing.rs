@@ -27,7 +27,11 @@ fn transfer_and_unwrap_requests_round_trip() {
     // Transfer sealed to multiple enclaves.
     let request = transfer_request();
     let expected = bcs::to_bytes(&request).unwrap();
-    let siblings = [EnclaveKeyPair::generate(), EnclaveKeyPair::generate()];
+    let mut rng = rand::thread_rng();
+    let siblings = [
+        EnclaveKeyPair::generate(&mut rng),
+        EnclaveKeyPair::generate(&mut rng),
+    ];
     let fleet = [
         encryption_key(&keypair),
         encryption_key(&siblings[0]),
@@ -123,7 +127,7 @@ fn rejects_too_many_wrapped_keys_before_hpke() {
 #[test]
 fn rejects_request_without_its_encryption_public_key() {
     let keypair = EnclaveKeyPair::from_seed_for_testing();
-    let sibling = EnclaveKeyPair::generate();
+    let sibling = EnclaveKeyPair::generate(&mut rand::thread_rng());
     let sealed = seal_to_all(&[encryption_key(&sibling)], &transfer_request()).unwrap();
     assert_eq!(
         keypair.unseal(&sealed).err(),
