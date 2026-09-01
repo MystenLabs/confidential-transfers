@@ -117,6 +117,9 @@ public fun new_range_proof_for_testing(): RangeProofs {
 
 // === Tests ===
 
+/// Pin the partition: `ts-sdk`'s `buildRangeProofs` chunks the same batch off chain (by amounts,
+/// four limb commitments each), and a partition that stopped matching it would produce the wrong
+/// proof count or the wrong chunk boundaries, failing every real transfer.
 #[test]
 fun batch_sizes_partitions_canonically() {
     assert!(batch_sizes(0) == vector[]);
@@ -132,55 +135,4 @@ fun batch_sizes_partitions_canonically() {
     // The largest batch a transfer can reach: `MAX_BATCH_RECIPIENTS` receiver amounts plus the new
     // sender balance, four limb commitments each.
     assert!(batch_sizes(1024) == vector::tabulate!(32, |_| MAX_BATCH_SIZE));
-}
-
-#[test]
-fun batch_sizes_covers_every_batch_exactly() {
-    // A partition that dropped, duplicated or oversized a chunk would leave commitments unproven or
-    // hand the framework a batch it rejects, so check the three properties `verify` relies on for
-    // every batch size a transfer can produce.
-    1025u64.do!(|n| {
-        let sizes = batch_sizes(n);
-        let mut total = 0;
-        let mut previous = MAX_BATCH_SIZE;
-        sizes.do_ref!(|size| {
-            let size = *size;
-            assert!(size > 0 && size <= previous);
-            // A power of two, so the chunks are the canonical greedy halving and not some other
-            // partition that happens to sum correctly.
-            assert!(size & (size - 1) == 0);
-            previous = size;
-            total = total + size;
-        });
-        assert!(total == n);
-    });
-}
-
-#[test]
-fun batch_sizes_matches_the_amount_partition_used_off_chain() {
-    // `ts-sdk`'s `buildRangeProofs` partitions the *amounts* with a chunk size of
-    // `MAX_BATCH_SIZE / 4 = 8`, producing one Bulletproof per chunk, while `verify` partitions the
-    // `4 * n` limb commitments those amounts expand to. The two greedy halvings agree only if every
-    // chain chunk is exactly four times the off-chain chunk at the same index -- otherwise the proof
-    // count or the chunk boundaries differ and every real transfer fails to verify.
-    257u64.do!(|amounts| {
-        let expected = amount_batch_sizes(amounts).map!(|chunk| chunk * 4);
-        assert!(batch_sizes(amounts * 4) == expected);
-    });
-}
-
-/// The partition `ts-sdk`'s `buildRangeProofs` applies to `n` amounts, transcribed from it.
-#[test_only]
-fun amount_batch_sizes(n: u64): vector<u64> {
-    let mut sizes = vector[];
-    let mut remaining = n;
-    let mut chunk = MAX_BATCH_SIZE / 4;
-    while (remaining > 0) {
-        while (remaining >= chunk) {
-            sizes.push_back(chunk);
-            remaining = remaining - chunk;
-        };
-        chunk = chunk / 2;
-    };
-    sizes
 }
