@@ -114,3 +114,25 @@ fun batch_sizes(n: u64): vector<u64> {
 public fun new_range_proof_for_testing(): RangeProofs {
     RangeProofs { version: VERSION_TESTING, proofs: vector[] }
 }
+
+// === Tests ===
+
+/// Pin the partition: `ts-sdk`'s `buildRangeProofs` chunks the same batch off chain (by amounts,
+/// four limb commitments each), and a partition that stopped matching it would produce the wrong
+/// proof count or the wrong chunk boundaries, failing every real transfer.
+#[test]
+fun batch_sizes_partitions_canonically() {
+    assert!(batch_sizes(0) == vector[]);
+    assert!(batch_sizes(1) == vector[1]);
+    assert!(batch_sizes(2) == vector[2]);
+    assert!(batch_sizes(3) == vector[2, 1]);
+    assert!(batch_sizes(7) == vector[4, 2, 1]);
+    assert!(batch_sizes(31) == vector[16, 8, 4, 2, 1]);
+    assert!(batch_sizes(32) == vector[32]);
+    assert!(batch_sizes(33) == vector[32, 1]);
+    assert!(batch_sizes(36) == vector[32, 4]);
+    assert!(batch_sizes(64) == vector[32, 32]);
+    // The largest batch a transfer can reach: `MAX_BATCH_RECIPIENTS` receiver amounts plus the new
+    // sender balance, four limb commitments each.
+    assert!(batch_sizes(1024) == vector::tabulate!(32, |_| MAX_BATCH_SIZE));
+}
