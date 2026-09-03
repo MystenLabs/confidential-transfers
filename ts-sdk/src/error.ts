@@ -32,7 +32,7 @@ export class InsufficientBalanceError extends ContraError {
 	readonly spendable: bigint;
 	readonly scope: 'active' | 'total';
 	constructor(amount: bigint, spendable: bigint, scope: 'active' | 'total') {
-		super(`Insufficient balance: trying to spend ${amount} but ${scope} balance is ${spendable}.`);
+		super(`Insufficient ${scope} balance for the requested amount.`);
 		this.amount = amount;
 		this.spendable = spendable;
 		this.scope = scope;
