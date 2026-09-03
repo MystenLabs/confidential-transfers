@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["guardian/core"]
+members = ["guardian/core", "guardian/enclave"]
 exclude = ["utils/bulletproofs-wasm"]
 
 [workspace.package]
