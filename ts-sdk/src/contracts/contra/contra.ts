@@ -25,10 +25,11 @@
  * 6.  Rotate, enable, or disable the auditor keys via `update_auditors` (using the
  *     ManagementCap), which sets the parallel `current_pks` / `previous_pks` key
  *     vectors. A transfer is accepted under either set, so pointing `current_pks`
- *     at new keys while `previous_pks` still holds the outgoing keys gives a grace
- *     window for in-flight transfers; passing empty `current_pks` disables
- *     auditing. Auditing is per-transfer and each transfer carries
- *     auditor-readable ciphertexts of the amount, one set per auditor key.
+ *     at the new key while `previous_pks` still holds the outgoing one gives a
+ *     grace window for in-flight transfers; passing empty `current_pks` disables
+ *     auditing. Each vector holds at most one key. Auditing is per-transfer: a
+ *     transfer carries auditor-readable ciphertexts of the amount under the single
+ *     key its package verifies against.
  * 7.  [Advanced] Set the policy for the confidential token (using the
  *     TreasuryCap). Policies define which operations are permissioned. Currently
  *     supported permissioned operations are:
@@ -357,10 +358,10 @@ export interface NewConfidentialTokenOptions {
  * Requires a `&mut TreasuryCap` for authorization, this is to prevent frozen
  * TreasuryCaps from being used.
  *
- * Sets the token's auditor keys to `auditor_public_keys` (per-transfer auditing);
- * every transfer will carry one auditor-readable ciphertext set per key. Pass an
- * empty vector to start with auditing disabled. The issuer can enable, rotate, or
- * disable the keys later via `update_auditors`.
+ * Sets the token's auditor key to `auditor_public_keys`, which holds at most one
+ * key (per-transfer auditing); every transfer will carry an auditor-readable
+ * ciphertext set under it. Pass an empty vector to start with auditing disabled.
+ * The issuer can enable, rotate, or disable the key later via `update_auditors`.
  *
  * Returns the created `ConfidentialToken` and a `ManagementCap` that can be used
  * to perform administrative operations for this token.
@@ -1461,9 +1462,9 @@ export interface UpdateAuditorsOptions {
 	typeArguments: [string];
 }
 /**
- * Replace this confidential token's auditor keys. `current_pks` is tried first
- * when verifying a transfer, then `previous_pks`. The two do not have to be the
- * same length. The caller can drive a grace policy: rotate with
+ * Replace this confidential token's auditor keys, each vector holding at most one
+ * key. `current_pks` is tried first when verifying a transfer, then
+ * `previous_pks`. The caller can drive a grace policy: rotate with
  * `update_auditors(new, old_current)` and end the grace with
  * `update_auditors(new, [])`.
  */
