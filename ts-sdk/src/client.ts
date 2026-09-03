@@ -1324,7 +1324,7 @@ export class ContraClient {
 		auth,
 	}: UnwrapOptions): Promise<(tx: Transaction) => TransactionResult> {
 		if (amount <= 0n) {
-			throw new InvalidArgumentError(`Unwrap amount must be positive, got ${amount}.`);
+			throw new InvalidArgumentError('Unwrap amount must be positive.');
 		}
 		const { address, tokenType } = tokenAccount;
 
