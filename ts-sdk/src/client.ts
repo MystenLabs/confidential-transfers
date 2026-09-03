@@ -151,6 +151,9 @@ export class ContraClient {
 	 * Multi-get version of `#getAccountState`. Issues a single
 	 * `core.getObjects` RPC for all addresses, preserving order. Throws
 	 * `TokenAccountDoesNotExistError` if any address has no `TokenAccount<T>` for the token.
+	 *
+	 * The returned keys are unauthenticated RPC data: a hostile endpoint can substitute its own,
+	 * and transfer amounts are encrypted under whatever it returns.
 	 */
 	async #getAccountStates(
 		addresses: readonly string[],
@@ -357,7 +360,8 @@ export class ContraClient {
 	 * Fetch the current per-transfer auditor configuration for the given token type: the current
 	 * auditor public keys (one per auditor; empty when auditing is disabled). Every transfer must carry
 	 * one auditor-readable ciphertext set per key. (The rotation grace window — the `previous_pks` set —
-	 * is enforced entirely on chain, so senders only need the current keys.)
+	 * is enforced entirely on chain, so senders only need the current keys.) Like the receiver keys,
+	 * these are unauthenticated RPC data.
 	 *
 	 * @example
 	 * ```ts
