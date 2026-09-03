@@ -75,6 +75,11 @@ export class TokenAccount {
 	 * `verifiedDecDst = dst(newSessionId(packageConfig, address, tokenType), PROTOCOL_VERIFIED_DEC)`
 	 * and checks the proof with
 	 * `ciphertext.verifyDecryption(verifiedDecDst, publicKey, value, proof)`.
+	 *
+	 * Only open a ciphertext the wallet fetched from chain itself: this decrypts whatever it is
+	 * given under the account's long-term key, and a supplied ciphertext may be a re-randomized —
+	 * hence unrecognizable — copy of the owner's own balance. The proof is bound to the account,
+	 * not to a verifier, so its recipient can replay it to anyone.
 	 */
 	decryptWithProof(
 		ciphertext: Ciphertext,
