@@ -1070,8 +1070,8 @@ export class ContraClient {
 	 * ```
 	 *
 	 * SDK-thrown:
-	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries, or
-	 *   contains the sender's own address.
+	 * - `InvalidArgumentError` — `recipients` is empty, has more than 255 entries,
+	 *   contains the sender's own address, or has an amount outside `[0, 2^64)`.
 	 * - `ReceiverDoesNotAcceptDepositsError` — at least one receiver has paused encrypted
 	 *   deposits or has a per-account freeze active.
 	 * - `InsufficientBalanceError` — total amount exceeds the spendable balance (active,
@@ -1107,6 +1107,15 @@ export class ContraClient {
 		const normalizedSender = normalizeSuiAddress(senderAddress);
 		if (recipients.some((r) => normalizeSuiAddress(r.receiverAddress) === normalizedSender)) {
 			throw new InvalidArgumentError(`Cannot transfer to yourself (${senderAddress}).`);
+		}
+
+		const outOfRange = recipients.flatMap((r, i) =>
+			r.amount < 0n || r.amount >= MAX_AMOUNT_EXCLUSIVE ? [i] : [],
+		);
+		if (outOfRange.length > 0) {
+			throw new InvalidArgumentError(
+				`Transfer amounts must be in [0, 2^64); out of range at index ${outOfRange.join(', ')}.`,
+			);
 		}
 
 		// Fetch every receiver's state in a single multi-get RPC. Surface every
@@ -1396,6 +1405,9 @@ interface AccountState {
 
 /** Max recipients in a single `transferBatch` PTB. Mirrors `MAX_BATCH_RECIPIENTS` in `contra.move`. */
 const MAX_BATCH_RECIPIENTS = 255;
+
+/** Exclusive upper bound on any amount the protocol encodes as four u16 limbs. */
+const MAX_AMOUNT_EXCLUSIVE = 1n << 64n;
 
 /** A prepared receiver amount: its four well-formed limbs (value/blinding/ciphertext) and its pk. */
 type PreparedAmount = { receiverPk: PublicKey; encAmountReceiver: WellFormedLimb[] };
