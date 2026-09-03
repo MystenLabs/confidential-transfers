@@ -207,6 +207,8 @@ Alongside the controls above, the issuer can register an auditor public key so a
 
 Independently of the auditor flow, a user may voluntarily reveal a decrypted value — a balance or the amount on a specific `TransferEvent` — alongside a zero-knowledge proof that the cleartext matches the on-chain ciphertext under their public key. The verifier checks the proof against the public key without learning the user's secret key.
 
+A wallet should only open ciphertexts it fetched from chain itself — a supplied one carries no evidence of its origin and may be a disguised copy of the user's own balance. The proof is bound to the account, not to a verifier, so its recipient can show it to anyone.
+
 ### Permissioned user flows [advanced]
 
 By default `register`, `wrap`, and `unwrap` are open to any holder of `T`. The issuer can install a policy that gates any subset of those operations behind their own contract via a witness type. The wrapper functions are then free to enforce arbitrary checks — KYC, sanctions/screening lists, allowlists, rate limits, per-user caps — before authorizing the underlying flow. Confidential transfers between already-registered accounts remain permissionless even under the strictest policy, so user-to-user privacy is unaffected. The [closed-loop app](apps/closed-loop/) is an example that gates `register` behind a whitelist.
