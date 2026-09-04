@@ -74,6 +74,7 @@ flowchart LR
 
 - **[`move/`](move/)** -- on-chain Move contracts, including:
   - **[`contra.move`](move/sources/contra.move)** -- main entry point with the high-level interfaces for both issuers and users; see the module-level doc comment at the top of the file for the full list of flows.
+  - **[`guardian/`](move/guardian/)** -- a separate canonical Guardian package that can be deployed alongside Contra and enabled as its authority. It provides an AWS Nitro enclave second factor for protected operations. Each issuer can instantiate one derived `Guardian<T>` for its `ConfidentialToken<T>`, enable or disable it through the Guardian package, and configure its PCRs, operator, and enclave keys. Issuers can still deploy and enable a custom authority package instead.
   - **[`twisted_elgamal.move`](move/sources/twisted_elgamal.move)** -- the Twisted ElGamal encryption scheme used on-chain.
 - **[`ts-sdk/`](ts-sdk/)** -- TypeScript SDKs that mirror the Move modules:
   - **[`ContraClient`](ts-sdk/src/client.ts)** -- client SDK, including all the user flows.
@@ -175,6 +176,11 @@ In addition to the steps above, the issuer can gate selected user flows behind t
 
 See the [closed-loop app](apps/closed-loop/) for an example that gates `register` behind a whitelist.
 
+#### Approval authority setup
+
+Independently of `Policy`, Contra can require a second factor for protected operations. An authority's defining module creates and privately stores an `AuthorityCap<T>` bound to its object ID. `ConfidentialToken<T>` stores the enabled authority ID as an `Option<ID>`; `none` means authority checks are disabled. Through an authority implementation such as Guardian, the `ManagementCap<T>` holder can enable an authority, replace the enabled authority, or disable its checks. Guardian exposes these operations through `guardian::enable` and `guardian::disable`, which authenticate its private authority cap.
+
+While the authority is enabled, every protected operation requires a one-use `Approval<T>`. After performing its own checks, the authority calls Contra's `mint_approval` with its capability and the signed operation digest (see [`authority.move`](move/sources/authority.move)). Contra verifies that the capability ID matches the token's enabled authority ID. The operation binding commits to the account key, the exact encrypted limbs of the relevant balances, and the operation-specific arguments. Where applicable, receiver public keys and amounts are bound; receiver addresses are deliberately excluded because Move account ownership and deny-list checks enforce them separately. Contra reconstructs the binding from on-chain state and the submitted operation before consuming the approval. The approval is rejected if either its authority ID or digest does not match. With authority checks disabled, minting returns `none`, a stray approval is discarded, and all normal authorization, policy, compliance, auditor, and zero-knowledge proof checks still apply.
 
 ## Compliance
 
