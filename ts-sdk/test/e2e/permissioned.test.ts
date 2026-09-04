@@ -29,6 +29,7 @@ import {
 	buildEncryptedAmount,
 	buildEncryptedAmounts,
 	buildInRangeAmount,
+	buildNoApproval,
 	buildPublicKeyVector,
 	buildRangeProofs,
 	point,
@@ -224,6 +225,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						handles: auditorHandles,
 						proof: auditorProof,
 					}),
+					approval: buildNoApproval(pid, tokenIssuer.tokenType),
 				},
 			}),
 		);
@@ -398,6 +400,7 @@ describe('permissioned & uncovered flows (devnet)', () => {
 						newBalanceRangeProofs: newBalanceRange,
 						amount: callAmount,
 						balanceProof: buildDdhProof(pid, balanceProof),
+						approval: buildNoApproval(pid, tokenIssuer.tokenType),
 					},
 				}),
 			);

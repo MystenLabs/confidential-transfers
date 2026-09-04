@@ -28,6 +28,7 @@ import {
 	buildEncryptedAmounts,
 	buildGVector,
 	buildInRangeAmount,
+	buildNoApproval,
 	buildOptionalPublicKey,
 	buildPublicKey,
 	buildPublicKeyVector,
@@ -1246,6 +1247,7 @@ export class ContraClient {
 						seedPoint: point(randomness.seedPoint.toBytes()),
 						balanceProof: buildDdhProof(pid, balanceProof),
 						auditorPackage: buildAuditorPackageOption(pid, auditorData),
+						approval: buildNoApproval(pid, tokenType),
 					},
 				}),
 			);
@@ -1370,6 +1372,7 @@ export class ContraClient {
 						newBalanceRangeProofs: newBalanceRange,
 						amount,
 						balanceProof: buildDdhProof(pid, balanceProof),
+						approval: buildNoApproval(pid, tokenType),
 					},
 				}),
 			);
