@@ -1,10 +1,29 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// A confidential token can enable one authority at a time. When an authority is enabled, each
-/// protected operation must carry an `Approval<T>` over the operation digest in addition to its
-/// required zero-knowledge proofs. Custom authority implementations authenticate with a privately
-/// stored `AuthorityCap<T>`; Contra's canonical Nitro authority uses package-private functions.
+/// Contra supports optional authority approval for protected operations. A confidential token can
+/// enable one authority at a time; while enabled, each protected operation must carry an
+/// `Approval<T>` over its digest in addition to the required zero-knowledge proofs. The issuer uses
+/// `contra::enable_authority`, authenticated by `ManagementCap<T>`, to enable either the canonical
+/// `Nitro` authority or a `Custom { id }` authority. The issuer uses `contra::disable_authority`,
+/// also authenticated by `ManagementCap<T>`, to replace the active authority with
+/// `AuthorityKind::None`.
+///
+/// For the canonical Nitro authority, see `nitro_authority.move`:
+///
+/// 1. The issuer creates the token's singleton `NitroAuthority<T>` with `nitro_authority::new` and
+///    shares it. The issuer and designated operator configure it through the `nitro_authority`
+///    module.
+/// 2. The client calls `nitro_authority::new_approval`, which verifies the submitted signature
+///    against a registered key and invokes package-private
+///    `contra::mint_nitro_authority_approval`.
+/// 3. The client passes the resulting `Option<Approval<T>>` to a protected operation. Contra
+///    requires it while the authority is enabled, reconstructs the operation binding, and validates
+///    and consumes the approval against that binding.
+///
+/// A custom authority creates and privately stores an `AuthorityCap<T>` bound to its object ID. The
+/// issuer enables `Custom { id }`; after performing its own checks, the authority calls
+/// `contra::mint_custom_authority_approval` to mint an approval.
 module contra::authority;
 
 use contra::{encrypted_amount::EncryptedAmount, twisted_elgamal::PublicKey};

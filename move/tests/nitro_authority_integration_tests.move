@@ -663,7 +663,7 @@ fun replaced_nitro_authority_cannot_mint_approval() {
 
 // === Protected operation approval matrix ===
 //
-// Tested operations: transfer and unwrap. TODO: add rekey and balance update.
+// TODO: extend this matrix when more protected operations are added.
 // `disabled` means the token has `AuthorityKind::None` configured.
 //
 // | authority state | approval                                    | balance proof | result                     |

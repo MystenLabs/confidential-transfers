@@ -982,8 +982,8 @@ public fun set_policy<T, W>(
 //   `mint_custom_authority_approval` with that capability.
 //
 // 3. Approval consumption:
-// - For both the canonical Nitro authority and custom authorities, `batched_transfer` and `unwrap`
-//   require an approval while the authority is enabled and consume it against the operation binding.
+// - For both the canonical Nitro authority and custom authorities, protected operations require an
+//   approval while the authority is enabled and consume it against the operation binding.
 
 /// Enable `new_authority` for protected operations. The issuer calls this public function directly
 /// using its `ManagementCap<T>`. Enabling a new authority replaces the current authority; enabling

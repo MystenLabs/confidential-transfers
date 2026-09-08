@@ -74,7 +74,6 @@ flowchart LR
 
 - **[`move/`](move/)** -- on-chain Move contracts, including:
   - **[`contra.move`](move/sources/contra.move)** -- main entry point with the high-level interfaces for both issuers and users; see the module-level doc comment at the top of the file for the full list of flows.
-  - **[`nitro_authority.move`](move/sources/nitro_authority.move)** -- `nitro_authority` is Contra's canonical authority for protected operations, backed by AWS Nitro enclaves. Each issuer can create one derived `NitroAuthority<T>` for its `ConfidentialToken<T>`, enable or disable it, and configure its PCRs, operator, and enclave keys.
   - **[`twisted_elgamal.move`](move/sources/twisted_elgamal.move)** -- the Twisted ElGamal encryption scheme used on-chain.
 - **[`ts-sdk/`](ts-sdk/)** -- TypeScript SDKs that mirror the Move modules:
   - **[`ContraClient`](ts-sdk/src/client.ts)** -- client SDK, including all the user flows.
@@ -178,9 +177,9 @@ See the [closed-loop app](apps/closed-loop/) for an example that gates `register
 
 #### Approval authority setup
 
-Contra can require authority approval as a second factor in addition to the zero-knowledge proofs required by protected operations. `ConfidentialToken<T>` stores an `AuthorityKind`: `None` disables authority checks, `Nitro` selects the canonical `NitroAuthority<T>`, and `Custom { id }` selects another authority implementation. The `ManagementCap<T>` holder calls `contra::enable_authority` with `AuthorityKind::Nitro` or `AuthorityKind::Custom { id }` to enable or replace the authority, and calls `contra::disable_authority` to set it to `AuthorityKind::None`.
+An issuer may define an authority for its token, either based on AWS Nitro or customized. While enabled, the authority provides an additional approval factor for protected operations alongside their zero-knowledge proofs.
 
-While the authority is enabled, every protected operation requires a one-use `Approval<T>`. After performing its own checks, the canonical `NitroAuthority<T>` calls package-private `contra::mint_nitro_authority_approval`. A custom authority instead obtains an `AuthorityCap<T>` bound to its object ID and presents it to Contra's public `mint_custom_authority_approval` function with the approved operation digest (see [`authority.move`](move/sources/authority.move)). Each minting path verifies that its authority kind is currently enabled. Contra reconstructs the operation binding and consumes the approval if its digest matches. When the configured authority is `AuthorityKind::None`, minting returns `none` and any supplied approval is discarded; all other authorization, compliance, auditing, and zero-knowledge proof checks remain enforced.
+Before submitting a protected operation, the client obtains a one-use approval from the configured authority and includes it in the same transaction. Contra verifies that the approval matches the operation being executed.
 
 ## Compliance
 
