@@ -2649,7 +2649,7 @@ fun discard_without_authority_discards_approval() {
 }
 
 #[test]
-fun consume_with_authority_accepts_matching_approval() {
+fun consume_accepts_matching_digest() {
     let (pk, balance, new_balance) = binding_parts();
     let authority_id = object::id_from_address(@0xA);
     let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
@@ -2660,7 +2660,7 @@ fun consume_with_authority_accepts_matching_approval() {
         &authority_cap,
         authority::digest_for_testing(&binding),
     );
-    approval.verify_and_consume(&authority, binding);
+    approval.verify_and_consume(binding);
     unit_test::destroy(authority_cap);
 }
 
@@ -2675,29 +2675,8 @@ fun consume_rejects_other_digest() {
         &authority_cap,
         authority::digest_for_testing(&authority::unwrap_binding(pk, balance, &new_balance, 41)),
     );
-    approval.verify_and_consume(
-        &authority,
-        authority::unwrap_binding(pk, balance, &new_balance, 40),
-    );
+    approval.verify_and_consume(authority::unwrap_binding(pk, balance, &new_balance, 40));
     unit_test::destroy(authority_cap);
-}
-
-#[test, expected_failure(abort_code = ::contra::authority::EWrongAuthority)]
-fun consume_rejects_approval_from_previous_authority_object() {
-    let (pk, balance, new_balance) = binding_parts();
-    let binding = authority::unwrap_binding(pk, balance, &new_balance, 40);
-    let previous_id = object::id_from_address(@0xA);
-    let previous_authority_cap = authority::new_authority_cap<TestCurrency>(previous_id);
-    let approval = authority::mint_custom_authority_approval<TestCurrency>(
-        &authority::custom_authority_kind_for_testing(previous_id),
-        &previous_authority_cap,
-        authority::digest_for_testing(&binding),
-    );
-    let current_id = object::id_from_address(@0xB);
-    let current_authority_cap = authority::new_authority_cap<TestCurrency>(current_id);
-    approval.verify_and_consume(&authority::custom_authority_kind_for_testing(current_id), binding);
-    unit_test::destroy(previous_authority_cap);
-    unit_test::destroy(current_authority_cap);
 }
 
 #[test, expected_failure(abort_code = ::contra::authority::EWrongAuthority)]

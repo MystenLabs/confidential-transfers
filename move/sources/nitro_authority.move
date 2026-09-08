@@ -5,9 +5,10 @@
 /// addition to the zero-knowledge proofs required by a `ConfidentialToken`'s protected operations.
 /// The issuer creates its `NitroAuthority<T>` with `new`, enables it by calling
 /// `contra::enable_authority` with `AuthorityKind::Nitro`, and can disable its checks with
-/// `contra::disable_authority`. If enabled, the client must present an enclave-signed operation
-/// digest to `nitro_authority::new_approval` to mint an approval, then pass the returned
-/// `Option<Approval<T>>` to the protected operation in the same PTB.
+/// `contra::disable_authority`, which sets the configured authority to `AuthorityKind::None`. If
+/// enabled, the client must present an enclave-signed operation digest to
+/// `nitro_authority::new_approval` to mint an approval, then pass the returned `Option<Approval<T>>`
+/// to the protected operation in the same PTB.
 ///
 /// The issuer can update PCRs, minimum version, and the operator. Only the operator can register
 /// attested enclave keys; both the issuer and operator can remove them. The operator also sets the
@@ -16,7 +17,7 @@
 /// with `update` immediately prunes every older-version key.
 module contra::nitro_authority;
 
-use contra::{authority::Approval, contra::{Self, ConfidentialToken, ManagementCap}};
+use contra::{authority::Approval, contra::{Self, ConfidentialToken, ManagementCap}, events};
 use std::{bcs, string::String};
 use sui::{derived_object, ed25519, nitro_attestation::NitroAttestationDocument};
 
@@ -81,31 +82,6 @@ public enum NitroAuthorityRequest has copy, drop {
     V1 { digest: vector<u8> },
 }
 
-// === Events ===
-
-/// The canonical `NitroAuthority<T>` core configuration, emitted on creation and after `update` or
-/// `set_url`.
-public struct NitroAuthorityUpdatedEvent<phantom T> has copy, drop {
-    nitro_authority_id: ID,
-    operator: address,
-    url: String,
-    version: u16,
-    min_version: u16,
-    pcrs: Pcrs,
-}
-
-/// An enclave key was registered for the canonical `NitroAuthority<T>`.
-public struct EnclaveRegisteredEvent<phantom T> has copy, drop {
-    key_index: u8,
-    key: NitroAuthorityEnclaveKey,
-}
-
-/// An enclave key was removed or pruned from the canonical `NitroAuthority<T>`.
-public struct EnclaveRemovedEvent<phantom T> has copy, drop {
-    key_index: u8,
-    key: NitroAuthorityEnclaveKey,
-}
-
 // === Public Functions: called by issuer ===
 
 /// Create the confidential token's canonical `NitroAuthority<T>` with the expected PCRs and an
@@ -139,13 +115,19 @@ public fun new<T>(
     nitro_authority
 }
 
+/// Share a newly created `NitroAuthority<T>`. The issuer calls this public function after `new`,
+/// optionally after enabling Nitro in the same PTB.
+public fun share<T>(nitro_authority: NitroAuthority<T>) {
+    transfer::share_object(nitro_authority);
+}
+
 // === Public Functions: called by client ===
 
 /// Create an approval for an enclave-signed operation `digest`. The client calls this public
 /// function before the protected operation in the same PTB. It returns `none` without checking
-/// the key or signature when no authority is enabled. Otherwise it requires the Nitro authority
-/// to be enabled, verifies the signature with the selected enclave key, and returns an `Approval<T>`.
-/// Contra reconstructs the same digest when consuming the approval.
+/// the key or signature when `AuthorityKind::None` is configured. Otherwise it requires the Nitro
+/// authority to be enabled, verifies the signature with the selected enclave key, and returns an
+/// `Approval<T>`. Contra reconstructs the same digest when consuming the approval.
 public fun new_approval<T>(
     self: &NitroAuthority<T>,
     ct: &ConfidentialToken<T>,
@@ -167,14 +149,41 @@ public fun new_approval<T>(
     })
 }
 
-// === Entry Functions: called by issuer ===
+// === Public Functions: called by operator ===
 
-/// Share a newly created `NitroAuthority<T>`. The issuer calls this entry function after `new`,
-/// optionally after enabling Nitro in the same PTB; ownership of the unshared object authorizes the
-/// call.
-entry fun share<T>(nitro_authority: NitroAuthority<T>) {
-    transfer::share_object(nitro_authority);
+/// Register an enclave whose attestation document matches the Nitro authority's PCRs. The operator
+/// calls this public function with an attestation document created earlier in the same PTB, and
+/// `TxContext.sender` must equal the configured operator. The function parses `signing_pk || enc_pk`
+/// from `user_data` and stores the key pair in the lowest free slot.
+public fun register_enclave<T>(
+    self: &mut NitroAuthority<T>,
+    document: NitroAttestationDocument,
+    ctx: &mut TxContext,
+) {
+    assert!(ctx.sender() == self.operator, ENotOperator);
+    let entries = document.pcrs();
+    assert!(
+        entries[0].index() == 0 && *entries[0].value() == self.pcrs.0 &&
+        entries[1].index() == 1 && *entries[1].value() == self.pcrs.1 &&
+        entries[2].index() == 2 && *entries[2].value() == self.pcrs.2,
+        EPcrMismatch,
+    );
+    let user_data = document.user_data();
+    assert!(user_data.is_some(), EInvalidUserData);
+    let mut user_data = *user_data.borrow();
+    assert!(user_data.length() == 2 * KEY_LENGTH, EInvalidUserData);
+    let signing_pk = Ed25519PublicKey(user_data.take(KEY_LENGTH));
+    let enc_pk = X25519PublicKey(user_data);
+    let (key_index, key) = self.insert_key(signing_pk, enc_pk);
+    events::emit_enclave_registered<T>(
+        key_index,
+        key.signing_pk.0,
+        key.enc_pk.0,
+        key.version,
+    );
 }
+
+// === Entry Functions: called by issuer ===
 
 /// Update the expected PCRs, minimum accepted version, and operator. The issuer calls this entry
 /// function using its `ManagementCap<T>`, which restricts the update to the issuer. Changing the
@@ -225,33 +234,6 @@ entry fun remove_enclave_as_issuer<T>(
 
 // === Entry Functions: called by operator ===
 
-/// Register an enclave whose attestation document matches the Nitro authority's PCRs. The operator
-/// calls this entry function, and `TxContext.sender` must equal the configured operator; no
-/// capability is required. The function parses `signing_pk || enc_pk` from `user_data` and stores
-/// the key pair in the lowest free slot.
-entry fun register_enclave<T>(
-    self: &mut NitroAuthority<T>,
-    document: NitroAttestationDocument,
-    ctx: &mut TxContext,
-) {
-    assert!(ctx.sender() == self.operator, ENotOperator);
-    let entries = document.pcrs();
-    assert!(
-        entries[0].index() == 0 && *entries[0].value() == self.pcrs.0 &&
-        entries[1].index() == 1 && *entries[1].value() == self.pcrs.1 &&
-        entries[2].index() == 2 && *entries[2].value() == self.pcrs.2,
-        EPcrMismatch,
-    );
-    let user_data = document.user_data();
-    assert!(user_data.is_some(), EInvalidUserData);
-    let mut user_data = *user_data.borrow();
-    assert!(user_data.length() == 2 * KEY_LENGTH, EInvalidUserData);
-    let signing_pk = Ed25519PublicKey(user_data.take(KEY_LENGTH));
-    let enc_pk = X25519PublicKey(user_data);
-    let (key_index, key) = self.insert_key(signing_pk, enc_pk);
-    sui::event::emit(EnclaveRegisteredEvent<T> { key_index, key });
-}
-
 /// Remove the enclave key at `key_index`. The operator calls this entry function, and `TxContext.sender`
 /// must equal the configured operator. During planned rotation, keep the old key through the grace period
 /// before calling this function; compromised keys should be removed immediately.
@@ -301,18 +283,20 @@ fun remove_enclave_key<T>(self: &mut NitroAuthority<T>, key_index: u8) {
 }
 
 fun emit_enclave_removed<T>(key_index: u8, key: NitroAuthorityEnclaveKey) {
-    sui::event::emit(EnclaveRemovedEvent<T> { key_index, key });
+    events::emit_enclave_removed<T>(key_index, key.signing_pk.0, key.enc_pk.0, key.version);
 }
 
 fun emit_updated<T>(self: &NitroAuthority<T>) {
-    sui::event::emit(NitroAuthorityUpdatedEvent<T> {
-        nitro_authority_id: self.id.to_inner(),
-        operator: self.operator,
-        url: self.url,
-        version: self.version,
-        min_version: self.min_version,
-        pcrs: self.pcrs,
-    });
+    events::emit_nitro_authority_updated<T>(
+        self.id.to_inner(),
+        self.operator,
+        self.url,
+        self.version,
+        self.min_version,
+        self.pcrs.0,
+        self.pcrs.1,
+        self.pcrs.2,
+    );
 }
 
 // === Test Helpers ===

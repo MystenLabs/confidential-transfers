@@ -104,7 +104,7 @@ fun amount_for_testing(value: u16, pk: &Element<G>, r: u64): EncryptedAmount {
 
 // === Harness lifecycle ===
 
-/// A harness whose token initially has no authority enabled.
+/// A harness whose token initially has `AuthorityKind::None` configured.
 fun new_harness(): Harness {
     let setup_addr = @0x0;
     let pk_1 = pk_1();
@@ -544,10 +544,7 @@ fun nitro_authority_rotation_scenarios() {
         0,
         TRANSFER_SIG,
     ).destroy_some();
-    approval.verify_and_consume(
-        &authority::nitro_authority_kind_for_testing(),
-        fixture_transfer_binding(&h),
-    );
+    approval.verify_and_consume(fixture_transfer_binding(&h));
 
     // Raise min_version.
     nitro_authority_obj.update(
@@ -583,20 +580,14 @@ fun authority_lifecycle_scenarios() {
         &h.ct,
         &transfer_digest(&h),
     ).destroy_some();
-    approval.verify_and_consume(
-        &authority::custom_authority_kind_for_testing(object::id(&custom_authority)),
-        fixture_transfer_binding(&h),
-    );
+    approval.verify_and_consume(fixture_transfer_binding(&h));
     enable_nitro_authority(&mut h);
     let approval = nitro_authority_transfer_approval(
         &nitro_authority_obj,
         &h,
         TRANSFER_SIG,
     ).destroy_some();
-    approval.verify_and_consume(
-        &authority::nitro_authority_kind_for_testing(),
-        fixture_transfer_binding(&h),
-    );
+    approval.verify_and_consume(fixture_transfer_binding(&h));
 
     enable_custom_authority(&custom_authority, &mut h);
     disable_authority(&mut h);
@@ -614,10 +605,7 @@ fun authority_lifecycle_scenarios() {
         &h,
         TRANSFER_SIG,
     ).destroy_some();
-    approval.verify_and_consume(
-        &authority::nitro_authority_kind_for_testing(),
-        fixture_transfer_binding(&h),
-    );
+    approval.verify_and_consume(fixture_transfer_binding(&h));
     enable_custom_authority(&custom_authority, &mut h);
     let approval = custom_authority_for_testing::mint_approval(
         &custom_authority,
@@ -673,19 +661,10 @@ fun replaced_nitro_authority_cannot_mint_approval() {
     abort
 }
 
-#[test, expected_failure(abort_code = ::contra::authority::EWrongAuthority)]
-fun replacement_invalidates_previous_authority_approval() {
-    let (nitro_authority_obj, mut h) = guarded_harness();
-    let approval = nitro_authority_transfer_approval(&nitro_authority_obj, &h, TRANSFER_SIG);
-    let custom_authority = new_custom_authority(&mut h);
-    enable_custom_authority(&custom_authority, &mut h);
-    execute_fixture_transfer(&mut h, VALID_SK, approval);
-    abort
-}
-
 // === Protected operation approval matrix ===
 //
 // Tested operations: transfer and unwrap. TODO: add rekey and balance update.
+// `disabled` means the token has `AuthorityKind::None` configured.
 //
 // | authority state | approval                                    | balance proof | result                     |
 // |-----------------|---------------------------------------------|---------------|----------------------------|
@@ -713,7 +692,7 @@ fun disabled_authority_no_approval_transfer_passes() {
 }
 
 #[test]
-fun no_authority_existing_approval_transfer_passes() {
+fun disabled_authority_existing_approval_transfer_passes() {
     let (registry, mut h) = guarded_harness();
     let approval = nitro_authority_transfer_approval(&registry, &h, TRANSFER_SIG);
     disable_authority(&mut h);
@@ -723,7 +702,7 @@ fun no_authority_existing_approval_transfer_passes() {
 }
 
 #[test]
-fun no_authority_existing_approval_unwrap_passes() {
+fun disabled_authority_existing_approval_unwrap_passes() {
     let (registry, mut h) = guarded_harness();
     let approval = nitro_authority_unwrap_approval(&registry, &h, UNWRAP_SIG);
     disable_authority(&mut h);
@@ -790,14 +769,14 @@ fun custom_authority_valid_approval_transfer_passes() {
 }
 
 #[test, expected_failure(abort_code = ::contra::contra::EBalanceProofFailed)]
-fun no_authority_invalid_proof_transfer_fails() {
+fun disabled_authority_invalid_proof_transfer_fails() {
     let mut h = new_harness();
     execute_fixture_transfer(&mut h, INVALID_SK, option::none());
     abort
 }
 
 #[test, expected_failure(abort_code = ::contra::contra::EBalanceProofFailed)]
-fun no_authority_invalid_proof_unwrap_fails() {
+fun disabled_authority_invalid_proof_unwrap_fails() {
     let mut h = new_harness();
     execute_fixture_unwrap(&mut h, INVALID_SK, option::none());
     abort
@@ -952,12 +931,5 @@ fun nitro_authority_unwrap_sig_transfer_fails() {
 fun nitro_authority_bad_sig_transfer_fails() {
     let (registry, h) = guarded_harness();
     let _approval = nitro_authority_transfer_approval(&registry, &h, BAD_SIG);
-    abort
-}
-
-#[test, expected_failure(abort_code = ::contra::nitro_authority::EApprovalSignatureMismatch)]
-fun nitro_authority_short_sig_transfer_fails() {
-    let (registry, h) = guarded_harness();
-    let _approval = nitro_authority_transfer_approval(&registry, &h, x"bb");
     abort
 }

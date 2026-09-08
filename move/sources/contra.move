@@ -168,8 +168,8 @@ public struct ConfidentialTokenV1 has drop, store {
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
     auditors: Auditors,
-    /// The enabled authority; `none` means authority checks are disabled.
-    authority: Option<AuthorityKind>,
+    /// The configured authority; `AuthorityKind::None` disables authority checks.
+    authority: AuthorityKind,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -321,7 +321,7 @@ public fun new_confidential_token<T>(
                 freeze_admins: vec_set::empty(),
                 policy: policy::permissionless(),
                 auditors: new_auditors(auditor_public_keys),
-                authority: option::none(),
+                authority: authority::none(),
             }),
         },
         ManagementCap { id: object::new(ctx) },
@@ -570,14 +570,13 @@ public fun batched_transfer<T>(
     let token = &sender[TokenAccountKey<T>()];
     assert!(!token.is_frozen, ETransferDenied);
     let inner = ct.inner();
-    if (inner.authority.is_none()) {
+    if (authority::is_none(&inner.authority)) {
         // Authority disabled, discard approval if any.
         authority::discard_approval(approval);
     } else {
         approval
             .destroy_or!(abort EApprovalRequired)
             .verify_and_consume(
-                inner.authority.borrow(),
                 authority::transfer_binding(
                     *token.pk(),
                     receiver_pks,
@@ -853,14 +852,13 @@ fun try_unwrap_internal<T>(
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
     let inner = ct.inner();
-    if (inner.authority.is_none()) {
+    if (authority::is_none(&inner.authority)) {
         // Authority disabled, discard approval if any.
         authority::discard_approval(approval);
     } else {
         approval
             .destroy_or!(abort EApprovalRequired)
             .verify_and_consume(
-                inner.authority.borrow(),
                 authority::unwrap_binding(
                     *account.pk(),
                     account.balance.active_amount(),
@@ -985,7 +983,7 @@ public fun set_policy<T, W>(
 //
 // 1. Configuration (`public`, authenticated by `ManagementCap<T>`):
 // - The issuer calls `enable_authority` with `Nitro` or `Custom { id }`.
-// - The issuer calls `disable_authority` to disable whichever authority is active.
+// - The issuer calls `disable_authority` to replace the active authority with `None`.
 //
 // 2. Approval minting:
 // - Nitro: the client calls `nitro_authority::new_approval`, which verifies the Nitro signature and
@@ -995,8 +993,35 @@ public fun set_policy<T, W>(
 //   `mint_custom_authority_approval` with that capability.
 //
 // 3. Approval consumption:
-// - For either kind, `batched_transfer` and `unwrap` validate and consume the approval against the
-//   currently enabled authority and operation binding.
+// - For both the canonical Nitro authority and custom authorities, `batched_transfer` and `unwrap`
+//   require an approval while the authority is enabled and consume it against the operation binding.
+
+/// Enable `new_authority` for protected operations. The issuer calls this public function directly
+/// using its `ManagementCap<T>`. Enabling a new authority replaces the current authority; enabling
+/// the active authority is a no-op.
+public fun enable_authority<T>(
+    ct: &mut ConfidentialToken<T>,
+    _management_cap: &ManagementCap<T>,
+    new_authority: AuthorityKind,
+) {
+    let authority = &mut ct.inner_mut().authority;
+    if (*authority == new_authority) return;
+    if (!authority::is_none(authority)) events::emit_authority_disabled<T>(*authority);
+    *authority = new_authority;
+    if (!authority::is_none(authority)) events::emit_authority_enabled<T>(new_authority);
+}
+
+/// Disable authority checks by setting the configured authority to `AuthorityKind::None`. The
+/// issuer calls this public function directly using its `ManagementCap<T>`. Calling it while
+/// `AuthorityKind::None` is already configured is a no-op.
+public fun disable_authority<T>(ct: &mut ConfidentialToken<T>, _management_cap: &ManagementCap<T>) {
+    let authority = &mut ct.inner_mut().authority;
+    if (authority::is_none(authority)) return;
+    events::emit_authority_disabled<T>(*authority);
+    *authority = authority::none();
+}
+
+// === For custom authority ===
 
 /// Create an `AuthorityCap<T>` bound to a custom authority object's ID. A custom authority package
 /// calls this public function from its constructor using the issuer's `ManagementCap<T>`, which
@@ -1009,45 +1034,17 @@ public fun new_authority_cap<T>(
     authority::new_authority_cap<T>(authority_uid.to_inner())
 }
 
-/// Enable `new_authority` for protected operations. The issuer calls this public function directly
-/// using its `ManagementCap<T>`. Enabling a new authority replaces the current authority; enabling
-/// the active authority is a no-op.
-public fun enable_authority<T>(
-    ct: &mut ConfidentialToken<T>,
-    _management_cap: &ManagementCap<T>,
-    new_authority: AuthorityKind,
-) {
-    let authority = &mut ct.inner_mut().authority;
-    if (authority.is_some()) {
-        let current = authority.borrow_mut();
-        if (*current == new_authority) return;
-        events::emit_authority_disabled<T>(*current);
-        *current = new_authority;
-    } else {
-        authority.fill(new_authority);
-    };
-    events::emit_authority_enabled<T>(new_authority);
-}
-
-/// Disable whichever authority is currently enabled. The issuer calls this public function
-/// directly using its `ManagementCap<T>`. Disabling an already-disabled authority is a no-op.
-public fun disable_authority<T>(ct: &mut ConfidentialToken<T>, _management_cap: &ManagementCap<T>) {
-    let authority = &mut ct.inner_mut().authority;
-    if (authority.is_none()) return;
-    events::emit_authority_disabled<T>(authority.extract());
-}
-
 /// Mint a custom-authority approval of `digest`. A custom authority package calls this public
 /// function after performing its own checks, using its privately stored `AuthorityCap<T>`, which
-/// must match the enabled custom authority. Returns `none` when authority checks are disabled.
+/// must match the enabled custom authority. Returns `none` when `AuthorityKind::None` is configured.
 public fun mint_custom_authority_approval<T>(
     ct: &ConfidentialToken<T>,
     authority_cap: &AuthorityCap<T>,
     digest: &vector<u8>,
 ): Option<Approval<T>> {
-    ct.inner().authority.map_ref!(|authority| {
-        authority::mint_custom_authority_approval<T>(authority, authority_cap, *digest)
-    })
+    let authority = &ct.inner().authority;
+    if (authority::is_none(authority)) return option::none();
+    option::some(authority::mint_custom_authority_approval<T>(authority, authority_cap, *digest))
 }
 
 // === Auditor flows ===
@@ -1074,9 +1071,9 @@ public(package) fun mint_nitro_authority_approval<T>(
     ct: &ConfidentialToken<T>,
     digest: &vector<u8>,
 ): Option<Approval<T>> {
-    ct.inner().authority.map_ref!(|authority| {
-        authority::mint_nitro_authority_approval<T>(authority, *digest)
-    })
+    let authority = &ct.inner().authority;
+    if (authority::is_none(authority)) return option::none();
+    option::some(authority::mint_nitro_authority_approval<T>(authority, *digest))
 }
 
 /// Borrow the confidential token's UID to claim its canonical derived Nitro authority.

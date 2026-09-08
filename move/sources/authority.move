@@ -25,16 +25,17 @@ public struct AuthorityCap<phantom T> has store {
 
 /// Identifies an authority implementation.
 public enum AuthorityKind has copy, drop, store {
+    /// Authority checks are disabled while this variant is configured.
+    None,
     /// Contra's canonical Nitro enclave authority.
     Nitro,
     /// A custom authority implemented by another package.
     Custom { id: ID },
 }
 
-/// A one-use hot-potato approval bound to the enabled authority and one operation digest. It must
-/// be consumed by a protected operation in the same PTB.
+/// A one-use hot-potato approval bound to one operation digest. It must be consumed by a protected
+/// operation in the same PTB.
 public struct Approval<phantom T> {
-    authority: AuthorityKind,
     digest: vector<u8>,
 }
 
@@ -57,6 +58,18 @@ public enum Binding has drop {
 }
 
 // === Package functions ===
+
+/// Return `AuthorityKind::None`. `contra` uses this package-only function when creating a
+/// confidential token and disabling authority checks.
+public(package) fun none(): AuthorityKind {
+    AuthorityKind::None
+}
+
+/// Whether `authority` is `AuthorityKind::None`. `contra` uses this package-only function before
+/// minting or consuming an approval and when updating the configured authority.
+public(package) fun is_none(authority: &AuthorityKind): bool {
+    *authority == AuthorityKind::None
+}
 
 /// Construct the operation binding for a confidential transfer. `contra::batched_transfer` calls
 /// this package-only function before consuming an approval.
@@ -109,7 +122,7 @@ public(package) fun mint_custom_authority_approval<T>(
 ): Approval<T> {
     let expected = AuthorityKind::Custom { id: authority_cap.authority_id };
     assert!(*authority == expected, EWrongAuthority);
-    Approval { authority: expected, digest }
+    Approval { digest }
 }
 
 /// Mint an approval from Contra's canonical Nitro authority. `contra::mint_nitro_authority_approval`
@@ -120,28 +133,24 @@ public(package) fun mint_nitro_authority_approval<T>(
     digest: vector<u8>,
 ): Approval<T> {
     assert!(*authority == AuthorityKind::Nitro, EWrongAuthority);
-    Approval { authority: AuthorityKind::Nitro, digest }
+    Approval { digest }
 }
 
-/// Destroy any supplied approval when authority checks are disabled. `contra::batched_transfer` and
-/// `contra::unwrap` call this package-only function after observing that authority is disabled; no
-/// capability is required. The `Option` must be consumed explicitly because `Approval` does not
-/// have `drop`.
+/// Destroy any supplied approval while `AuthorityKind::None` is configured. `contra::batched_transfer`
+/// and `contra::unwrap` call this package-only function after observing that authority checks are
+/// disabled; no capability is required. The `Option` must be consumed explicitly because `Approval`
+/// does not have `drop`.
 public(package) fun discard_approval<T>(approval: Option<Approval<T>>) {
     approval.do!(|approval| {
-        let Approval { authority: _, digest: _ } = approval;
+        let Approval { digest: _ } = approval;
     });
 }
 
-/// Verify and consume an approval against the enabled authority and operation `binding`.
-/// `contra::batched_transfer` and `contra::unwrap` call this package-only function.
-public(package) fun verify_and_consume<T>(
-    approval: Approval<T>,
-    enabled_authority: &AuthorityKind,
-    binding: Binding,
-) {
-    let Approval { authority, digest } = approval;
-    assert!(authority == *enabled_authority, EWrongAuthority);
+/// Verify and consume an approval against operation `binding`. `contra::batched_transfer` and
+/// `contra::unwrap` call this package-only function after requiring an approval while an authority
+/// is enabled.
+public(package) fun verify_and_consume<T>(approval: Approval<T>, binding: Binding) {
+    let Approval { digest } = approval;
     assert!(digest == binding.digest(), EApprovalMismatch);
 }
 
