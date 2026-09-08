@@ -3,7 +3,11 @@
 
 module contra::events;
 
-use contra::{encrypted_amount::EncryptedAmount, twisted_elgamal::PublicKey};
+use contra::{
+    authority::AuthorityKind,
+    encrypted_amount::EncryptedAmount,
+    twisted_elgamal::PublicKey
+};
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -14,14 +18,14 @@ public struct NewConfidentialTokenEvent<phantom T>() has copy, drop;
 /// A policy is updated for a confidential token.
 public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop;
 
-/// The authority object identified by `authority_id` is now active for token `T`.
+/// `authority` is now active for token `T`.
 public struct AuthorityEnabledEvent<phantom T> has copy, drop {
-    authority_id: ID,
+    authority: AuthorityKind,
 }
 
-/// External authority checks by `authority_id` are now disabled for token `T`.
+/// Authority checks by `authority` are now disabled for token `T`.
 public struct AuthorityDisabledEvent<phantom T> has copy, drop {
-    authority_id: ID,
+    authority: AuthorityKind,
 }
 
 /// A new token account is registered for an account for a token type `T` with a public key `pk`.
@@ -149,12 +153,12 @@ public(package) fun emit_policy_update<T, W>(permissioned_operations: vector<u8>
     event::emit(PolicyUpdateEvent<T, W>(permissioned_operations));
 }
 
-public(package) fun emit_authority_enabled<T>(authority_id: ID) {
-    event::emit(AuthorityEnabledEvent<T> { authority_id });
+public(package) fun emit_authority_enabled<T>(authority: AuthorityKind) {
+    event::emit(AuthorityEnabledEvent<T> { authority });
 }
 
-public(package) fun emit_authority_disabled<T>(authority_id: ID) {
-    event::emit(AuthorityDisabledEvent<T> { authority_id });
+public(package) fun emit_authority_disabled<T>(authority: AuthorityKind) {
+    event::emit(AuthorityDisabledEvent<T> { authority });
 }
 
 public(package) fun emit_new_registration<T>(owner: address, pk: PublicKey) {

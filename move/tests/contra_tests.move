@@ -2560,9 +2560,12 @@ fun binding_digests_are_domain_separated() {
         &vector[copy new_balance],
     );
     let unwrap = authority::unwrap_binding(pk, balance, &new_balance, 40);
-    assert!(transfer.digest() != unwrap.digest());
+    assert!(authority::digest_for_testing(&transfer) != authority::digest_for_testing(&unwrap));
     // A different amount changes the digest, as does another receiver set or receiver order.
-    assert!(authority::unwrap_binding(pk, balance, &new_balance, 41).digest() != unwrap.digest());
+    assert!(
+        authority::digest_for_testing(&authority::unwrap_binding(pk, balance, &new_balance, 41)) !=
+            authority::digest_for_testing(&unwrap),
+    );
     let pk_2 = public_key(ristretto255::g_generator());
     let amounts = vector[new_balance, new_balance];
     let two = authority::transfer_binding(
@@ -2579,8 +2582,8 @@ fun binding_digests_are_domain_separated() {
         &new_balance,
         &amounts,
     );
-    assert!(two.digest() != transfer.digest());
-    assert!(two.digest() != swapped.digest());
+    assert!(authority::digest_for_testing(&two) != authority::digest_for_testing(&transfer));
+    assert!(authority::digest_for_testing(&two) != authority::digest_for_testing(&swapped));
 }
 
 #[test]
@@ -2621,12 +2624,12 @@ fun transfer_binding_commits_to_exact_limbs() {
         &zero,
         &vector[redistributed],
     );
-    assert!(original.digest() != changed.digest());
+    assert!(authority::digest_for_testing(&original) != authority::digest_for_testing(&changed));
 }
 
 #[test]
 fun discard_without_authority_accepts_none() {
-    authority::discard_optional_approval<TestCurrency>(option::none());
+    authority::discard_approval<TestCurrency>(option::none());
 }
 
 #[test]
@@ -2634,13 +2637,14 @@ fun discard_without_authority_discards_approval() {
     let (pk, balance, new_balance) = binding_parts();
     let binding = authority::unwrap_binding(pk, balance, &new_balance, 40);
     let authority_id = object::id_from_address(@0xA);
-    let authority_cap = authority::new_authority_cap_for_testing<TestCurrency>(authority_id);
-    let approval = authority::mint<TestCurrency>(
-        &authority_id,
+    let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
+    let authority = authority::custom_authority_kind_for_testing(authority_id);
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority,
         &authority_cap,
-        binding.digest(),
+        authority::digest_for_testing(&binding),
     );
-    authority::discard_optional_approval<TestCurrency>(option::some(approval));
+    authority::discard_approval<TestCurrency>(option::some(approval));
     unit_test::destroy(authority_cap);
 }
 
@@ -2648,14 +2652,15 @@ fun discard_without_authority_discards_approval() {
 fun consume_with_authority_accepts_matching_approval() {
     let (pk, balance, new_balance) = binding_parts();
     let authority_id = object::id_from_address(@0xA);
-    let authority_cap = authority::new_authority_cap_for_testing<TestCurrency>(authority_id);
+    let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
+    let authority = authority::custom_authority_kind_for_testing(authority_id);
     let binding = authority::unwrap_binding(pk, balance, &new_balance, 40);
-    let approval = authority::mint<TestCurrency>(
-        &authority_id,
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority,
         &authority_cap,
-        binding.digest(),
+        authority::digest_for_testing(&binding),
     );
-    approval.verify_and_consume(&authority_id, binding);
+    approval.verify_and_consume(&authority, binding);
     unit_test::destroy(authority_cap);
 }
 
@@ -2663,14 +2668,15 @@ fun consume_with_authority_accepts_matching_approval() {
 fun consume_rejects_other_digest() {
     let (pk, balance, new_balance) = binding_parts();
     let authority_id = object::id_from_address(@0xA);
-    let authority_cap = authority::new_authority_cap_for_testing<TestCurrency>(authority_id);
-    let approval = authority::mint<TestCurrency>(
-        &authority_id,
+    let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
+    let authority = authority::custom_authority_kind_for_testing(authority_id);
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority,
         &authority_cap,
-        authority::unwrap_binding(pk, balance, &new_balance, 41).digest(),
+        authority::digest_for_testing(&authority::unwrap_binding(pk, balance, &new_balance, 41)),
     );
     approval.verify_and_consume(
-        &authority_id,
+        &authority,
         authority::unwrap_binding(pk, balance, &new_balance, 40),
     );
     unit_test::destroy(authority_cap);
@@ -2681,17 +2687,15 @@ fun consume_rejects_approval_from_previous_authority_object() {
     let (pk, balance, new_balance) = binding_parts();
     let binding = authority::unwrap_binding(pk, balance, &new_balance, 40);
     let previous_id = object::id_from_address(@0xA);
-    let previous_authority_cap = authority::new_authority_cap_for_testing<TestCurrency>(
-        previous_id,
-    );
-    let approval = authority::mint<TestCurrency>(
-        &previous_id,
+    let previous_authority_cap = authority::new_authority_cap<TestCurrency>(previous_id);
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority::custom_authority_kind_for_testing(previous_id),
         &previous_authority_cap,
-        binding.digest(),
+        authority::digest_for_testing(&binding),
     );
     let current_id = object::id_from_address(@0xB);
-    let current_authority_cap = authority::new_authority_cap_for_testing<TestCurrency>(current_id);
-    approval.verify_and_consume(&current_id, binding);
+    let current_authority_cap = authority::new_authority_cap<TestCurrency>(current_id);
+    approval.verify_and_consume(&authority::custom_authority_kind_for_testing(current_id), binding);
     unit_test::destroy(previous_authority_cap);
     unit_test::destroy(current_authority_cap);
 }
@@ -2699,11 +2703,11 @@ fun consume_rejects_approval_from_previous_authority_object() {
 #[test, expected_failure(abort_code = ::contra::authority::EWrongAuthority)]
 fun mint_rejects_other_authority_cap() {
     let authority_id = object::id_from_address(@0xA);
-    let other_authority_cap = authority::new_authority_cap_for_testing<TestCurrency>(
+    let other_authority_cap = authority::new_authority_cap<TestCurrency>(
         object::id_from_address(@0xB),
     );
-    let _approval = authority::mint<TestCurrency>(
-        &authority_id,
+    let _approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority::custom_authority_kind_for_testing(authority_id),
         &other_authority_cap,
         vector[],
     );

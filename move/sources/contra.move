@@ -35,9 +35,9 @@
 ///    Permissioned operations are customized flows that should be implemented by the issuer's
 ///    contract, and may not be supported by all clients/wallets.
 ///    The default policy is fully permissionless.
-/// 8. [Advanced] Enable an external authority for the confidential token using `ManagementCap<T>`.
+/// 8. [Advanced] Enable an authority for the confidential token using `ManagementCap<T>`.
 ///    While enabled, every protected operation requires an `Approval<T>` minted
-///    by that authority. See `guardian.move` for an authority implementation.
+///    by that authority. See `nitro_authority.move` for an authority implementation.
 ///
 /// ## Key Flows for Users:
 /// 1. Create an account for an address (permissionless, needed once for all token types). Optionally
@@ -89,7 +89,7 @@ use contra::{
         destroy_empty,
         new as new_auditors,
     },
-    authority::{Self, Approval, AuthorityCap},
+    authority::{Self, Approval, AuthorityCap, AuthorityKind},
     balance::{Self, Balances, EncryptedCoin},
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::EncryptedAmount,
@@ -168,8 +168,8 @@ public struct ConfidentialTokenV1 has drop, store {
     freeze_admins: VecSet<address>,
     policy: Option<Policy>,
     auditors: Auditors,
-    /// The enabled authority ID; `none` means authority checks are disabled.
-    authority_id: Option<ID>,
+    /// The enabled authority; `none` means authority checks are disabled.
+    authority: Option<AuthorityKind>,
 }
 
 /// The representation of the pool of tokens of type `T` in circulation as confidential tokens.
@@ -245,7 +245,7 @@ public struct AccountKey(address) has copy, drop, store;
 
 // === Caps ===
 
-/// Capability granting management of freeze admins, auditor keys, and the external authority.
+/// Capability granting management of freeze admins, auditor keys, and the authority.
 public struct ManagementCap<phantom T> has key, store { id: UID }
 
 // === Init ===
@@ -285,20 +285,6 @@ public fun authorize_as_object<T>(ct: &ConfidentialToken<T>, uid: &mut UID): Aut
     policy::as_object<T>(&ct.inner().policy, uid)
 }
 
-/// Mint the enabled authority's approval of the operation identified by `digest`. The separate
-/// canonical Guardian package calls this from `guardian::new_approval` using its private
-/// `AuthorityCap<T>`, verifies the enclave signature, and only then returns the approval. Returns
-/// `none` when authority checks are disabled.
-public fun mint_approval<T>(
-    ct: &ConfidentialToken<T>,
-    authority_cap: &AuthorityCap<T>,
-    digest: &vector<u8>,
-): Option<Approval<T>> {
-    ct.inner().authority_id.map_ref!(|authority_id| {
-        authority::mint<T>(authority_id, authority_cap, *digest)
-    })
-}
-
 // === Creation Flows ===
 
 public use fun new_confidential_token as TokenRegistry.new;
@@ -335,7 +321,7 @@ public fun new_confidential_token<T>(
                 freeze_admins: vec_set::empty(),
                 policy: policy::permissionless(),
                 auditors: new_auditors(auditor_public_keys),
-                authority_id: option::none(),
+                authority: option::none(),
             }),
         },
         ManagementCap { id: object::new(ctx) },
@@ -584,13 +570,14 @@ public fun batched_transfer<T>(
     let token = &sender[TokenAccountKey<T>()];
     assert!(!token.is_frozen, ETransferDenied);
     let inner = ct.inner();
-    if (inner.authority_id.is_none()) {
-        authority::discard_optional_approval(approval);
+    if (inner.authority.is_none()) {
+        // Authority disabled, discard approval if any.
+        authority::discard_approval(approval);
     } else {
         approval
             .destroy_or!(abort EApprovalRequired)
             .verify_and_consume(
-                inner.authority_id.borrow(),
+                inner.authority.borrow(),
                 authority::transfer_binding(
                     *token.pk(),
                     receiver_pks,
@@ -866,13 +853,14 @@ fun try_unwrap_internal<T>(
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
     let inner = ct.inner();
-    if (inner.authority_id.is_none()) {
-        authority::discard_optional_approval(approval);
+    if (inner.authority.is_none()) {
+        // Authority disabled, discard approval if any.
+        authority::discard_approval(approval);
     } else {
         approval
             .destroy_or!(abort EApprovalRequired)
             .verify_and_consume(
-                inner.authority_id.borrow(),
+                inner.authority.borrow(),
                 authority::unwrap_binding(
                     *account.pk(),
                     account.balance.active_amount(),
@@ -993,20 +981,27 @@ public fun set_policy<T, W>(
     events::emit_policy_update<T, W>(permissioned_operations);
 }
 
-/// Borrow the confidential token's UID so an authority implementation can claim a derived object
-/// under it. Called by `guardian::new_guardian` in the separate canonical Guardian package; the
-/// management capability restricts the call to the issuer.
-public fun authority_parent<T>(
-    ct: &mut ConfidentialToken<T>,
-    _management_cap: &ManagementCap<T>,
-): &mut UID {
-    &mut ct.id
-}
+// Authority flow:
+//
+// 1. Configuration (`public`, authenticated by `ManagementCap<T>`):
+// - The issuer calls `enable_authority` with `Nitro` or `Custom { id }`.
+// - The issuer calls `disable_authority` to disable whichever authority is active.
+//
+// 2. Approval minting:
+// - Nitro: the client calls `nitro_authority::new_approval`, which verifies the Nitro signature and
+//   calls package-only `mint_nitro_authority_approval`.
+// - Custom: the authority implementation creates and privately stores an `AuthorityCap<T>` by
+//   calling public `new_authority_cap`. After performing its own checks, it calls public
+//   `mint_custom_authority_approval` with that capability.
+//
+// 3. Approval consumption:
+// - For either kind, `batched_transfer` and `unwrap` validate and consume the approval against the
+//   currently enabled authority and operation binding.
 
-/// Create an `AuthorityCap<T>` bound to an authority object's ID. Called by
-/// `guardian::new_guardian` in the separate canonical Guardian package; the management
-/// capability restricts the call to the issuer. Creating the capability does not enable the
-/// authority.
+/// Create an `AuthorityCap<T>` bound to a custom authority object's ID. A custom authority package
+/// calls this public function from its constructor using the issuer's `ManagementCap<T>`, which
+/// restricts capability creation to the issuer. The issuer then enables the custom authority with
+/// `enable_authority` and `Custom { id }`.
 public fun new_authority_cap<T>(
     authority_uid: &UID,
     _management_cap: &ManagementCap<T>,
@@ -1014,27 +1009,45 @@ public fun new_authority_cap<T>(
     authority::new_authority_cap<T>(authority_uid.to_inner())
 }
 
-/// Enable an authority. The separate canonical Guardian package calls this from
-/// `guardian::enable` with the Guardian's privately stored `AuthorityCap<T>`; the issuer also
-/// supplies its `ManagementCap<T>`. Enabling a new authority replaces the current authority ID;
-/// enabling the active authority is a no-op.
+/// Enable `new_authority` for protected operations. The issuer calls this public function directly
+/// using its `ManagementCap<T>`. Enabling a new authority replaces the current authority; enabling
+/// the active authority is a no-op.
 public fun enable_authority<T>(
     ct: &mut ConfidentialToken<T>,
     _management_cap: &ManagementCap<T>,
-    authority_cap: &AuthorityCap<T>,
+    new_authority: AuthorityKind,
 ) {
-    authority::enable<T>(&mut ct.inner_mut().authority_id, authority_cap);
+    let authority = &mut ct.inner_mut().authority;
+    if (authority.is_some()) {
+        let current = authority.borrow_mut();
+        if (*current == new_authority) return;
+        events::emit_authority_disabled<T>(*current);
+        *current = new_authority;
+    } else {
+        authority.fill(new_authority);
+    };
+    events::emit_authority_enabled<T>(new_authority);
 }
 
-/// Disable the enabled authority. The separate canonical Guardian package calls this from
-/// `guardian::disable` with the Guardian's privately stored `AuthorityCap<T>`; the issuer also
-/// supplies its `ManagementCap<T>`. Disabling an already-disabled authority is a no-op.
-public fun disable_authority<T>(
-    ct: &mut ConfidentialToken<T>,
-    _management_cap: &ManagementCap<T>,
+/// Disable whichever authority is currently enabled. The issuer calls this public function
+/// directly using its `ManagementCap<T>`. Disabling an already-disabled authority is a no-op.
+public fun disable_authority<T>(ct: &mut ConfidentialToken<T>, _management_cap: &ManagementCap<T>) {
+    let authority = &mut ct.inner_mut().authority;
+    if (authority.is_none()) return;
+    events::emit_authority_disabled<T>(authority.extract());
+}
+
+/// Mint a custom-authority approval of `digest`. A custom authority package calls this public
+/// function after performing its own checks, using its privately stored `AuthorityCap<T>`, which
+/// must match the enabled custom authority. Returns `none` when authority checks are disabled.
+public fun mint_custom_authority_approval<T>(
+    ct: &ConfidentialToken<T>,
     authority_cap: &AuthorityCap<T>,
-) {
-    authority::disable<T>(&mut ct.inner_mut().authority_id, authority_cap);
+    digest: &vector<u8>,
+): Option<Approval<T>> {
+    ct.inner().authority.map_ref!(|authority| {
+        authority::mint_custom_authority_approval<T>(authority, authority_cap, *digest)
+    })
 }
 
 // === Auditor flows ===
@@ -1050,6 +1063,30 @@ public fun update_auditors<T>(
 ) {
     ct.inner_mut().auditors.update(current_pks, previous_pks);
     events::emit_update_auditors<T>(current_pks, previous_pks);
+}
+
+// === Package Functions ===
+
+/// Mint a canonical Nitro-authority approval of `digest`. `nitro_authority::new_approval` calls this
+/// package-only function after verifying the enclave signature. Returns `none` when authority checks
+/// are disabled.
+public(package) fun mint_nitro_authority_approval<T>(
+    ct: &ConfidentialToken<T>,
+    digest: &vector<u8>,
+): Option<Approval<T>> {
+    ct.inner().authority.map_ref!(|authority| {
+        authority::mint_nitro_authority_approval<T>(authority, *digest)
+    })
+}
+
+/// Borrow the confidential token's UID to claim its canonical derived Nitro authority.
+/// `nitro_authority::new` calls this package-only function using the issuer's `ManagementCap<T>`,
+/// which restricts creation to the issuer.
+public(package) fun authority_parent<T>(
+    ct: &mut ConfidentialToken<T>,
+    _management_cap: &ManagementCap<T>,
+): &mut UID {
+    &mut ct.id
 }
 
 // === Helpers ===
