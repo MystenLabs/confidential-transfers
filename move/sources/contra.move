@@ -127,7 +127,6 @@ const EReceiverNotRegistered: u64 = 11;
 const ERegistrationNotPermissionless: u64 = 12;
 const EDefaultPkNotSet: u64 = 13;
 const EZeroAmount: u64 = 14;
-const EApprovalRequired: u64 = 15;
 
 // === Constants ===
 
@@ -570,22 +569,17 @@ public fun batched_transfer<T>(
     let token = &sender[TokenAccountKey<T>()];
     assert!(!token.is_frozen, ETransferDenied);
     let inner = ct.inner();
-    if (authority::is_none(&inner.authority)) {
-        // Authority disabled, discard approval if any.
-        authority::discard_approval(approval);
-    } else {
-        approval
-            .destroy_or!(abort EApprovalRequired)
-            .verify_and_consume(
-                authority::transfer_binding(
-                    *token.pk(),
-                    receiver_pks,
-                    token.balance.active_amount(),
-                    &new_balance,
-                    &receiver_amounts,
-                ),
-            );
-    };
+    authority::verify!(
+        &inner.authority,
+        approval,
+        authority::transfer_binding(
+            *token.pk(),
+            receiver_pks,
+            token.balance.active_amount(),
+            &new_balance,
+            &receiver_amounts,
+        ),
+    );
 
     let sender = &mut sender[TokenAccountKey<T>()];
 
@@ -852,21 +846,16 @@ fun try_unwrap_internal<T>(
     let account = &mut account[TokenAccountKey<T>()];
     assert!(!account.is_frozen, ETransferDenied);
     let inner = ct.inner();
-    if (authority::is_none(&inner.authority)) {
-        // Authority disabled, discard approval if any.
-        authority::discard_approval(approval);
-    } else {
-        approval
-            .destroy_or!(abort EApprovalRequired)
-            .verify_and_consume(
-                authority::unwrap_binding(
-                    *account.pk(),
-                    account.balance.active_amount(),
-                    &new_balance,
-                    amount,
-                ),
-            );
-    };
+    authority::verify!(
+        &inner.authority,
+        approval,
+        authority::unwrap_binding(
+            *account.pk(),
+            account.balance.active_amount(),
+            &new_balance,
+            amount,
+        ),
+    );
     let withdrawn = account
         .balance
         .try_withdraw_public(

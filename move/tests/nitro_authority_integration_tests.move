@@ -544,7 +544,7 @@ fun nitro_authority_rotation_scenarios() {
         0,
         TRANSFER_SIG,
     ).destroy_some();
-    approval.verify_and_consume(fixture_transfer_binding(&h));
+    authority::verify_required_approval(option::some(approval), fixture_transfer_binding(&h));
 
     // Raise min_version.
     nitro_authority_obj.update(
@@ -580,14 +580,14 @@ fun authority_lifecycle_scenarios() {
         &h.ct,
         &transfer_digest(&h),
     ).destroy_some();
-    approval.verify_and_consume(fixture_transfer_binding(&h));
+    authority::verify_required_approval(option::some(approval), fixture_transfer_binding(&h));
     enable_nitro_authority(&mut h);
     let approval = nitro_authority_transfer_approval(
         &nitro_authority_obj,
         &h,
         TRANSFER_SIG,
     ).destroy_some();
-    approval.verify_and_consume(fixture_transfer_binding(&h));
+    authority::verify_required_approval(option::some(approval), fixture_transfer_binding(&h));
 
     enable_custom_authority(&custom_authority, &mut h);
     disable_authority(&mut h);
@@ -605,7 +605,7 @@ fun authority_lifecycle_scenarios() {
         &h,
         TRANSFER_SIG,
     ).destroy_some();
-    approval.verify_and_consume(fixture_transfer_binding(&h));
+    authority::verify_required_approval(option::some(approval), fixture_transfer_binding(&h));
     enable_custom_authority(&custom_authority, &mut h);
     let approval = custom_authority_for_testing::mint_approval(
         &custom_authority,
@@ -798,14 +798,14 @@ fun nitro_authority_valid_sig_invalid_proof_unwrap_fails() {
     abort
 }
 
-#[test, expected_failure(abort_code = ::contra::contra::EApprovalRequired)]
+#[test, expected_failure(abort_code = ::contra::authority::EApprovalRequired)]
 fun nitro_authority_missing_approval_transfer_fails() {
     let (_registry, mut h) = guarded_harness();
     execute_fixture_transfer(&mut h, VALID_SK, option::none());
     abort
 }
 
-#[test, expected_failure(abort_code = ::contra::contra::EApprovalRequired)]
+#[test, expected_failure(abort_code = ::contra::authority::EApprovalRequired)]
 fun nitro_authority_missing_approval_unwrap_fails() {
     let (_registry, mut h) = guarded_harness();
     execute_fixture_unwrap(&mut h, VALID_SK, option::none());

@@ -2628,6 +2628,12 @@ fun transfer_binding_commits_to_exact_limbs() {
 }
 
 #[test]
+fun disabled_authority_skips_binding_evaluation() {
+    let disabled = authority::none();
+    authority::verify!(&disabled, option::none<authority::Approval<TestCurrency>>(), abort 0);
+}
+
+#[test]
 fun discard_without_authority_accepts_none() {
     authority::discard_approval<TestCurrency>(option::none());
 }
@@ -2660,7 +2666,7 @@ fun consume_accepts_matching_digest() {
         &authority_cap,
         authority::digest_for_testing(&binding),
     );
-    approval.verify_and_consume(binding);
+    authority::verify_required_approval(option::some(approval), binding);
     unit_test::destroy(authority_cap);
 }
 
@@ -2675,7 +2681,10 @@ fun consume_rejects_other_digest() {
         &authority_cap,
         authority::digest_for_testing(&authority::unwrap_binding(pk, balance, &new_balance, 41)),
     );
-    approval.verify_and_consume(authority::unwrap_binding(pk, balance, &new_balance, 40));
+    authority::verify_required_approval(
+        option::some(approval),
+        authority::unwrap_binding(pk, balance, &new_balance, 40),
+    );
     unit_test::destroy(authority_cap);
 }
 

@@ -14,6 +14,7 @@ use sui::{bcs, hash::blake2b256};
 
 const EApprovalMismatch: u64 = 0;
 const EWrongAuthority: u64 = 1;
+const EApprovalRequired: u64 = 2;
 
 // === Types ===
 
@@ -136,22 +137,36 @@ public(package) fun mint_nitro_authority_approval<T>(
     Approval { digest }
 }
 
-/// Destroy any supplied approval while `AuthorityKind::None` is configured. `contra::batched_transfer`
-/// and `contra::unwrap` call this package-only function after observing that authority checks are
-/// disabled; no capability is required. The `Option` must be consumed explicitly because `Approval`
-/// does not have `drop`.
+/// Handle optional approval validation for protected operations. The binding expression is
+/// evaluated only when an authority is enabled.
+public(package) macro fun verify<$T>(
+    $authority: &AuthorityKind,
+    $approval: Option<Approval<$T>>,
+    $binding: Binding,
+) {
+    let authority = $authority;
+    let approval = $approval;
+    if (is_none(authority)) {
+        discard_approval(approval);
+    } else {
+        verify_required_approval(approval, $binding);
+    };
+}
+
+/// Require, verify, and consume an approval. The `verify` macro calls this package-only function
+/// only while an authority is enabled.
+public(package) fun verify_required_approval<T>(approval: Option<Approval<T>>, binding: Binding) {
+    let Approval { digest } = approval.destroy_or!(abort EApprovalRequired);
+    assert!(digest == binding.digest(), EApprovalMismatch);
+}
+
+/// Destroy any supplied approval while `AuthorityKind::None` is configured. The `verify` macro
+/// calls this package-only function after observing that authority checks are disabled. The
+/// `Option` must be consumed explicitly because `Approval` does not have `drop`.
 public(package) fun discard_approval<T>(approval: Option<Approval<T>>) {
     approval.do!(|approval| {
         let Approval { digest: _ } = approval;
     });
-}
-
-/// Verify and consume an approval against operation `binding`. `contra::batched_transfer` and
-/// `contra::unwrap` call this package-only function after requiring an approval while an authority
-/// is enabled.
-public(package) fun verify_and_consume<T>(approval: Approval<T>, binding: Binding) {
-    let Approval { digest } = approval;
-    assert!(digest == binding.digest(), EApprovalMismatch);
 }
 
 // === Internal functions ===
