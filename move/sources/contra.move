@@ -971,8 +971,8 @@ public fun set_policy<T, W>(
 // Authority flow:
 //
 // 1. Configuration (`public`, authenticated by `ManagementCap<T>`):
-// - The issuer calls `enable_authority` with `Nitro` or `Custom { id }`.
-// - The issuer calls `disable_authority` to replace the active authority with `None`.
+// - The issuer calls `set_authority` with `Nitro`, `Custom { id }`, or `None` to disable authority
+//   checks.
 //
 // 2. Approval minting:
 // - Nitro: the client calls `nitro_authority::new_approval`, which verifies the Nitro signature and
@@ -985,29 +985,18 @@ public fun set_policy<T, W>(
 // - For both the canonical Nitro authority and custom authorities, protected operations require an
 //   approval while the authority is enabled and consume it against the operation binding.
 
-/// Enable `new_authority` for protected operations. The issuer calls this public function directly
-/// using its `ManagementCap<T>`. Enabling a new authority replaces the current authority; enabling
-/// the active authority is a no-op.
-public fun enable_authority<T>(
+/// Set the authority for protected operations. The issuer calls this public function directly using
+/// its `ManagementCap<T>`. `AuthorityKind::None` disables authority checks; setting a new authority
+/// replaces the current authority, and setting the current value is a no-op.
+public fun set_authority<T>(
     ct: &mut ConfidentialToken<T>,
     _management_cap: &ManagementCap<T>,
     new_authority: AuthorityKind,
 ) {
     let authority = &mut ct.inner_mut().authority;
     if (*authority == new_authority) return;
-    if (!authority::is_none(authority)) events::emit_authority_disabled<T>(*authority);
     *authority = new_authority;
-    if (!authority::is_none(authority)) events::emit_authority_enabled<T>(new_authority);
-}
-
-/// Disable authority checks by setting the configured authority to `AuthorityKind::None`. The
-/// issuer calls this public function directly using its `ManagementCap<T>`. Calling it while
-/// `AuthorityKind::None` is already configured is a no-op.
-public fun disable_authority<T>(ct: &mut ConfidentialToken<T>, _management_cap: &ManagementCap<T>) {
-    let authority = &mut ct.inner_mut().authority;
-    if (authority::is_none(authority)) return;
-    events::emit_authority_disabled<T>(*authority);
-    *authority = authority::none();
+    events::emit_authority_updated<T>(new_authority);
 }
 
 // === For custom authority ===
@@ -1015,7 +1004,7 @@ public fun disable_authority<T>(ct: &mut ConfidentialToken<T>, _management_cap: 
 /// Create an `AuthorityCap<T>` bound to a custom authority object's ID. A custom authority package
 /// calls this public function from its constructor using the issuer's `ManagementCap<T>`, which
 /// restricts capability creation to the issuer. The issuer then enables the custom authority with
-/// `enable_authority` and `Custom { id }`.
+/// `set_authority` and `Custom { id }`.
 public fun new_authority_cap<T>(
     authority_uid: &UID,
     _management_cap: &ManagementCap<T>,

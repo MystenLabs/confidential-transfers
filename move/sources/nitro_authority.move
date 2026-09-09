@@ -4,8 +4,8 @@
 /// Contra's canonical AWS Nitro enclave authority, providing an optional approval factor in
 /// addition to the zero-knowledge proofs required by a `ConfidentialToken`'s protected operations.
 /// The issuer creates its `NitroAuthority<T>` with `new`, enables it by calling
-/// `contra::enable_authority` with `AuthorityKind::Nitro`, and can disable its checks with
-/// `contra::disable_authority`, which sets the configured authority to `AuthorityKind::None`. If
+/// `contra::set_authority` with `AuthorityKind::Nitro`, and can disable its checks by setting the
+/// authority to `AuthorityKind::None`. If
 /// enabled, the client must present an enclave-signed operation digest to
 /// `nitro_authority::new_approval` to mint an approval, then pass the returned `Option<Approval<T>>`
 /// to the protected operation in the same PTB.
@@ -88,7 +88,7 @@ public enum NitroAuthorityRequest has copy, drop {
 /// operator. The issuer calls this public function using its `ManagementCap<T>`, which restricts
 /// creation to the issuer. Contra claims a derived-object slot under `ct` to ensure this package can
 /// create the authority only once per confidential token. The issuer may call
-/// `contra::enable_authority` with `AuthorityKind::Nitro` in the same PTB before `share`, or enable
+/// `contra::set_authority` with `AuthorityKind::Nitro` in the same PTB before `share`, or enable
 /// it later.
 public fun new<T>(
     ct: &mut ConfidentialToken<T>,

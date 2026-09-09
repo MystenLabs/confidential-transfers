@@ -4,10 +4,8 @@
 /// Contra supports optional authority approval for protected operations. A confidential token can
 /// enable one authority at a time; while enabled, each protected operation must carry an
 /// `Approval<T>` over its digest in addition to the required zero-knowledge proofs. The issuer uses
-/// `contra::enable_authority`, authenticated by `ManagementCap<T>`, to enable either the canonical
-/// `Nitro` authority or a `Custom { id }` authority. The issuer uses `contra::disable_authority`,
-/// also authenticated by `ManagementCap<T>`, to replace the active authority with
-/// `AuthorityKind::None`.
+/// `contra::set_authority`, authenticated by `ManagementCap<T>`, to configure the canonical `Nitro`
+/// authority, a `Custom { id }` authority, or `AuthorityKind::None` to disable authority checks.
 ///
 /// For the canonical Nitro authority, see `nitro_authority.move`:
 ///
@@ -59,7 +57,10 @@ public struct Approval<phantom T> {
     digest: vector<u8>,
 }
 
-/// The arguments an `Approval` commits to.
+/// The operation-specific cryptographic arguments an `Approval` commits to. Token and authority
+/// identity are omitted: minting checks the configured authority, while the protected operation
+/// checks the token type, actual on-chain state, submitted arguments, and proofs when consuming the
+/// approval.
 /// TODO: add rekey and balance update.
 public enum Binding has drop {
     Transfer {

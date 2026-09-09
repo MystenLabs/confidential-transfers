@@ -378,7 +378,7 @@ fun new_nitro_authority(h: &mut Harness): nitro_authority::NitroAuthority<TestCu
 
 /// Enable the canonical Nitro authority for the harness token.
 fun enable_nitro_authority(h: &mut Harness) {
-    contra::enable_authority(
+    contra::set_authority(
         &mut h.ct,
         &h.management_cap,
         authority::nitro_authority_kind_for_testing(),
@@ -386,8 +386,12 @@ fun enable_nitro_authority(h: &mut Harness) {
 }
 
 /// The issuer disables whichever authority is enabled for the harness token.
-fun disable_authority(h: &mut Harness) {
-    contra::disable_authority(&mut h.ct, &h.management_cap);
+fun set_no_authority(h: &mut Harness) {
+    contra::set_authority(
+        &mut h.ct,
+        &h.management_cap,
+        authority::none(),
+    );
 }
 
 /// A harness with a fixture NitroAuthority enabled as its authority.
@@ -411,7 +415,7 @@ fun enable_custom_authority(
     custom_authority: &custom_authority_for_testing::CustomAuthority<TestCurrency>,
     h: &mut Harness,
 ) {
-    contra::enable_authority(
+    contra::set_authority(
         &mut h.ct,
         &h.management_cap,
         authority::custom_authority_kind_for_testing(object::id(custom_authority)),
@@ -590,8 +594,8 @@ fun authority_lifecycle_scenarios() {
     authority::verify_required_approval(option::some(approval), fixture_transfer_binding(&h));
 
     enable_custom_authority(&custom_authority, &mut h);
-    disable_authority(&mut h);
-    disable_authority(&mut h);
+    set_no_authority(&mut h);
+    set_no_authority(&mut h);
     let approval = custom_authority_for_testing::mint_approval(
         &custom_authority,
         &h.ct,
@@ -685,7 +689,7 @@ fun replaced_nitro_authority_cannot_mint_approval() {
 #[test]
 fun disabled_authority_no_approval_transfer_passes() {
     let (registry, mut h) = guarded_harness();
-    disable_authority(&mut h);
+    set_no_authority(&mut h);
     execute_fixture_transfer(&mut h, VALID_SK, option::none());
     destroy(h);
     unit_test::destroy(registry);
@@ -695,7 +699,7 @@ fun disabled_authority_no_approval_transfer_passes() {
 fun disabled_authority_existing_approval_transfer_passes() {
     let (registry, mut h) = guarded_harness();
     let approval = nitro_authority_transfer_approval(&registry, &h, TRANSFER_SIG);
-    disable_authority(&mut h);
+    set_no_authority(&mut h);
     execute_fixture_transfer(&mut h, VALID_SK, approval);
     destroy(h);
     unit_test::destroy(registry);
@@ -705,7 +709,7 @@ fun disabled_authority_existing_approval_transfer_passes() {
 fun disabled_authority_existing_approval_unwrap_passes() {
     let (registry, mut h) = guarded_harness();
     let approval = nitro_authority_unwrap_approval(&registry, &h, UNWRAP_SIG);
-    disable_authority(&mut h);
+    set_no_authority(&mut h);
     execute_fixture_unwrap(&mut h, VALID_SK, approval);
     destroy(h);
     unit_test::destroy(registry);
@@ -714,7 +718,7 @@ fun disabled_authority_existing_approval_unwrap_passes() {
 #[test]
 fun disabled_nitro_authority_bad_sig_transfer_passes() {
     let (registry, mut h) = guarded_harness();
-    disable_authority(&mut h);
+    set_no_authority(&mut h);
     let approval = nitro_authority_transfer_approval(&registry, &h, BAD_SIG);
     assert!(approval.is_none());
     execute_fixture_transfer(&mut h, VALID_SK, approval);
@@ -725,7 +729,7 @@ fun disabled_nitro_authority_bad_sig_transfer_passes() {
 #[test]
 fun disabled_nitro_authority_bad_sig_unwrap_passes() {
     let (registry, mut h) = guarded_harness();
-    disable_authority(&mut h);
+    set_no_authority(&mut h);
     let approval = nitro_authority_unwrap_approval(&registry, &h, BAD_SIG);
     assert!(approval.is_none());
     execute_fixture_unwrap(&mut h, VALID_SK, approval);
