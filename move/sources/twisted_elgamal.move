@@ -109,9 +109,10 @@ public(package) fun add_assign_u64(e: &mut Encryption, amount: u64) {
 /// Trivial encryption of zero without randomness.
 public(package) fun encrypt_zero(): Encryption {
     // TODO: consider changing to (pk, g)
+    let identity = g_identity();
     Encryption {
-        ciphertext: g_identity(),
-        decryption_handle: g_identity(),
+        ciphertext: identity,
+        decryption_handle: identity,
     }
 }
 
