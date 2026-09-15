@@ -6,6 +6,7 @@ module contra::contra_tests;
 
 use contra::{
     auditors,
+    authority,
     balance::EncryptedCoin,
     contra,
     encrypted_amount::{Self, consistency_proof_for_testing},
@@ -13,7 +14,14 @@ use contra::{
     policy,
     range_proof,
     session_id,
-    twisted_elgamal::{encrypt_trivial_for_testing, encrypt_zero, public_key, PublicKey, Encryption}
+    twisted_elgamal::{
+        Self,
+        encrypt_trivial_for_testing,
+        encrypt_zero,
+        public_key,
+        PublicKey,
+        Encryption,
+    }
 };
 use std::unit_test::{Self, assert_eq};
 use sui::{
@@ -235,6 +243,7 @@ fun test_simple_flow() {
         range_proof::new_range_proof_for_testing(),
         taken_amount,
         &sum_proof,
+        option::none(),
         scenario.ctx(),
     );
     assert!(coins.value() == 30);
@@ -397,6 +406,7 @@ fun test_batched_transfer() {
             range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
+            option::none(),
             option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
@@ -566,6 +576,7 @@ fun test_batched_transfer_with_auditor() {
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
+            option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -739,6 +750,7 @@ fun test_batched_transfer_auditor_rotation_grace() {
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
+            option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -901,6 +913,7 @@ fun test_batched_transfer_auditor_wrong_handle_count() {
             ristretto255::g_identity(),
             balance_proof,
             option::some(auditor_package),
+            option::none(),
         )
         .add<TestCurrency>(&mut account_2, vector[], &deny_list)
         .add<TestCurrency>(&mut account_3, vector[], &deny_list)
@@ -1123,6 +1136,7 @@ fun test_unwrap_zero_amount_aborts() {
         range_proof::new_range_proof_for_testing(),
         0,
         &nizk::default_ddh_proof(),
+        option::none(),
         scenario.ctx(),
     );
 
@@ -1240,6 +1254,7 @@ fun transfer<T>(
             range_proof::new_range_proof_for_testing(),
             ristretto255::g_identity(),
             balance_proof,
+            option::none(),
             option::none(),
         )
         .add<T>(receiver, memo, deny_list)
@@ -1382,7 +1397,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     );
     // The default key is now pk_new, but the token's balance still lags under pk_old.
     assert_eq!(account_1.default_pk(), option::some(pk_new));
-    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
+    assert_eq!(*account_1.token_public_key<TestCurrency>().as_element(), pk_old);
     contra::rekey_token_account<TestCurrency>(
         &mut account_1,
         &auth,
@@ -1393,7 +1408,7 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 
     // The on-chain handle must now be bound to `pk_new` and the token caught up to the account key.
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
-    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
+    assert_eq!(*account_1.token_public_key<TestCurrency>().as_element(), pk_new);
 
     unit_test::destroy(account_1);
     unit_test::destroy(acc_reg);
@@ -1606,7 +1621,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
         new_ea.decryption_handles_for_testing(),
         bad_proof,
     );
-    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
+    assert_eq!(*account_1.token_public_key<TestCurrency>().as_element(), pk_old);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
     assert!(!account_1.accepts_deposits<TestCurrency>());
 
@@ -1618,7 +1633,7 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
         new_ea.decryption_handles_for_testing(),
         good_proof,
     );
-    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
+    assert_eq!(*account_1.token_public_key<TestCurrency>().as_element(), pk_new);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
     assert!(account_1.accepts_deposits<TestCurrency>());
 
@@ -2197,7 +2212,7 @@ fun test_transfer_after_register_with_default_pk() {
     );
 
     // The token account was created for account_2, keyed at its account key.
-    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+    assert_eq!(*account_2.token_public_key<TestCurrency>().as_element(), pk_2);
 
     unit_test::destroy(account_1);
     unit_test::destroy(account_2);
@@ -2308,10 +2323,10 @@ fun test_try_register_with_default_pk_is_idempotent() {
 
     // First call registers the token account under the default key.
     contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
-    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+    assert_eq!(*account_2.token_public_key<TestCurrency>().as_element(), pk_2);
     // Second call is a no-op (`register_with_default_pk` here would abort `ETokenAccountAlreadyRegistered`).
     contra::try_register_with_default_pk<TestCurrency>(&mut account_2, &ct);
-    assert_eq!(account_2.token_public_key<TestCurrency>(), pk_2);
+    assert_eq!(*account_2.token_public_key<TestCurrency>().as_element(), pk_2);
 
     unit_test::destroy(account_2);
     unit_test::destroy(acc_reg);
@@ -2404,6 +2419,7 @@ fun test_account_freeze_blocks_unwrap() {
         range_proof::new_range_proof_for_testing(),
         taken_amount,
         &sum_proof,
+        option::none(),
         scenario.ctx(),
     );
 
@@ -2517,4 +2533,171 @@ fun with_witness_rejects_permissionless_operation() {
 fun with_witness_rejects_empty_policy() {
     let policy = policy::permissionless();
     let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 0u8, @0x100, Witness {});
+}
+
+// === Authority ===
+
+/// The operation-independent pieces of a binding for the authority tests.
+fun binding_parts(): (
+    PublicKey,
+    encrypted_amount::EncryptedAmount,
+    encrypted_amount::EncryptedAmount,
+) {
+    let pk = test_key();
+    let balance = amount_for_testing(100, pk.as_element(), 1);
+    let new_balance = amount_for_testing(60, pk.as_element(), 2);
+    (pk, balance, new_balance)
+}
+
+#[test]
+fun binding_digests_are_domain_separated() {
+    let (pk, balance, new_balance) = binding_parts();
+    let transfer = authority::transfer_binding(
+        pk,
+        vector[pk],
+        balance,
+        &new_balance,
+        &vector[copy new_balance],
+    );
+    let unwrap = authority::unwrap_binding(pk, balance, &new_balance, 40);
+    assert!(authority::digest_for_testing(&transfer) != authority::digest_for_testing(&unwrap));
+    // A different amount changes the digest, as does another receiver set or receiver order.
+    assert!(
+        authority::digest_for_testing(&authority::unwrap_binding(pk, balance, &new_balance, 41)) !=
+            authority::digest_for_testing(&unwrap),
+    );
+    let pk_2 = public_key(ristretto255::g_generator());
+    let amounts = vector[new_balance, new_balance];
+    let two = authority::transfer_binding(
+        pk,
+        vector[pk, pk_2],
+        balance,
+        &new_balance,
+        &amounts,
+    );
+    let swapped = authority::transfer_binding(
+        pk,
+        vector[pk_2, pk],
+        balance,
+        &new_balance,
+        &amounts,
+    );
+    assert!(authority::digest_for_testing(&two) != authority::digest_for_testing(&transfer));
+    assert!(authority::digest_for_testing(&two) != authority::digest_for_testing(&swapped));
+}
+
+#[test]
+fun transfer_binding_commits_to_exact_limbs() {
+    let pk = test_key();
+    let zero = encrypted_amount::zero();
+    let delta = encrypt_trivial_for_testing(0, pk.as_element(), 1);
+    let weight = ristretto255::scalar_from_u64(1 << 16);
+    let negative_weighted_delta = twisted_elgamal::new(
+        ristretto255::g_sub(
+            &ristretto255::g_identity(),
+            &ristretto255::g_mul(&weight, delta.ciphertext()),
+        ),
+        ristretto255::g_sub(
+            &ristretto255::g_identity(),
+            &ristretto255::g_mul(&weight, delta.decryption_handle()),
+        ),
+    );
+    let redistributed = encrypted_amount::new_encrypted_amount(
+        negative_weighted_delta,
+        delta,
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    assert_eq!(zero.collapse(), redistributed.collapse());
+
+    let original = authority::transfer_binding(
+        pk,
+        vector[pk],
+        zero,
+        &zero,
+        &vector[zero],
+    );
+    let changed = authority::transfer_binding(
+        pk,
+        vector[pk],
+        zero,
+        &zero,
+        &vector[redistributed],
+    );
+    assert!(authority::digest_for_testing(&original) != authority::digest_for_testing(&changed));
+}
+
+#[test]
+fun disabled_authority_skips_binding_evaluation() {
+    let disabled = authority::none();
+    authority::verify!(&disabled, option::none<authority::Approval<TestCurrency>>(), abort 0);
+}
+
+#[test]
+fun discard_without_authority_accepts_none() {
+    authority::discard_approval<TestCurrency>(option::none());
+}
+
+#[test]
+fun discard_without_authority_discards_approval() {
+    let (pk, balance, new_balance) = binding_parts();
+    let binding = authority::unwrap_binding(pk, balance, &new_balance, 40);
+    let authority_id = object::id_from_address(@0xA);
+    let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
+    let authority = authority::custom_authority_kind_for_testing(authority_id);
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority,
+        &authority_cap,
+        authority::digest_for_testing(&binding),
+    );
+    authority::discard_approval<TestCurrency>(option::some(approval));
+    unit_test::destroy(authority_cap);
+}
+
+#[test]
+fun consume_accepts_matching_digest() {
+    let (pk, balance, new_balance) = binding_parts();
+    let authority_id = object::id_from_address(@0xA);
+    let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
+    let authority = authority::custom_authority_kind_for_testing(authority_id);
+    let binding = authority::unwrap_binding(pk, balance, &new_balance, 40);
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority,
+        &authority_cap,
+        authority::digest_for_testing(&binding),
+    );
+    authority::verify_required_approval(option::some(approval), binding);
+    unit_test::destroy(authority_cap);
+}
+
+#[test, expected_failure(abort_code = ::contra::authority::EApprovalMismatch)]
+fun consume_rejects_other_digest() {
+    let (pk, balance, new_balance) = binding_parts();
+    let authority_id = object::id_from_address(@0xA);
+    let authority_cap = authority::new_authority_cap<TestCurrency>(authority_id);
+    let authority = authority::custom_authority_kind_for_testing(authority_id);
+    let approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority,
+        &authority_cap,
+        authority::digest_for_testing(&authority::unwrap_binding(pk, balance, &new_balance, 41)),
+    );
+    authority::verify_required_approval(
+        option::some(approval),
+        authority::unwrap_binding(pk, balance, &new_balance, 40),
+    );
+    unit_test::destroy(authority_cap);
+}
+
+#[test, expected_failure(abort_code = ::contra::authority::EWrongAuthority)]
+fun mint_rejects_other_authority_cap() {
+    let authority_id = object::id_from_address(@0xA);
+    let other_authority_cap = authority::new_authority_cap<TestCurrency>(
+        object::id_from_address(@0xB),
+    );
+    let _approval = authority::mint_custom_authority_approval<TestCurrency>(
+        &authority::custom_authority_kind_for_testing(authority_id),
+        &other_authority_cap,
+        vector[],
+    );
+    abort
 }
