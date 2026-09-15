@@ -923,6 +923,190 @@ fun test_batched_transfer_auditor_wrong_handle_count() {
     scenario.end();
 }
 
+/// A sender that lies to the auditor about how much a receiver got: the auditor data is built over
+/// the value 25 while receiver A is actually credited 30, so the folded auditor proof is checked
+/// against a commitment it does not open — the transfer aborts rather than crediting a receiver
+/// whose amount the auditor would misread.
+#[test, expected_failure(abort_code = ::contra::auditors::EAuditorProofFailed)]
+fun test_batched_transfer_auditor_wrong_amount_aborts() {
+    let auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xA1),
+        &ristretto255::g_generator(),
+    );
+    run_auditor_transfer(auditor_pk, vector[25, 20], &auditor_pk);
+}
+
+/// Auditor data that verifies only under a key the token never registered (neither `current_pks` nor
+/// `previous_pks`) is rejected: both key sets are tried and both fail, so the transfer aborts rather
+/// than crediting receivers whose amounts no auditor can read.
+#[test, expected_failure(abort_code = ::contra::auditors::EAuditorProofFailed)]
+fun test_batched_transfer_auditor_unregistered_key_aborts() {
+    let auditor_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xA1),
+        &ristretto255::g_generator(),
+    );
+    let rogue_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xB2),
+        &ristretto255::g_generator(),
+    );
+    run_auditor_transfer(auditor_pk, vector[30, 20], &rogue_pk);
+}
+
+/// The `test_batched_transfer_with_auditor` scenario with the auditor data under the caller's
+/// control: 100 is wrapped by account 1 and 30/20 transferred to accounts 2/3 under a token whose
+/// auditor key is `token_auditor_pk`, while the attached auditor data claims `data_values` and is
+/// built under `data_pk`. Passing the true values and the token's own key is the happy path.
+fun run_auditor_transfer(
+    token_auditor_pk: Element<G>,
+    data_values: vector<u64>,
+    data_pk: &Element<G>,
+) {
+    let setup_addr = @0x0;
+
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+    let addr3 = @0x102;
+    let pk_3 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(11111),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[public_key(token_auditor_pk)],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
+    scenario.next_tx(addr3);
+    let mut account_3 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_3.register<TestCurrency>(&auth, public_key(pk_3));
+
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+    scenario.next_tx(addr1);
+
+    let r_a = 32533;
+    let r_b = 17000;
+    let new_balance_ea = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    let taken_a_ea = amount_for_testing(30, &pk_2, r_a);
+    let taken_b_ea = amount_for_testing(20, &pk_3, r_b);
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
+    let receiver_consistency_proofs = vector[
+        consistency_proof_for_testing(elgamal_dst, 30, &taken_a_ea, r_a, &pk_2),
+        consistency_proof_for_testing(elgamal_dst, 20, &taken_b_ea, r_b, &pk_3),
+    ];
+
+    let taken_a_sender = amount_for_testing(30, &pk_1, r_a);
+    let taken_b_sender = amount_for_testing(20, &pk_1, r_b);
+    let old_balance = account_1.balance<TestCurrency>();
+    let total_sender = taken_a_sender.collapse().add(&taken_b_sender.collapse());
+    let sender_consistency_proof = encrypted_amount::sender_consistency_proof_for_testing(
+        elgamal_dst,
+        &new_balance_ea,
+        50,
+        10097,
+        &total_sender,
+        50,
+        r_a + r_b,
+        &pk_1,
+    );
+    let balance_proof = nizk::sum_proof_for_testing(
+        account_1.dst_ddh_for_testing<TestCurrency>(),
+        &old_balance,
+        &new_balance_ea.collapse(),
+        &total_sender,
+        &sk_1,
+    );
+
+    let auditor_dst = account_1.dst_auditor_elgamal_for_testing<TestCurrency>();
+    let (handles, proof) = build_auditor_data(
+        data_values,
+        vector[r_a, r_b],
+        data_pk,
+        auditor_dst,
+    );
+    let auditor_package = auditors::new_auditor_package(handles, proof);
+
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1
+        .batched_transfer<TestCurrency>(
+            &auth,
+            &ct,
+            &deny_list,
+            vector[public_key(pk_2), public_key(pk_3)],
+            vector[taken_a_ea, taken_b_ea],
+            receiver_consistency_proofs,
+            new_balance_ea,
+            *total_sender.decryption_handle(),
+            sender_consistency_proof,
+            range_proof::new_range_proof_for_testing(),
+            ristretto255::g_identity(),
+            balance_proof,
+            option::some(auditor_package),
+        )
+        .add<TestCurrency>(&mut account_2, vector[], &deny_list)
+        .add<TestCurrency>(&mut account_3, vector[], &deny_list)
+        .finalize();
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(account_3);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
+}
+
 // === Auditor presence policy ===
 //
 // At most one auditor key (each of `current_pks` / `previous_pks` holds ≤1). Auditing is disabled
@@ -2517,4 +2701,143 @@ fun with_witness_rejects_permissionless_operation() {
 fun with_witness_rejects_empty_policy() {
     let policy = policy::permissionless();
     let _auth = policy::with_witness<TestCurrency, Witness>(&policy, 0u8, @0x100, Witness {});
+}
+
+// === Receiver key binding ===
+//
+// A batched transfer's coins are keyed by the `receiver_pks` the sender declares, but which account
+// each coin is credited to is decided later, by the order of the `add_to_batch` calls. The only
+// thing tying the two together is `balance::deposit_encrypted`'s check that a coin's key is the
+// receiving balance's own key -- without it a sender could hand a receiver value encrypted under a
+// key the receiver has no secret for, and the funds would be unspendable.
+
+/// A coin keyed to nobody's account: every proof the transfer carries verifies (the amount is
+/// consistently encrypted under `rogue_pk` and the balance drops by exactly it), but the receiver's
+/// balance is keyed `pk_2`, so crediting it is rejected.
+#[test, expected_failure(abort_code = ::contra::balance::EInvalidPublicKey)]
+fun test_transfer_under_unrelated_key_aborts() {
+    let setup_addr = @0x0;
+
+    let addr1 = @0x100;
+    let sk_1 = ristretto255::scalar_from_u64(12345);
+    let pk_1 = ristretto255::g_mul(&sk_1, &ristretto255::g_generator());
+    let addr2 = @0x101;
+    let pk_2 = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(67890),
+        &ristretto255::g_generator(),
+    );
+    let rogue_pk = ristretto255::g_mul(
+        &ristretto255::scalar_from_u64(0xC3),
+        &ristretto255::g_generator(),
+    );
+
+    let mut scenario = sui::test_scenario::begin(setup_addr);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(setup_addr);
+    let deny_list: deny_list::DenyList = scenario.take_shared();
+
+    let mut acc_reg = contra::new_account_registry_for_testing(scenario.ctx());
+    let mut ct_registry = contra::new_token_registry_for_testing(scenario.ctx());
+    let mut coin_registry = coin_registry::create_coin_data_registry_for_testing(scenario.ctx());
+    let (builder, mut t_cap) = coin_registry.new_currency<TestCurrency>(
+        8,
+        "_",
+        "_",
+        "_",
+        "_",
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let (ct, management_cap) = ct_registry.new<TestCurrency>(
+        &mut t_cap,
+        vector[],
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(addr1);
+    let mut account_1 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.register<TestCurrency>(&auth, public_key(pk_1));
+    scenario.next_tx(addr2);
+    let mut account_2 = acc_reg.new(scenario.ctx().sender());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_2.register<TestCurrency>(&auth, public_key(pk_2));
+
+    scenario.next_tx(addr1);
+    let pool: contra::Pool<TestCurrency> = scenario.take_shared();
+    let coins = t_cap.mint(100, scenario.ctx());
+    let auth = ct.authorize_as_sender(scenario.ctx());
+    account_1.wrap(&auth, &ct, &deny_list, &pool, coins, vector[]);
+    account_1.merge<TestCurrency>(&auth);
+    scenario.next_tx(addr1);
+
+    let r = 32533;
+    let new_balance = encrypted_amount::new_encrypted_amount(
+        encrypt_trivial_for_testing(50, &pk_1, 10097),
+        encrypt_zero(),
+        encrypt_zero(),
+        encrypt_zero(),
+    );
+    // The receiver amount is encrypted under `rogue_pk` rather than account 2's `pk_2`. Only the
+    // decryption handle depends on the key, so the commitment -- and with it the sender-side total
+    // and the balance proof -- is exactly what an honest transfer of 50 to account 2 would produce.
+    let receiver_amount = amount_for_testing(50, &rogue_pk, r);
+    let total_sender = amount_for_testing(50, &pk_1, r).collapse();
+    let elgamal_dst = account_1.dst_elgamal_for_testing<TestCurrency>();
+    let sum_proof = nizk::sum_proof_for_testing(
+        account_1.dst_ddh_for_testing<TestCurrency>(),
+        &account_1.balance<TestCurrency>(),
+        &new_balance.collapse(),
+        &total_sender,
+        &sk_1,
+    );
+    let receiver_consistency_proof = consistency_proof_for_testing(
+        elgamal_dst,
+        50,
+        &receiver_amount,
+        r,
+        &rogue_pk,
+    );
+    let sender_consistency_proof = encrypted_amount::sender_consistency_proof_for_testing(
+        elgamal_dst,
+        &new_balance,
+        50,
+        10097,
+        &total_sender,
+        50,
+        r,
+        &pk_1,
+    );
+
+    transfer<TestCurrency>(
+        &mut account_1,
+        &mut account_2,
+        vector[],
+        &ct,
+        new_balance,
+        rogue_pk,
+        receiver_amount,
+        receiver_consistency_proof,
+        sender_consistency_proof,
+        *total_sender.decryption_handle(),
+        sum_proof,
+        &deny_list,
+        scenario.ctx(),
+    );
+
+    unit_test::destroy(account_1);
+    unit_test::destroy(account_2);
+    unit_test::destroy(acc_reg);
+    unit_test::destroy(t_cap);
+    unit_test::destroy(builder);
+    unit_test::destroy(ct_registry);
+    unit_test::destroy(coin_registry);
+    unit_test::destroy(management_cap);
+    unit_test::destroy(ct);
+
+    sui::test_scenario::return_shared(deny_list);
+    sui::test_scenario::return_shared(pool);
+
+    scenario.end();
 }
