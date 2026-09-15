@@ -111,6 +111,10 @@ A confidential balance is therefore four Twisted ElGamal ciphertexts. Decryption
 
 The homomorphism lets the contract fold incoming encrypted deposits into the running encrypted balance without decrypting, but each addition can grow a limb beyond its original `u16` range. Starting from limbs of at most `2^16`, summing `k` such ciphertexts produces limbs of at most `k * 2^16`. The contract caps `k` at `2^16`, so each limb stays below `2^32` and remains decryptable from the precomputed table. This bound is tracked on-chain: after roughly `2^16` deposits without a merge, further deposits are rejected until the recipient merges the pending balance into the active one (which resets the bound).
 
+### Trust in the RPC endpoint
+
+The SDK encrypts transfer amounts under receiver and auditor keys read from the configured RPC, and those reads are unauthenticated. A hostile endpoint can substitute its own key and read the amounts off the transaction the client builds — the chain's receiver-key check keeps funds safe, but not confidentiality.
+
 ## Balance Model
 
 A confidential token account holds three separate balances:
