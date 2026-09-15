@@ -97,7 +97,13 @@ public(package) fun verify_in_range(
     dst: vector<u8>,
 ): vector<RangeVerifiedAmount> {
     let mut commitments = vector<Element<G>>[];
-    amounts.do_ref!(|a| U16_LIMBS.do!(|i| commitments.push_back(*a.amount[i].ciphertext())));
+    amounts.do_ref!(|a| {
+        let ea = &a.amount;
+        commitments.push_back(*ea.l0.ciphertext());
+        commitments.push_back(*ea.l1.ciphertext());
+        commitments.push_back(*ea.l2.ciphertext());
+        commitments.push_back(*ea.l3.ciphertext());
+    });
     assert!(range_proofs.verify(&commitments, dst), ERangeProofFailed);
     amounts.map!(|a| {
         let VerifiedAmount { amount, pk } = a;
@@ -211,13 +217,19 @@ public(package) fun try_rekey(
 /// Sum of the collapsed ciphertexts of `amounts` (the `r*g + m*h` component, not the handles).
 public(package) fun sum_ciphertexts(amounts: &vector<EncryptedAmount>): Element<G> {
     assert!(!amounts.is_empty(), EEmptyBatch);
-    let mut cs = vector::tabulate!(U16_LIMBS, |j| *amounts[0][j].ciphertext());
+    let first = &amounts[0];
+    let mut cs = vector[
+        *first.l0.ciphertext(),
+        *first.l1.ciphertext(),
+        *first.l2.ciphertext(),
+        *first.l3.ciphertext(),
+    ];
     (amounts.length() - 1).do!(|i| {
         let ea = &amounts[i + 1];
-        U16_LIMBS.do!(|j| {
-            let sum = g_add(&cs[j], ea[j].ciphertext());
-            *cs.borrow_mut(j) = sum;
-        });
+        *cs.borrow_mut(0) = g_add(&cs[0], ea.l0.ciphertext());
+        *cs.borrow_mut(1) = g_add(&cs[1], ea.l1.ciphertext());
+        *cs.borrow_mut(2) = g_add(&cs[2], ea.l2.ciphertext());
+        *cs.borrow_mut(3) = g_add(&cs[3], ea.l3.ciphertext());
     });
     let two_16 = scalar_from_u64(1 << 16);
     let lo = fold(&cs[0], &cs[1], &two_16);
@@ -258,20 +270,16 @@ public(package) fun add_assign_value(a: &mut EncryptedAmount, value: u64) {
 }
 
 public(package) fun zero(): EncryptedAmount {
-    EncryptedAmount {
-        l0: encrypt_zero(),
-        l1: encrypt_zero(),
-        l2: encrypt_zero(),
-        l3: encrypt_zero(),
-    }
+    let zero = encrypt_zero();
+    EncryptedAmount { l0: zero, l1: zero, l2: zero, l3: zero }
 }
 
 /// Limb-wise add `b` into `a`. Limbs may exceed u16 after this.
 public(package) fun add_assign(a: &mut EncryptedAmount, b: &EncryptedAmount) {
-    a.l0 = a[0].add(&b[0]);
-    a.l1 = a[1].add(&b[1]);
-    a.l2 = a[2].add(&b[2]);
-    a.l3 = a[3].add(&b[3]);
+    a.l0 = a.l0.add(&b.l0);
+    a.l1 = a.l1.add(&b.l1);
+    a.l2 = a.l2.add(&b.l2);
+    a.l3 = a.l3.add(&b.l3);
 }
 
 #[test_only]
