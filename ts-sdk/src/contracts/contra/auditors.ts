@@ -7,6 +7,7 @@ import { type Transaction, type TransactionArgument } from '@mysten/sui/transact
 import { MoveStruct, normalizeMoveArguments } from '../utils/index.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as nizk from './nizk.js';
+import * as queue from './queue.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
 const $moduleName = '@local-pkg/contra::auditors';
@@ -27,7 +28,7 @@ export const AuditorPackage = new MoveStruct({
 export const VerifiedAuditorHandles = new MoveStruct({
 	name: `${$moduleName}::VerifiedAuditorHandles`,
 	fields: {
-		handles: bcs.vector(bcs.vector(group_ops.Element)),
+		handles: queue.Queue(bcs.vector(group_ops.Element)),
 		pk: twisted_elgamal.PublicKey,
 	},
 });

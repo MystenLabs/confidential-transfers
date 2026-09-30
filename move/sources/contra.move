@@ -90,6 +90,7 @@ use contra::{
     events,
     nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
+    queue::{Self, Queue},
     range_proof::RangeProofs,
     session_id::{Self, SessionId},
     twisted_elgamal::PublicKey
@@ -203,7 +204,7 @@ public enum TransferBatch<phantom T> {
     /// returns `false` and `finalize` aborts.
     BalanceProofFailed,
     /// The balance proof succeeded. Holds the receiver-keyed `EncryptedCoin`s split off the
-    /// sender's balance, one per transfer. `add_to_batch` pops one per receiver and credits it to
+    /// sender's balance, one per transfer. `add_to_batch` pops the next one per receiver and credits it to
     /// their pending deposits. `seed_point` (= `P`) and `next_index` are carried
     /// only for the events: each `add_to_batch` emits `P` and the receiver's batch index so the
     /// sender can later re-derive that transfer's blinding (`seed = HKDF(sk * P)`) and recover the
@@ -212,7 +213,7 @@ public enum TransferBatch<phantom T> {
     Ok {
         sender: address,
         sender_pk: PublicKey,
-        coins: vector<EncryptedCoin<T>>,
+        coins: Queue<EncryptedCoin<T>>,
         seed_point: Element<G>,
         next_index: u8,
         auditor_data: Option<VerifiedAuditorHandles>,
@@ -574,17 +575,15 @@ public fun batched_transfer<T>(
         );
 
     if (withdrawn.is_some()) {
-        let mut coins = withdrawn.destroy_some();
+        let coins = withdrawn.destroy_some();
         let auditor_data = ct
             .inner()
             .auditors
             .prepare_auditor_data(&coins, auditor_package, sender.session_id);
-        // Reverse coins so `add_to_batch`'s `pop_back` consumes them in submission order.
-        coins.reverse();
         TransferBatch::Ok {
             sender: sender_addr,
             sender_pk: *sender.pk(),
-            coins,
+            coins: queue::from_vector(coins),
             seed_point,
             next_index: 0,
             auditor_data,
@@ -630,7 +629,7 @@ public fun add_to_batch<T>(
             let receiver = &mut receiver[TokenAccountKey<T>()];
             assert!(!receiver.is_frozen && receiver.accepts_deposits, ETransferDenied);
 
-            let coin = coins.pop_back();
+            let coin = coins.pop_front();
             let (receiver_auditor_decryption_handles, auditor_pk) = next(&mut auditor_data);
             events::emit_transfer<T>(
                 sender,

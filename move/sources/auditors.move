@@ -7,6 +7,7 @@ use contra::{
     balance::EncryptedCoin,
     encrypted_amount::ciphertexts_u32,
     nizk::{ElGamalProof, verify_elgamal},
+    queue::{Self, Queue},
     session_id::SessionId,
     twisted_elgamal::{Self, PublicKey, Encryption}
 };
@@ -46,10 +47,10 @@ public struct AuditorPackage has drop {
     proof: ElGamalProof,
 }
 
-/// The verified auditor decryption handles for a batch: `handles` holds one pair per receiver (stored
-/// reversed, so `next` pops the back in submission order), tagged with the auditor's `pk`.
+/// The verified auditor decryption handles for a batch: `handles` holds one pair per receiver, in
+/// submission order, tagged with the auditor's `pk`.
 public struct VerifiedAuditorHandles has store {
-    handles: vector<vector<Element<G>>>,
+    handles: Queue<vector<Element<G>>>,
     pk: PublicKey,
 }
 
@@ -101,7 +102,7 @@ public(package) fun prepare_auditor_data<T>(
         !auditors.current_pks.is_empty() || !auditors.previous_pks.is_empty(),
         EUnexpectedAuditorData,
     );
-    let AuditorPackage { mut handles, proof } = auditor_package.destroy_some();
+    let AuditorPackage { handles, proof } = auditor_package.destroy_some();
     let n = receiver_coins.length();
     assert!(handles.length() == n, EMismatchedAuditorCount);
 
@@ -117,9 +118,7 @@ public(package) fun prepare_auditor_data<T>(
     } else {
         abort EAuditorProofFailed
     };
-    // Store reversed so `next` pops the back (O(1)) yet yields receivers in submission order.
-    handles.reverse();
-    option::some(VerifiedAuditorHandles { handles, pk })
+    option::some(VerifiedAuditorHandles { handles: queue::from_vector(handles), pk })
 }
 
 /// Pop the next receiver's auditor data for its `TransferEvent`: its two `[lo, hi]` handles (empty when
@@ -129,7 +128,7 @@ public(package) fun next(
 ): (vector<Element<G>>, Option<PublicKey>) {
     if (auditor_data.is_none()) return (vector[], option::none());
     let verified = auditor_data.borrow_mut();
-    (verified.handles.pop_back(), option::some(verified.pk))
+    (verified.handles.pop_front(), option::some(verified.pk))
 }
 
 /// Consume the auditor data once every receiver's handles have been popped by `next`. Aborts if any

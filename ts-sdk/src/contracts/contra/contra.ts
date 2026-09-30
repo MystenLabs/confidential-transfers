@@ -62,10 +62,15 @@
  *
  * ## Authentication:
  *
- * Some functions require authorization via an `&Auth<T>` argument. Under the
- * default permissionless policy any `Auth<T>` is accepted; permissioning narrows
- * which constructors produce a valid `Auth<T>`. The caller constructs the
- * `Auth<T>` via one of three constructors:
+ * Some functions require authorization via an `&Auth<T>` argument. An `Auth<T>`
+ * carries two independent claims: an authenticated `owner`, and the bitmap of
+ * operations it covers.
+ *
+ * The bitmap only ever narrows the _permissioned_ operations; the permissionless
+ * ones check `owner` alone. Naming an address in an `Auth<T>` is therefore a claim
+ * that the contract has verified control of that account.
+ *
+ * The caller constructs the `Auth<T>` via one of three constructors:
  *
  * - `authorize_as_sender`: authenticates `ctx.sender()`. The standard path for
  *   end-user wallets and permissionless operations.
@@ -76,6 +81,12 @@
  *   by the policy. Use this to implement custom permissioned operations: the
  *   issuer's contract holds `W`, performs its own checks (e.g. KYC, screening,
  *   rate limiting), and creates an `Auth<T>` for the requested operation.
+ *
+ * Two rules follow for contracts minting with `authorize_with_witness`:
+ *
+ * - Only name an `owner` whose control of the account has been verified.
+ * - Use the `Auth<T>` internally rather than returning it: handing one back grants
+ *   the caller every permissionless operation on `owner`'s account.
  */
 
 import { bcs, type BcsType } from '@mysten/sui/bcs';
@@ -93,6 +104,7 @@ import * as balance from './balance.js';
 import * as group_ops from './deps/sui/group_ops.js';
 import * as vec_set from './deps/sui/vec_set.js';
 import * as policy from './policy.js';
+import * as queue from './queue.js';
 import * as session_id from './session_id.js';
 import * as twisted_elgamal from './twisted_elgamal.js';
 
@@ -206,20 +218,20 @@ export const TransferBatch = new MoveEnum({
 		BalanceProofFailed: null,
 		/**
 		 * The balance proof succeeded. Holds the receiver-keyed `EncryptedCoin`s split off
-		 * the sender's balance, one per transfer. `add_to_batch` pops one per receiver and
-		 * credits it to their pending deposits. `seed_point` (= `P`) and `next_index` are
-		 * carried only for the events: each `add_to_batch` emits `P` and the receiver's
-		 * batch index so the sender can later re-derive that transfer's blinding
-		 * (`seed = HKDF(sk * P)`) and recover the amount from the on-chain commitment,
-		 * without any sender-keyed decryption handle. `sender_pk` is likewise carried only
-		 * for the event.
+		 * the sender's balance, one per transfer. `add_to_batch` pops the next one per
+		 * receiver and credits it to their pending deposits. `seed_point` (= `P`) and
+		 * `next_index` are carried only for the events: each `add_to_batch` emits `P` and
+		 * the receiver's batch index so the sender can later re-derive that transfer's
+		 * blinding (`seed = HKDF(sk * P)`) and recover the amount from the on-chain
+		 * commitment, without any sender-keyed decryption handle. `sender_pk` is likewise
+		 * carried only for the event.
 		 */
 		Ok: new MoveStruct({
 			name: `TransferBatch.Ok`,
 			fields: {
 				sender: bcs.Address,
 				sender_pk: twisted_elgamal.PublicKey,
-				coins: bcs.vector(balance.EncryptedCoin),
+				coins: queue.Queue(balance.EncryptedCoin),
 				seed_point: group_ops.Element,
 				next_index: bcs.u8(),
 				auditor_data: bcs.option(auditors.VerifiedAuditorHandles),
