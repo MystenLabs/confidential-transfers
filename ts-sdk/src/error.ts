@@ -28,13 +28,9 @@ export class InvalidArgumentError extends ContraError {}
 
 /** Trying to spend more than the available (active or total) balance. */
 export class InsufficientBalanceError extends ContraError {
-	readonly amount: bigint;
-	readonly spendable: bigint;
 	readonly scope: 'active' | 'total';
-	constructor(amount: bigint, spendable: bigint, scope: 'active' | 'total') {
+	constructor(scope: 'active' | 'total') {
 		super(`Insufficient ${scope} balance for the requested amount.`);
-		this.amount = amount;
-		this.spendable = spendable;
 		this.scope = scope;
 	}
 }

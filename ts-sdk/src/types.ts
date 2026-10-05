@@ -158,6 +158,10 @@ export interface TransferOptions {
 	 * When `true` (the default), pending deposits are merged into the
 	 * active balance before the transfer if any exist. Set to `false`
 	 * to skip the merge and transfer from the active balance only.
+	 *
+	 * Choose this independently of the decrypted balance: a merge is visible on chain, so picking
+	 * it based on whether the active balance covers the amount (e.g. retrying with a merge after an
+	 * `InsufficientBalanceError`) reveals that comparison.
 	 */
 	merge?: boolean;
 	/**
@@ -193,6 +197,10 @@ export interface BatchedTransferOptions {
 	 * When `true` (the default), pending deposits are merged into the
 	 * active balance before the transfer if any exist. Set to `false`
 	 * to skip the merge and transfer from the active balance only.
+	 *
+	 * Choose this independently of the decrypted balance: a merge is visible on chain, so picking
+	 * it based on whether the active balance covers the amount (e.g. retrying with a merge after an
+	 * `InsufficientBalanceError`) reveals that comparison.
 	 */
 	merge?: boolean;
 	/**
@@ -212,6 +220,10 @@ export interface UnwrapOptions {
 	 * When `true` (the default), pending deposits are merged into the
 	 * active balance before the unwrap if any exist. Set to `false`
 	 * to skip the merge and unwrap from the active balance only.
+	 *
+	 * Choose this independently of the decrypted balance: a merge is visible on chain, so picking
+	 * it based on whether the active balance covers the amount (e.g. retrying with a merge after an
+	 * `InsufficientBalanceError`) reveals that comparison.
 	 */
 	merge?: boolean;
 	/**

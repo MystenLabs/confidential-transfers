@@ -593,7 +593,7 @@ export class ContraClient {
 			: balance.amount;
 
 		if (amount > spendable) {
-			throw new InsufficientBalanceError(amount, spendable, shouldMerge ? 'total' : 'active');
+			throw new InsufficientBalanceError(shouldMerge ? 'total' : 'active');
 		}
 
 		const oldBalance = shouldMerge
