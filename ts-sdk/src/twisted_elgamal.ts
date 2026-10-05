@@ -251,7 +251,7 @@ function solveBsgs(point: RistrettoPoint, table: DiscreteLogTable): bigint {
 			if (debugLogging) {
 				const elapsed = performance.now() - start;
 				console.log(
-					`[decrypt] ${hit.cached ? 'cache hit' : 'cache miss'} | ${elapsed.toFixed(1)}ms | value=${result}`,
+					`[decrypt] ${hit.cached ? 'cache hit' : 'cache miss'} | ${elapsed.toFixed(1)}ms`,
 				);
 			}
 			return result;
