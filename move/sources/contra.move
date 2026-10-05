@@ -168,6 +168,8 @@ public struct ConfidentialTokenV1 has drop, store {
 /// operations.
 /// Tokens are held at this object's address via Sui address balance to reduce contention on wrap
 /// operations.
+/// The balance of the pool >= the total balance held by user accounts (as direct transfers are
+/// not rejected).
 public struct Pool<phantom T> has key {
     id: UID,
 }
