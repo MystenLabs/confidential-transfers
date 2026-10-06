@@ -4,7 +4,7 @@
 module contra::encrypted_amount;
 
 use contra::{
-    nizk::{DdhProof, ElGamalProof, RekeyProof, verify_ddh, verify_elgamal, verify_rekey},
+    nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
     range_proof::RangeProofs,
     twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_zero}
 };
@@ -182,21 +182,43 @@ public(package) fun verify_zero(
 
 /// Re-key `old_amount` (encrypted under `old_pk`) to `new_pk` by swapping each limb's decryption
 /// handle for the matching `new_handles[i]` while keeping its Pedersen commitment. On a verifying
-/// `RekeyProof` — that every new handle re-keys its old handle from `old_pk` to `new_pk`, by a
-/// prover knowing both secret keys — returns the re-keyed amount; otherwise `none`. Reusing
+/// batched re-keying DDH proof (Π_rekey) — a single witness `w` mapping `old_pk` and every old
+/// handle to `new_pk` and `new_handles[i]` — returns the re-keyed amount; otherwise `none`. Reusing
 /// the commitments means only the handles are caller-supplied, and the result encrypts the same
 /// per-limb values under `new_pk` by construction.
+///
+/// `old_sk_proof` additionally proves knowledge of `old_pk`'s secret key. The DDH proof alone only
+/// shows knowledge of the ratio `w`, which anyone can pick, so without it a caller holding the
+/// account's `Auth` but not its key could rotate the balance to a key nobody holds. Knowing `w` and
+/// the old key implies knowing the new one (`w * sk_old`).
 public(package) fun try_rekey(
     old_amount: &EncryptedAmount,
     old_pk: &PublicKey,
     new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
-    proof: &RekeyProof,
+    proof: &DdhProof,
+    old_sk_proof: &DdhProof,
     dst: vector<u8>,
+    old_sk_dst: vector<u8>,
 ): Option<EncryptedAmount> {
     assert!(new_handles.length() == U16_LIMBS, EMismatchedBatchLength);
-    let old_handles = vector::tabulate!(U16_LIMBS, |i| *old_amount[i].decryption_handle());
-    if (proof.verify_rekey(dst, old_pk, new_pk, &old_handles, &new_handles)) {
+    // Pair 0 re-keys the public key and pairs 1..4 re-key each limb's decryption handle.
+    let mut bases = vector[*old_pk.as_element()];
+    let mut images = vector[*new_pk.as_element()];
+    U16_LIMBS.do!(|i| {
+        bases.push_back(*old_amount[i].decryption_handle());
+        images.push_back(new_handles[i]);
+    });
+    // The two proofs have independent challenges, so `old_sk_proof` is bound to this rotation
+    // through its DST. Otherwise its statement (`g -> old_pk`) is static, and a valid proof published
+    // by a soft-failed or aborted rotation could be replayed next to an attacker's own `proof`.
+    let mut old_sk_dst = old_sk_dst;
+    old_sk_dst.append(*new_pk.as_element().bytes());
+    new_handles.do_ref!(|d| old_sk_dst.append(*d.bytes()));
+    if (
+        proof.verify_ddh(dst, &bases, &images) &&
+        old_sk_proof.verify_ddh(old_sk_dst, &vector[g()], &vector[*old_pk.as_element()])
+    ) {
         option::some(EncryptedAmount {
             l0: twisted_elgamal::new(*old_amount[0].ciphertext(), new_handles[0]),
             l1: twisted_elgamal::new(*old_amount[1].ciphertext(), new_handles[1]),

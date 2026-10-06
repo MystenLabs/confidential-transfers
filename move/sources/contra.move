@@ -88,7 +88,7 @@ use contra::{
     deny_list::{is_frozen, is_receiver_denied, is_sender_denied},
     encrypted_amount::EncryptedAmount,
     events,
-    nizk::{DdhProof, ElGamalProof, RekeyProof},
+    nizk::{DdhProof, ElGamalProof},
     policy::{Self, Auth, Policy},
     range_proof::RangeProofs,
     session_id::{Self, SessionId},
@@ -433,9 +433,10 @@ fun set_default_pk_internal(account: &mut Account, default_pk: Option<PublicKey>
 }
 
 /// Re-key token `T`'s balance from its current key to `new_pk`, swapping each limb's decryption
-/// handle for the matching `new_handles[i]` (proven by `rekey_proof`, which also proves knowledge of
-/// the current and new secret keys, so `auth` alone cannot rotate the balance). `new_pk` is
-/// explicit and independent of the account's default key. Aborts if the token has unmerged pending
+/// handle for the matching `new_handles[i]` (proven by `rekey_proof`). `old_sk_proof` proves
+/// knowledge of the current key's secret, so `auth` alone cannot rotate the balance; its DST is the
+/// session's re-key DST followed by `new_pk` and `new_handles`, binding it to this rotation. `new_pk`
+/// is explicit and independent of the account's default key. Aborts if the token has unmerged pending
 /// deposits (which are under the old key, so they must be merged first) or the proof fails.
 /// Authorized by `auth`, which must be for the `PERMISSIONED_REGISTER` operation and for
 /// `account.owner`.
@@ -444,10 +445,17 @@ public fun rekey_token_account<T>(
     auth: &Auth<T>,
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
-    rekey_proof: RekeyProof,
+    rekey_proof: DdhProof,
+    old_sk_proof: DdhProof,
 ) {
     assert!(
-        account.rekey_token_account_internal<T>(auth, new_pk, new_handles, rekey_proof),
+        account.rekey_token_account_internal<T>(
+            auth,
+            new_pk,
+            new_handles,
+            rekey_proof,
+            old_sk_proof,
+        ),
         ERekeyProofFailed,
     );
 }
@@ -463,9 +471,18 @@ public fun try_rekey_token_account_and_unpause<T>(
     auth: &Auth<T>,
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
-    rekey_proof: RekeyProof,
+    rekey_proof: DdhProof,
+    old_sk_proof: DdhProof,
 ) {
-    if (account.rekey_token_account_internal<T>(auth, new_pk, new_handles, rekey_proof)) {
+    if (
+        account.rekey_token_account_internal<T>(
+            auth,
+            new_pk,
+            new_handles,
+            rekey_proof,
+            old_sk_proof,
+        )
+    ) {
         account[TokenAccountKey<T>()].accepts_deposits = true;
     } else {
         events::emit_try_token_rekey_failed<T>(account.owner());
@@ -477,14 +494,17 @@ fun rekey_token_account_internal<T>(
     auth: &Auth<T>,
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
-    rekey_proof: RekeyProof,
+    rekey_proof: DdhProof,
+    old_sk_proof: DdhProof,
 ): bool {
     let owner = account.owner();
     assert!(auth.is_allowed(PERMISSIONED_REGISTER), EAuthorizationError);
     assert!(auth.is_authenticated(owner), EAuthorizationError);
     let token_account = &mut account[TokenAccountKey<T>()];
     let session_id = token_account.session_id;
-    if (token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, session_id)) {
+    if (
+        token_account.balance.try_rekey(new_pk, new_handles, rekey_proof, old_sk_proof, session_id)
+    ) {
         events::emit_token_rekeyed<T>(owner, new_pk);
         true
     } else {
@@ -1031,8 +1051,13 @@ public fun dst_elgamal_for_testing<T>(account: &Account): vector<u8> {
 }
 
 #[test_only]
-public(package) fun dst_rekey_for_testing<T>(account: &Account): vector<u8> {
-    account.derive_session_id<T>().rekey()
+public(package) fun dst_batch_ddh_for_testing<T>(account: &Account): vector<u8> {
+    account.derive_session_id<T>().batch_ddh()
+}
+
+#[test_only]
+public(package) fun dst_rekey_old_sk_for_testing<T>(account: &Account): vector<u8> {
+    account.derive_session_id<T>().rekey_old_sk()
 }
 
 #[test_only]

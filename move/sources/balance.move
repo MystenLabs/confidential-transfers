@@ -9,7 +9,7 @@ module contra::balance;
 
 use contra::{
     encrypted_amount::{Self, EncryptedAmount, RangeVerifiedAmount, VerifiedEncryption},
-    nizk::{DdhProof, ElGamalProof, RekeyProof},
+    nizk::{DdhProof, ElGamalProof},
     range_proof::RangeProofs,
     session_id::SessionId,
     twisted_elgamal::{Self, Encryption, PublicKey}
@@ -202,14 +202,22 @@ public(package) fun try_rekey<T>(
     self: &mut Balances<T>,
     new_pk: PublicKey,
     new_handles: vector<Element<G>>,
-    rekey_proof: RekeyProof,
+    rekey_proof: DdhProof,
+    old_sk_proof: DdhProof,
     session_id: SessionId,
 ): bool {
     assert!(self.pending.terms == 0, EPendingDepositsMustBeMerged);
     if (
         self
             .active
-            .try_set_public_key(&self.pk, &new_pk, new_handles, rekey_proof, session_id.rekey())
+            .try_set_public_key(
+                &self.pk,
+                &new_pk,
+                new_handles,
+                rekey_proof,
+                old_sk_proof,
+                session_id,
+            )
     ) {
         self.pk = new_pk;
         true
@@ -379,21 +387,34 @@ fun add_assign(self: &mut AccumulatedAmount, amount: &RangeVerifiedAmount) {
     self.terms = self.terms + 1;
 }
 
-/// On a verifying `rekey_proof` that `new_handles` re-key `self`'s limb decryption handles from
-/// `old_pk` to `new_pk`, adopt the re-keyed amount and return `true`. The
+/// On a verifying `rekey_proof` that `new_handles` map `self`'s limb decryption handles from
+/// `old_pk` to `new_pk` under a shared witness, and a verifying `old_sk_proof` of `old_pk`'s secret
+/// key, adopt the re-keyed amount and return `true`. The
 /// re-keyed limbs encrypt the same values, so `terms` is preserved.
 fun try_set_public_key(
     self: &mut AccumulatedAmount,
     old_pk: &PublicKey,
     new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
-    rekey_proof: RekeyProof,
-    dst: vector<u8>,
+    rekey_proof: DdhProof,
+    old_sk_proof: DdhProof,
+    session_id: SessionId,
 ): bool {
-    self.amount.try_rekey(old_pk, new_pk, new_handles, &rekey_proof, dst).is_some_and!(|amount| {
-        self.amount = *amount;
-        true
-    })
+    self
+        .amount
+        .try_rekey(
+            old_pk,
+            new_pk,
+            new_handles,
+            &rekey_proof,
+            &old_sk_proof,
+            session_id.batch_ddh(),
+            session_id.rekey_old_sk(),
+        )
+        .is_some_and!(|amount| {
+            self.amount = *amount;
+            true
+        })
 }
 
 /// Overwrite `self` with the verified amount `new`, which counts as a single merged value.

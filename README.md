@@ -136,7 +136,7 @@ In the failure case, a second attempt with `merge: false` will succeed immediate
 
 ### Key rotation
 
-Each token's balance is encrypted under its own `TokenAccount.pk`, chosen at `register` and rotated independently with `rekeyTokenAccount(newTokenAccount)` — the new key is explicit and unrelated to any other token or to the account's key. The re-key proof shows knowledge of both the current and the new secret key, so controlling the account's Sui address alone is not enough to rotate a balance away from its key holder.
+Each token's balance is encrypted under its own `TokenAccount.pk`, chosen at `register` and rotated independently with `rekeyTokenAccount(newTokenAccount)` — the new key is explicit and unrelated to any other token or to the account's key. A re-key must include a proof of knowledge of the current secret key, so controlling the account's Sui address alone is not enough to rotate a balance away from its key holder.
 
 > **Retain the old key until every token is re-keyed.** A not-yet-re-keyed token's balance is still under the old key, and both re-keying and decrypting it need that key — discarding it while any token still uses it loses that balance.
 
