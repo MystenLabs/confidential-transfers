@@ -297,17 +297,17 @@ export function buildElGamalProofs(packageId: string, proofs: ElGamalNizk[]) {
 
 /**
  * Maximum number of amounts a single Bulletproof chunk can cover. Sui's
- * `rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment count at 32 for
+ * `rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment count at 64 for
  * 16-bit range proofs, and each amount contributes 4 limb commitments, so a chunk holds at most
- * `32 / 4 = 8` amounts. Mirrors `MAX_BATCH_SIZE` in `range_proof.move` (32 commitments).
+ * `64 / 4 = 16` amounts. Mirrors `MAX_BATCH_SIZE` in `range_proof.move` (64 commitments).
  */
-const MAX_RANGE_PROOF_BATCH_SIZE = 8;
+const MAX_RANGE_PROOF_BATCH_SIZE = 16;
 
 /**
  * Build an on-chain `RangeProofs` over a batch of amounts' limbs via
  * `range_proof::new_range_proofs`. Sui's bulletproof aggregator requires a power-of-2
- * committed-value count and at most `MAX_RANGE_PROOF_BATCH_SIZE` amounts (= 32 commitments) per proof; we
- * partition N amounts into power-of-2 chunks largest-first (e.g. N=7 → [4, 2, 1]; N=20 → [8, 8, 4]).
+ * committed-value count and at most `MAX_RANGE_PROOF_BATCH_SIZE` amounts (= 64 commitments) per proof; we
+ * partition N amounts into power-of-2 chunks largest-first (e.g. N=7 → [4, 2, 1]; N=20 → [16, 4]).
  * The on-chain verifier reconstructs the same partition from the commitment count. `rangeDst` (the
  * `DST_RANGE_PROOF_16` tag) is bound into the Bulletproof transcript, distinct from the ElGamal DST.
  */

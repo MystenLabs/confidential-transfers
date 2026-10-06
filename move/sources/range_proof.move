@@ -30,9 +30,10 @@ const VERSION_TESTING: u8 = 255;
 const RANGE_BITS: u8 = 16;
 
 /// Maximum number of commitments covered by a single Bulletproof.
-/// `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` caps the aggregated commitment
-/// count at 32 for `RANGE_BITS = 16`.
-const MAX_BATCH_SIZE: u64 = 32;
+/// Sui caps commitments × range bits per proof at 1024 (`max_bulletproofs_total_bits`, protocol
+/// version 137+), so `sui::rangeproofs::verify_bulletproofs_with_dst_ristretto255` accepts at most
+/// `1024 / RANGE_BITS = 64` commitments.
+const MAX_BATCH_SIZE: u64 = 64;
 
 // === Structs ===
 
@@ -85,7 +86,7 @@ public(package) fun verify(
 
 /// Canonical Bulletproof chunking for `n` commitments: greedily take as many `MAX_BATCH_SIZE`
 /// chunks as fit, then halve the chunk size and repeat until `n` is exhausted.
-/// Examples (`MAX_BATCH_SIZE = 32`): n=7 → [4, 2, 1]; n=32 → [32]; n=36 → [32, 4]; n=0 → [].
+/// Examples (`MAX_BATCH_SIZE = 64`): n=7 → [4, 2, 1]; n=64 → [64]; n=100 → [64, 32, 4]; n=0 → [].
 fun batch_sizes(n: u64): vector<u64> {
     let mut sizes = vector[];
     let mut remaining = n;
