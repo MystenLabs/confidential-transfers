@@ -187,10 +187,8 @@ public(package) fun verify_zero(
 /// the commitments means only the handles are caller-supplied, and the result encrypts the same
 /// per-limb values under `new_pk` by construction.
 ///
-/// `old_sk_proof` additionally proves knowledge of `old_pk`'s secret key. The DDH proof alone only
-/// shows knowledge of the ratio `w`, which anyone can pick, so without it a caller holding the
-/// account's `Auth` but not its key could rotate the balance to a key nobody holds. Knowing `w` and
-/// the old key implies knowing the new one (`w * sk_old`).
+/// `old_sk_proof` must also verify: a one-pair DDH proof `g -> old_pk` (knowledge of `old_pk`'s
+/// secret key) under `old_sk_dst` followed by the bytes of `new_pk` and each of `new_handles`.
 public(package) fun try_rekey(
     old_amount: &EncryptedAmount,
     old_pk: &PublicKey,
