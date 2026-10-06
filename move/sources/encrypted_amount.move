@@ -209,9 +209,6 @@ public(package) fun try_rekey(
         bases.push_back(*old_amount[i].decryption_handle());
         images.push_back(new_handles[i]);
     });
-    // The two proofs have independent challenges, so `old_sk_proof` is bound to this rotation
-    // through its DST. Otherwise its statement (`g -> old_pk`) is static, and a valid proof published
-    // by a soft-failed or aborted rotation could be replayed next to an attacker's own `proof`.
     let mut old_sk_dst = old_sk_dst;
     old_sk_dst.append(*new_pk.as_element().bytes());
     new_handles.do_ref!(|d| old_sk_dst.append(*d.bytes()));
