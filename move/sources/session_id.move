@@ -11,9 +11,8 @@ module contra::session_id;
 const DST_DDH: u8 = 0x01;
 const DST_ELGAMAL: u8 = 0x02;
 const DST_RANGE_PROOF_16: u8 = 0x04;
-const DST_BATCH_DDH: u8 = 0x06;
 const DST_AUDITOR_ELGAMAL: u8 = 0x07;
-const DST_REKEY_OLD_SK: u8 = 0x08;
+const DST_REKEY: u8 = 0x08;
 
 // === Structs ===
 
@@ -34,11 +33,9 @@ public(package) fun elgamal(self: &SessionId): vector<u8> { self.dst(DST_ELGAMAL
 
 public(package) fun range_proof_16(self: &SessionId): vector<u8> { self.dst(DST_RANGE_PROOF_16) }
 
-public(package) fun batch_ddh(self: &SessionId): vector<u8> { self.dst(DST_BATCH_DDH) }
+public(package) fun rekey(self: &SessionId): vector<u8> { self.dst(DST_REKEY) }
 
 public(package) fun auditor_elgamal(self: &SessionId): vector<u8> { self.dst(DST_AUDITOR_ELGAMAL) }
-
-public(package) fun rekey_old_sk(self: &SessionId): vector<u8> { self.dst(DST_REKEY_OLD_SK) }
 
 fun dst(self: &SessionId, tag: u8): vector<u8> {
     let mut bytes = self.id;

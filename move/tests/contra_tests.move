@@ -1297,47 +1297,6 @@ fun amount_for_testing(value: u16, pk: &Element<G>, r: u64): encrypted_amount::E
     )
 }
 
-/// A re-key DDH proof for a balance whose only non-zero limb is limb 0 (handle `d_old` under
-/// `pk_old`, re-keyed to `d_new` under `pk_new`); the other limbs have identity handles.
-fun rekey_proof_for_testing<T>(
-    account: &contra::Account,
-    w: &Element<ristretto255::Scalar>,
-    pk_old: Element<G>,
-    pk_new: Element<G>,
-    d_old: Element<G>,
-    d_new: Element<G>,
-): nizk::DdhProof {
-    let id = ristretto255::g_identity();
-    nizk::prove_ddh(
-        account.dst_batch_ddh_for_testing<T>(),
-        w,
-        &vector[pk_old, d_old, id, id, id],
-        &vector[pk_new, d_new, id, id, id],
-        &ristretto255::scalar_from_u64(1234),
-    )
-}
-
-/// A proof of knowledge of `sk` (`pk = sk * g`) bound to the rotation to `(new_pk, new_handles)`, as
-/// `rekey_token_account` expects: the DST is the re-key DST followed by `new_pk` and `new_handles`.
-fun old_sk_proof_for_testing<T>(
-    account: &contra::Account,
-    sk: &Element<ristretto255::Scalar>,
-    new_pk: &Element<G>,
-    new_handles: &vector<Element<G>>,
-): nizk::DdhProof {
-    let g = ristretto255::g_generator();
-    let mut dst = account.dst_rekey_old_sk_for_testing<T>();
-    dst.append(*new_pk.bytes());
-    new_handles.do_ref!(|d| dst.append(*d.bytes()));
-    nizk::prove_ddh(
-        dst,
-        sk,
-        &vector[g],
-        &vector[ristretto255::g_mul(sk, &g)],
-        &ristretto255::scalar_from_u64(5678),
-    )
-}
-
 /// Whole-account key rotation must rebind the stored balance handle to the new key: after rotating
 /// from `pk_old` to `pk_new` (`pk_new != pk_old`) the on-chain handle becomes `r * pk_new` and the
 /// account's public key is updated, so decryption with the new secret key succeeds.
@@ -1401,23 +1360,20 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 
     // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate: set the
     // account key (target), then `rekey_token_account` catches the token's balance up from token.pk to it.
+    let rekey_dst = account_1.dst_rekey_for_testing<TestCurrency>();
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
-    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
-    let new_ea = amount_for_testing(50, &pk_new, r);
-    let rekey_proof = rekey_proof_for_testing<TestCurrency>(
-        &account_1,
-        &w,
-        pk_old,
-        pk_new,
-        d_old,
-        d_new,
-    );
-    let old_sk_proof = old_sk_proof_for_testing<TestCurrency>(
-        &account_1,
+    let id = ristretto255::g_identity();
+    // Only limb 0 is non-zero; the other limbs have identity handles.
+    let rekey_proof = nizk::prove_rekey(
+        rekey_dst,
         &sk_old,
-        &pk_new,
-        &new_ea.decryption_handles_for_testing(),
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
     );
+    let new_ea = amount_for_testing(50, &pk_new, r);
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::set_default_pk_as_sender(
@@ -1434,7 +1390,6 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
         public_key(pk_new),
         new_ea.decryption_handles_for_testing(),
         rekey_proof,
-        old_sk_proof,
     );
 
     // The on-chain handle must now be bound to `pk_new` and the token caught up to the account key.
@@ -1457,9 +1412,8 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     scenario.end();
 }
 
-/// `rekey_token_account` aborts without a proof of the old secret key, reverting the PTB — nothing is
-/// committed. The DDH proof is valid: anyone can build one for a ratio `w` of their choosing, so this
-/// is what a caller holding `auth` but not the key can submit.
+/// `rekey_token_account` aborts on a re-key proof built without the old secret key, reverting the PTB —
+/// nothing is committed.
 #[test, expected_failure(abort_code = ::contra::contra::ERekeyProofFailed)]
 fun test_rekey_token_account_aborts_on_bad_proof() {
     let setup_addr = @0x0;
@@ -1467,8 +1421,8 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
 
     let sk_old = ristretto255::scalar_from_u64(11111);
     let pk_old = ristretto255::g_mul(&sk_old, &ristretto255::g_generator());
-    let w = ristretto255::scalar_from_u64(7);
-    let pk_new = ristretto255::g_mul(&w, &pk_old);
+    let sk_new = ristretto255::scalar_from_u64(22222);
+    let pk_new = ristretto255::g_mul(&sk_new, &ristretto255::g_generator());
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1512,22 +1466,21 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
 
+    // A re-key proof built without the old secret key -- verification fails. The handles are a
+    // correct re-keying, so this is exactly what a caller holding `auth` but not `sk_old` can build.
+    let rekey_dst = account_1.dst_rekey_for_testing<TestCurrency>();
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
+    let id = ristretto255::g_identity();
+    let bad_proof = nizk::prove_rekey(
+        rekey_dst,
+        &ristretto255::scalar_from_u64(7), // wrong old secret key
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
+    );
     let new_ea = amount_for_testing(50, &pk_new, r);
-    let rekey_proof = rekey_proof_for_testing<TestCurrency>(
-        &account_1,
-        &w,
-        pk_old,
-        pk_new,
-        d_old,
-        d_new,
-    );
-    let wrong_sk_proof = old_sk_proof_for_testing<TestCurrency>(
-        &account_1,
-        &ristretto255::scalar_from_u64(1),
-        &pk_new,
-        &new_ea.decryption_handles_for_testing(),
-    );
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::set_default_pk_as_sender(
@@ -1541,8 +1494,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
         &auth,
         public_key(pk_new),
         new_ea.decryption_handles_for_testing(),
-        rekey_proof,
-        wrong_sk_proof,
+        bad_proof,
     );
 
     // Unreachable; included so the resource flow type-checks if the abort is removed.
@@ -1562,7 +1514,7 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     scenario.end();
 }
 
-/// `try_rekey_token_account_and_unpause` soft-fails on bad proofs (token left stale — the normal not-yet-re-keyed
+/// `try_rekey_token_account_and_unpause` soft-fails on a bad proof (token left stale — the normal not-yet-re-keyed
 /// state) and succeeds on a good one (token caught up), without aborting either way. This is what lets
 /// a rotation + re-keys ride in one PTB without pausing.
 #[test]
@@ -1618,9 +1570,27 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
 
-    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
+    let rekey_dst = account_1.dst_rekey_for_testing<TestCurrency>();
+    let id = ristretto255::g_identity();
+    let good_proof = nizk::prove_rekey(
+        rekey_dst,
+        &sk_old,
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
+    );
+    let bad_proof = nizk::prove_rekey(
+        rekey_dst,
+        &ristretto255::scalar_from_u64(7), // wrong old secret key
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
+    );
     let new_ea = amount_for_testing(50, &pk_new, r);
-    let new_handles = new_ea.decryption_handles_for_testing();
 
     let auth = ct.authorize_as_sender(scenario.ctx());
     contra::set_default_pk_as_sender(
@@ -1631,67 +1601,25 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     // Pause the token for the rotation; a successful re-key resumes deposits.
     contra::set_accepts_encrypted_deposits<TestCurrency>(&mut account_1, &auth, false);
 
-    // Each bad case soft-fails, leaving the token stale (still under pk_old) and paused, no abort:
-    // a wrong DDH witness (standing in for a raced balance), a proof of the wrong old secret key,
-    // and a valid old-key proof bound to a different rotation (a replay).
-    let mut other_handles = new_handles;
-    *other_handles.borrow_mut(0) = ristretto255::g_generator();
-    let bad_cases = vector[
-        vector[ristretto255::scalar_from_u64(7), sk_old],
-        vector[w, ristretto255::scalar_from_u64(1)],
-        vector[w, sk_old],
-    ];
-    bad_cases.length().do!(|i| {
-        let bound_handles = if (i == 2) other_handles else new_handles;
-        let rekey_proof = rekey_proof_for_testing<TestCurrency>(
-            &account_1,
-            &bad_cases[i][0],
-            pk_old,
-            pk_new,
-            d_old,
-            d_new,
-        );
-        let old_sk_proof = old_sk_proof_for_testing<TestCurrency>(
-            &account_1,
-            &bad_cases[i][1],
-            &pk_new,
-            &bound_handles,
-        );
-        contra::try_rekey_token_account_and_unpause<TestCurrency>(
-            &mut account_1,
-            &auth,
-            public_key(pk_new),
-            new_handles,
-            rekey_proof,
-            old_sk_proof,
-        );
-        assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
-        assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
-        assert!(!account_1.accepts_deposits<TestCurrency>());
-    });
-
-    // Good proofs: succeeds, token caught up to the account key and deposits resume.
-    let rekey_proof = rekey_proof_for_testing<TestCurrency>(
-        &account_1,
-        &w,
-        pk_old,
-        pk_new,
-        d_old,
-        d_new,
-    );
-    let old_sk_proof = old_sk_proof_for_testing<TestCurrency>(
-        &account_1,
-        &sk_old,
-        &pk_new,
-        &new_handles,
-    );
+    // Bad proof: soft-fails, leaves the token stale (still under pk_old) and paused, no abort.
     contra::try_rekey_token_account_and_unpause<TestCurrency>(
         &mut account_1,
         &auth,
         public_key(pk_new),
-        new_handles,
-        rekey_proof,
-        old_sk_proof,
+        new_ea.decryption_handles_for_testing(),
+        bad_proof,
+    );
+    assert_eq!(account_1.token_public_key<TestCurrency>(), pk_old);
+    assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_old);
+    assert!(!account_1.accepts_deposits<TestCurrency>());
+
+    // Good proof: succeeds, token caught up to the account key and deposits resume.
+    contra::try_rekey_token_account_and_unpause<TestCurrency>(
+        &mut account_1,
+        &auth,
+        public_key(pk_new),
+        new_ea.decryption_handles_for_testing(),
+        good_proof,
     );
     assert_eq!(account_1.token_public_key<TestCurrency>(), pk_new);
     assert_eq!(*account_1.balance<TestCurrency>().decryption_handle(), d_new);
