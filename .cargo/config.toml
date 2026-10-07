@@ -1,0 +1,3 @@
+# Same alias as the sui repo, so `cargo xclippy` works here too.
+[alias]
+xclippy = ["clippy", "--workspace", "--all-targets", "--all-features"]

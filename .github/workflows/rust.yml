@@ -1,0 +1,38 @@
+name: Rust
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Format, lint, and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # pin@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked --version 0.9.133
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo xclippy -- -D warnings
+
+      - name: Run tests
+        run: cargo nextest run --all-features
+
+      - name: Run documentation tests
+        run: cargo test --doc --all-features

@@ -5,6 +5,9 @@ traces/*
 .coverage*
 Pub.*.toml
 
+# Guardian local dev fleet state (issuer env, localnet publish info)
+guardian/.fleet/
+
 # OSX
 .DS_Store
 
