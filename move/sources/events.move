@@ -3,7 +3,12 @@
 
 module contra::events;
 
-use contra::{encrypted_amount::EncryptedAmount, twisted_elgamal::PublicKey};
+use contra::{
+    authority::AuthorityKind,
+    encrypted_amount::EncryptedAmount,
+    twisted_elgamal::PublicKey
+};
+use std::string::String;
 use sui::{event, group_ops::Element, ristretto255::G};
 
 // === Events ===
@@ -13,6 +18,40 @@ public struct NewConfidentialTokenEvent<phantom T>() has copy, drop;
 
 /// A policy is updated for a confidential token.
 public struct PolicyUpdateEvent<phantom T, phantom W>(vector<u8>) has copy, drop;
+
+/// The authority configured for token `T`; `AuthorityKind::None` means checks are disabled.
+public struct AuthorityUpdatedEvent<phantom T> has copy, drop {
+    authority: AuthorityKind,
+}
+
+/// The canonical Nitro authority's core configuration, emitted on creation and after `update` or
+/// `set_url`.
+public struct NitroAuthorityUpdatedEvent<phantom T> has copy, drop {
+    nitro_authority_id: ID,
+    operator: address,
+    url: String,
+    version: u16,
+    min_version: u16,
+    pcr0: vector<u8>,
+    pcr1: vector<u8>,
+    pcr2: vector<u8>,
+}
+
+/// An enclave key was registered for the canonical Nitro authority.
+public struct EnclaveRegisteredEvent<phantom T> has copy, drop {
+    key_index: u8,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+    version: u16,
+}
+
+/// An enclave key was removed or pruned from the canonical Nitro authority.
+public struct EnclaveRemovedEvent<phantom T> has copy, drop {
+    key_index: u8,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+    version: u16,
+}
 
 /// A new token account is registered for an account for a token type `T` with a public key `pk`.
 public struct NewRegistrationEvent<phantom T> has copy, drop {
@@ -137,6 +176,50 @@ public(package) fun emit_new_confidential_token<T>() {
 
 public(package) fun emit_policy_update<T, W>(permissioned_operations: vector<u8>) {
     event::emit(PolicyUpdateEvent<T, W>(permissioned_operations));
+}
+
+public(package) fun emit_authority_updated<T>(authority: AuthorityKind) {
+    event::emit(AuthorityUpdatedEvent<T> { authority });
+}
+
+public(package) fun emit_nitro_authority_updated<T>(
+    nitro_authority_id: ID,
+    operator: address,
+    url: String,
+    version: u16,
+    min_version: u16,
+    pcr0: vector<u8>,
+    pcr1: vector<u8>,
+    pcr2: vector<u8>,
+) {
+    event::emit(NitroAuthorityUpdatedEvent<T> {
+        nitro_authority_id,
+        operator,
+        url,
+        version,
+        min_version,
+        pcr0,
+        pcr1,
+        pcr2,
+    });
+}
+
+public(package) fun emit_enclave_registered<T>(
+    key_index: u8,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+    version: u16,
+) {
+    event::emit(EnclaveRegisteredEvent<T> { key_index, signing_pk, enc_pk, version });
+}
+
+public(package) fun emit_enclave_removed<T>(
+    key_index: u8,
+    signing_pk: vector<u8>,
+    enc_pk: vector<u8>,
+    version: u16,
+) {
+    event::emit(EnclaveRemovedEvent<T> { key_index, signing_pk, enc_pk, version });
 }
 
 public(package) fun emit_new_registration<T>(owner: address, pk: PublicKey) {

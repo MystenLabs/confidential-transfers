@@ -405,6 +405,15 @@ export function buildOptionalPublicKey(packageId: string, pk?: RistrettoPoint) {
 		tx.moveCall({ target: '0x1::option::none', typeArguments: optionType });
 }
 
+/** Build `none` for an authority approval. */
+export function buildNoApproval(packageId: string, tokenType: string) {
+	return (tx: Transaction) =>
+		tx.moveCall({
+			target: '0x1::option::none',
+			typeArguments: [`${packageId}::authority::Approval<${tokenType}>`],
+		});
+}
+
 /**
  * Build an `Option<auditors::AuditorPackage>` — the per-transfer auditor data: the auditor's two
  * u32-limb decryption handles per receiver plus one witness-folded `ElGamalProof` over all `2N` auditor

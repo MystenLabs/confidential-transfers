@@ -75,6 +75,11 @@ public(package) fun public_key<T>(self: &Balances<T>): &PublicKey {
     &self.pk
 }
 
+/// The exact encrypted limbs of the active balance.
+public(package) fun active_amount<T>(self: &Balances<T>): EncryptedAmount {
+    self.active.amount
+}
+
 // === Deposits ===
 
 /// Send `coin`'s funds to `pool` and credit their value to `self`'s public deposits, returning it.

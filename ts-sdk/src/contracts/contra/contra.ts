@@ -769,6 +769,7 @@ export interface BatchedTransferArguments {
 	seedPoint: TransactionArgument;
 	balanceProof: TransactionArgument;
 	auditorPackage: TransactionArgument;
+	approval: TransactionArgument;
 }
 export interface BatchedTransferOptions {
 	package?: string;
@@ -788,6 +789,7 @@ export interface BatchedTransferOptions {
 				seedPoint: TransactionArgument,
 				balanceProof: TransactionArgument,
 				auditorPackage: TransactionArgument,
+				approval: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -830,6 +832,7 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		null,
 		null,
 		null,
+		null,
 	] satisfies (string | null)[];
 	const parameterNames = [
 		'sender',
@@ -845,6 +848,7 @@ export function batchedTransfer(options: BatchedTransferOptions) {
 		'seedPoint',
 		'balanceProof',
 		'auditorPackage',
+		'approval',
 	];
 	return (tx: Transaction) =>
 		tx.moveCall({
@@ -1032,6 +1036,7 @@ export interface UnwrapArguments {
 	newBalanceRangeProofs: TransactionArgument;
 	amount: RawTransactionArgument<number | bigint>;
 	balanceProof: TransactionArgument;
+	approval: TransactionArgument;
 }
 export interface UnwrapOptions {
 	package?: string;
@@ -1047,6 +1052,7 @@ export interface UnwrapOptions {
 				newBalanceRangeProofs: TransactionArgument,
 				amount: RawTransactionArgument<number | bigint>,
 				balanceProof: TransactionArgument,
+				approval: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -1073,6 +1079,7 @@ export function unwrap(options: UnwrapOptions) {
 		null,
 		'u64',
 		null,
+		null,
 	] satisfies (string | null)[];
 	const parameterNames = [
 		'account',
@@ -1084,6 +1091,7 @@ export function unwrap(options: UnwrapOptions) {
 		'newBalanceRangeProofs',
 		'amount',
 		'balanceProof',
+		'approval',
 	];
 	return (tx: Transaction) =>
 		tx.moveCall({
@@ -1104,6 +1112,7 @@ export interface TryUnwrapArguments {
 	newBalanceRangeProofs: TransactionArgument;
 	amount: RawTransactionArgument<number | bigint>;
 	balanceProof: TransactionArgument;
+	approval: TransactionArgument;
 }
 export interface TryUnwrapOptions {
 	package?: string;
@@ -1119,6 +1128,7 @@ export interface TryUnwrapOptions {
 				newBalanceRangeProofs: TransactionArgument,
 				amount: RawTransactionArgument<number | bigint>,
 				balanceProof: TransactionArgument,
+				approval: TransactionArgument,
 		  ];
 	typeArguments: [string];
 }
@@ -1139,6 +1149,7 @@ export function tryUnwrap(options: TryUnwrapOptions) {
 		null,
 		'u64',
 		null,
+		null,
 	] satisfies (string | null)[];
 	const parameterNames = [
 		'account',
@@ -1150,6 +1161,7 @@ export function tryUnwrap(options: TryUnwrapOptions) {
 		'newBalanceRangeProofs',
 		'amount',
 		'balanceProof',
+		'approval',
 	];
 	return (tx: Transaction) =>
 		tx.moveCall({

@@ -175,6 +175,11 @@ In addition to the steps above, the issuer can gate selected user flows behind t
 
 See the [closed-loop app](apps/closed-loop/) for an example that gates `register` behind a whitelist.
 
+#### Approval authority setup
+
+An issuer may define an authority for its token, either based on AWS Nitro or customized. While enabled, the authority provides an additional approval factor for protected operations alongside their zero-knowledge proofs.
+
+Before submitting a protected operation, the client obtains a one-use approval from the configured authority and includes it in the same transaction. Contra verifies that the approval matches the operation being executed.
 
 ## Compliance
 
