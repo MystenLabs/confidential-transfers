@@ -4,7 +4,7 @@
 module contra::encrypted_amount;
 
 use contra::{
-    nizk::{DdhProof, ElGamalProof, verify_ddh, verify_elgamal},
+    nizk::{DdhProof, ElGamalProof, RekeyProof, verify_ddh, verify_elgamal, verify_rekey},
     range_proof::RangeProofs,
     twisted_elgamal::{Self, Encryption, PublicKey, g, encrypt_zero}
 };
@@ -182,8 +182,8 @@ public(package) fun verify_zero(
 
 /// Re-key `old_amount` (encrypted under `old_pk`) to `new_pk` by swapping each limb's decryption
 /// handle for the matching `new_handles[i]` while keeping its Pedersen commitment. On a verifying
-/// batched re-keying DDH proof (Π_rekey) — a single witness `w` mapping `old_pk` and every old
-/// handle to `new_pk` and `new_handles[i]` — returns the re-keyed amount; otherwise `none`. Reusing
+/// `RekeyProof` — that every new handle re-keys its old handle from `old_pk` to `new_pk`, by a
+/// prover knowing both secret keys — returns the re-keyed amount; otherwise `none`. Reusing
 /// the commitments means only the handles are caller-supplied, and the result encrypts the same
 /// per-limb values under `new_pk` by construction.
 public(package) fun try_rekey(
@@ -191,18 +191,12 @@ public(package) fun try_rekey(
     old_pk: &PublicKey,
     new_pk: &PublicKey,
     new_handles: vector<Element<G>>,
-    proof: &DdhProof,
+    proof: &RekeyProof,
     dst: vector<u8>,
 ): Option<EncryptedAmount> {
     assert!(new_handles.length() == U16_LIMBS, EMismatchedBatchLength);
-    // Pair 0 re-keys the public key and pairs 1..4 re-key each limb's decryption handle.
-    let mut bases = vector[*old_pk.as_element()];
-    let mut images = vector[*new_pk.as_element()];
-    U16_LIMBS.do!(|i| {
-        bases.push_back(*old_amount[i].decryption_handle());
-        images.push_back(new_handles[i]);
-    });
-    if (proof.verify_ddh(dst, &bases, &images)) {
+    let old_handles = vector::tabulate!(U16_LIMBS, |i| *old_amount[i].decryption_handle());
+    if (proof.verify_rekey(dst, old_pk, new_pk, &old_handles, &new_handles)) {
         option::some(EncryptedAmount {
             l0: twisted_elgamal::new(*old_amount[0].ciphertext(), new_handles[0]),
             l1: twisted_elgamal::new(*old_amount[1].ciphertext(), new_handles[1]),

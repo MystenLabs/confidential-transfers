@@ -1360,17 +1360,18 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
 
     // Construct the re-keyed handles -- same plaintext + blinding under pk_new -- and rotate: set the
     // account key (target), then `rekey_token_account` catches the token's balance up from token.pk to it.
-    let batch_ddh_dst = account_1.dst_batch_ddh_for_testing<TestCurrency>();
+    let rekey_dst = account_1.dst_rekey_for_testing<TestCurrency>();
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
-    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
     let id = ristretto255::g_identity();
-    // Re-key proof over (pk, limb-0 handle) -- the other limbs are zero (identity handles).
-    let rekey_proof = nizk::prove_ddh(
-        batch_ddh_dst,
-        &w,
-        &vector[pk_old, d_old, id, id, id],
-        &vector[pk_new, d_new, id, id, id],
-        &r_scalar,
+    // Only limb 0 is non-zero; the other limbs have identity handles.
+    let rekey_proof = nizk::prove_rekey(
+        rekey_dst,
+        &sk_old,
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
     );
     let new_ea = amount_for_testing(50, &pk_new, r);
 
@@ -1411,8 +1412,8 @@ fun test_key_rotation_rebinds_balance_to_new_key() {
     scenario.end();
 }
 
-/// `rekey_token_account` aborts on a bad re-key proof (here a wrong witness, standing in for a raced balance
-/// whose handles no longer match), reverting the PTB — nothing is committed.
+/// `rekey_token_account` aborts on a re-key proof built without the old secret key, reverting the PTB —
+/// nothing is committed.
 #[test, expected_failure(abort_code = ::contra::contra::ERekeyProofFailed)]
 fun test_rekey_token_account_aborts_on_bad_proof() {
     let setup_addr = @0x0;
@@ -1420,10 +1421,8 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
 
     let sk_old = ristretto255::scalar_from_u64(11111);
     let pk_old = ristretto255::g_mul(&sk_old, &ristretto255::g_generator());
-    let pk_new = ristretto255::g_mul(
-        &ristretto255::scalar_from_u64(22222),
-        &ristretto255::g_generator(),
-    );
+    let sk_new = ristretto255::scalar_from_u64(22222);
+    let pk_new = ristretto255::g_mul(&sk_new, &ristretto255::g_generator());
 
     let mut scenario = sui::test_scenario::begin(setup_addr);
     deny_list::create_for_testing(scenario.ctx());
@@ -1467,18 +1466,19 @@ fun test_rekey_token_account_aborts_on_bad_proof() {
     contra::set_balance_by_issuer<TestCurrency>(&mut t_cap, &mut account_1, balance_under_pk_old);
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
 
-    // A re-key proof built with the wrong witness -- verification fails, standing in for a raced
-    // balance the client's handles no longer match.
-    let batch_ddh_dst = account_1.dst_batch_ddh_for_testing<TestCurrency>();
+    // A re-key proof built without the old secret key -- verification fails. The handles are a
+    // correct re-keying, so this is exactly what a caller holding `auth` but not `sk_old` can build.
+    let rekey_dst = account_1.dst_rekey_for_testing<TestCurrency>();
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
-    let wrong_w = ristretto255::scalar_from_u64(7);
     let id = ristretto255::g_identity();
-    let bad_proof = nizk::prove_ddh(
-        batch_ddh_dst,
-        &wrong_w,
-        &vector[pk_old, d_old, id, id, id],
-        &vector[pk_new, d_new, id, id, id],
-        &r_scalar,
+    let bad_proof = nizk::prove_rekey(
+        rekey_dst,
+        &ristretto255::scalar_from_u64(7), // wrong old secret key
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
     );
     let new_ea = amount_for_testing(50, &pk_new, r);
 
@@ -1570,22 +1570,25 @@ fun test_try_rekey_token_account_soft_fails_then_succeeds() {
     let d_old = ristretto255::g_mul(&r_scalar, &pk_old);
     let d_new = ristretto255::g_mul(&r_scalar, &pk_new);
 
-    let batch_ddh_dst = account_1.dst_batch_ddh_for_testing<TestCurrency>();
-    let w = ristretto255::scalar_div(&sk_old, &sk_new); // = sk_new / sk_old
+    let rekey_dst = account_1.dst_rekey_for_testing<TestCurrency>();
     let id = ristretto255::g_identity();
-    let good_proof = nizk::prove_ddh(
-        batch_ddh_dst,
-        &w,
-        &vector[pk_old, d_old, id, id, id],
-        &vector[pk_new, d_new, id, id, id],
-        &r_scalar,
+    let good_proof = nizk::prove_rekey(
+        rekey_dst,
+        &sk_old,
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
     );
-    let bad_proof = nizk::prove_ddh(
-        batch_ddh_dst,
-        &ristretto255::scalar_from_u64(7), // wrong witness
-        &vector[pk_old, d_old, id, id, id],
-        &vector[pk_new, d_new, id, id, id],
-        &r_scalar,
+    let bad_proof = nizk::prove_rekey(
+        rekey_dst,
+        &ristretto255::scalar_from_u64(7), // wrong old secret key
+        &sk_new,
+        &vector[d_old, id, id, id],
+        &vector[d_new, id, id, id],
+        &ristretto255::scalar_from_u64(1234),
+        &ristretto255::scalar_from_u64(5678),
     );
     let new_ea = amount_for_testing(50, &pk_new, r);
 

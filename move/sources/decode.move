@@ -7,7 +7,7 @@ module contra::decode;
 
 use contra::{
     encrypted_amount::{new_encrypted_amount, EncryptedAmount},
-    nizk::{Self, DdhProof, ElGamalProof},
+    nizk::{Self, DdhProof, ElGamalProof, RekeyProof},
     twisted_elgamal::{Self, Encryption, PublicKey, public_key}
 };
 use sui::{group_ops::Element, ristretto255::{G, g_from_bytes, scalar_from_bytes}};
@@ -44,6 +44,16 @@ entry fun ddh_proof(parts: vector<vector<u8>>): DdhProof {
     let n = parts.length() - 1;
     let commitments = vector::tabulate!(n, |i| g_from_bytes(parts.borrow(i)));
     nizk::new_ddh_proof(commitments, scalar_from_bytes(parts.borrow(n)))
+}
+
+entry fun rekey_proof(parts: vector<vector<u8>>): RekeyProof {
+    nizk::new_rekey_proof(
+        g_from_bytes(parts.borrow(0)),
+        g_from_bytes(parts.borrow(1)),
+        g_from_bytes(parts.borrow(2)),
+        scalar_from_bytes(parts.borrow(3)),
+        scalar_from_bytes(parts.borrow(4)),
+    )
 }
 
 entry fun elgamal_proof(parts: vector<vector<u8>>): ElGamalProof {
